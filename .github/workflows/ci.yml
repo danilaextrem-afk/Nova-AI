@@ -26,40 +26,47 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: npm install
+      - run: npm install --no-audit --no-fund
       - run: npx prisma generate
+      - name: Sync isolated CI database schema (until versioned migrations land)
+        run: npx prisma db push --skip-generate
       - run: npx tsc --noEmit
-      - run: npm test --if-present
+      - run: npm test
 
   android:
-    # Runs only once the android/ Gradle project exists in the repo.
-    if: ${{ hashFiles('android/gradlew') != '' }}
     runs-on: ubuntu-latest
     env:
       KEYSTORE_B64: ${{ secrets.KEYSTORE_B64 }}
       KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
       KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
       KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-    defaults:
-      run:
-        working-directory: android
     steps:
       - uses: actions/checkout@v4
+      - name: Detect Android project
+        id: android_check
+        run: |
+          if [ -f android/gradlew ]; then echo 'present=true' >> "$GITHUB_OUTPUT"; else echo 'present=false' >> "$GITHUB_OUTPUT"; fi
       - uses: actions/setup-java@v4
+        if: steps.android_check.outputs.present == 'true'
         with:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
-      - run: ./gradlew assembleDebug testDebugUnitTest
+        if: steps.android_check.outputs.present == 'true'
+      - name: Assemble and test Android
+        if: steps.android_check.outputs.present == 'true'
+        run: cd android && chmod +x gradlew && ./gradlew assembleDebug testDebugUnitTest
       - uses: actions/upload-artifact@v4
+        if: steps.android_check.outputs.present == 'true'
         with:
           name: NOVA-AI-debug.apk
           path: android/app/build/outputs/apk/debug/*.apk
       # Release signing uses repository secrets; skipped when they are absent.
       - name: Release AAB (signed only if secrets exist)
-        if: ${{ env.KEYSTORE_B64 != '' }}
+        if: steps.android_check.outputs.present == 'true' && env.KEYSTORE_B64 != ''
         run: |
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          cd android
           ./gradlew bundleRelease assembleRelease \
             -Pandroid.injected.signing.store.file="$RUNNER_TEMP/release.jks" \
             -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
