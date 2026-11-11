@@ -35,6 +35,7 @@ class NovaViewModel : ViewModel() {
     var chatMessages by mutableStateOf<List<NovaChatMessage>>(emptyList())
         private set
     var chatInput by mutableStateOf("")
+    var premiumChatSelected by mutableStateOf(false)
     var aiStatus by mutableStateOf<NovaAiStatus?>(null)
         private set
     var owned by mutableStateOf<List<NovaCharacter>>(emptyList())
@@ -74,7 +75,12 @@ class NovaViewModel : ViewModel() {
             try {
                 block()
             } catch (e: HttpException) {
-                error = "Ошибка сервера: HTTP " + e.code()
+                error = when (e.code()) {
+                    402 -> "Недостаточно NOVA Tokens для Premium-ответа"
+                    429 -> "AI занят или достиг лимита провайдера. Попробуй позже."
+                    503 -> "AI-провайдер ещё не подключён или временно недоступен"
+                    else -> "Ошибка сервера: HTTP " + e.code()
+                }
                 if (e.code() == 401) {
                     accessToken = null
                     error = "Сессия закончилась. Войди заново."
@@ -173,12 +179,16 @@ class NovaViewModel : ViewModel() {
             val api = service()
             val result = api.sendChatMessage(
                 authorization(), current.id,
-                NovaChatSendBody(text, java.util.UUID.randomUUID().toString())
+                NovaChatSendBody(
+                    text, java.util.UUID.randomUUID().toString(),
+                    if (premiumChatSelected) "premium" else "free"
+                )
             )
             if (result.assistantMessage != null) {
                 chatInput = ""
                 chatMessages = api.chatMessages(authorization(), current.id).items
                 chats = api.chats(authorization()).items
+                aiStatus = api.aiStatus(authorization())
             } else {
                 error = "Ответ модели не получен"
             }
@@ -247,6 +257,7 @@ class NovaViewModel : ViewModel() {
         activeChat = null
         chatMessages = emptyList()
         chatInput = ""
+        premiumChatSelected = false
         aiStatus = null
         wallet = null
         transactions = emptyList()
