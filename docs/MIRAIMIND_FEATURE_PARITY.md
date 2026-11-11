@@ -1,6 +1,8 @@
 # NOVA AI — MiraiMind Feature Parity Audit
 **Research date:** 2026-11-11  |  **Goal:** Original, age-appropriate feature-complete AI character platform, not a source/branding clone.
 
+> **Статусы ниже устарели.** Актуальный статус каждого пункта: [`NOVA-AI-MIRAIMIND-COMPARISON.md`](NOVA-AI-MIRAIMIND-COMPARISON.md) (2026-11-11).
+
 ## Research method and caveats
 Compared public MiraiMind first-party guide pages (January 15, 2026), developer's feature announcements (2024–2026), Google Play listing (updated August 5, 2026), and developer membership release (November 4, 2025). Some capabilities may vary by country, subscription and product version. App internals and real provider costs are not observable from public pages. All parity claims must be functional E2E tests, not visual checkboxes.
 
