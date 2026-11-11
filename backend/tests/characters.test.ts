@@ -107,6 +107,46 @@ describe('characters and moderation safety', () => {
     expect(state?.status).toBe('PENDING_REVIEW');
   });
 
+  it('discovers only moderated public characters by text, category and tag', async () => {
+    const stamp = randomUUID().slice(0, 10);
+    const q = 'NovaScout' + stamp;
+    const publicItem = await db.character.create({
+      data: {
+        ownerId: owner, name: q, greeting: 'Greetings explorer',
+        category: 'adventure', tags: ['quest'],
+        publication: { create: { status: 'PUBLISHED' } },
+      },
+    });
+    await db.character.create({
+      data: {
+        ownerId: owner, name: q + '-PRIVATE', greeting: 'Unlisted',
+        category: 'adventure', tags: ['quest'],
+      },
+    });
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/characters/catalog?q=' + q + '&category=ADVENTURE&tag=quest&sort=name',
+      headers: headers(stranger),
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().items.map((c: any) => c.id)).toEqual([publicItem.id]);
+    const excluded = await app.inject({
+      method: 'GET',
+      url: '/v1/characters/catalog?q=' + q + '&category=science',
+      headers: headers(stranger),
+    });
+    expect(excluded.json().items).toEqual([]);
+  });
+
+  it('rejects oversized discover-search input', async () => {
+    const response = await app.inject({
+      method: 'GET',
+      url: '/v1/characters/catalog?q=' + 'x'.repeat(81),
+      headers: headers(stranger),
+    });
+    expect(response.statusCode).toBe(400);
+  });
+
   it('allows private favorites for the owner, not a stranger', async () => {
     const favorite = await app.inject({
       method: 'PUT', url: '/v1/characters/' + characterId + '/favorite', headers: headers(owner),
