@@ -59,9 +59,24 @@ export async function registerStoryRoutes(app:FastifyInstance,db:PrismaClient){
     });
     return reply.code(201).send({chat});
   });
+  // Pin any message; edit the text of the user's own messages. Edits never touch charges or replies;
+  // "Другой ответ" on the latest reply then answers the edited text.
   app.patch('/v1/chats/:id/messages/:messageId',{preHandler:owned},async(req:any,reply)=>{
-    const p=z.object({pinned:z.boolean()}).strict().safeParse(req.body);if(!p.success)return reply.code(400).send({error:'INVALID_INPUT'});
-    const r=await db.message.updateMany({where:{chatId:req.params.id,id:req.params.messageId},data:p.data});
-    return r.count?{updated:true}:reply.code(404).send({error:'MESSAGE_NOT_FOUND'});
+    const p=z.object({pinned:z.boolean().optional(),content:z.string().trim().min(1).max(4000).optional()}).strict()
+      .refine(v=>v.pinned!==undefined||v.content!==undefined).safeParse(req.body);
+    if(!p.success)return reply.code(400).send({error:'INVALID_INPUT'});
+    const message=await db.message.findFirst({where:{chatId:req.params.id,id:req.params.messageId}});
+    if(!message)return reply.code(404).send({error:'MESSAGE_NOT_FOUND'});
+    if(p.data.content!==undefined&&message.role!=='user')return reply.code(409).send({error:'ONLY_OWN_MESSAGES_EDITABLE'});
+    const updated=await db.message.update({where:{id:message.id},data:{...p.data,...(p.data.content!==undefined?{editedAt:new Date()}:{})}});
+    return {updated:true,message:updated};
+  });
+  // Delete a message. Deleting your message also removes the AI reply it produced, so the story stays coherent.
+  app.delete('/v1/chats/:id/messages/:messageId',{preHandler:owned},async(req:any,reply)=>{
+    const message=await db.message.findFirst({where:{chatId:req.params.id,id:req.params.messageId}});
+    if(!message)return reply.code(404).send({error:'MESSAGE_NOT_FOUND'});
+    const r=await db.message.deleteMany({where:{chatId:req.params.id,OR:[{id:message.id},
+      ...(message.role==='user'&&message.requestId?[{replyToRequestId:message.requestId}]:[])]}});
+    return {deleted:r.count};
   });
 }

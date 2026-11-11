@@ -268,6 +268,36 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     var chatSearch by mutableStateOf("")
+    /** Message being edited (own messages only) and its draft text. */
+    var editingMessageId by mutableStateOf<String?>(null)
+    var editingMessageText by mutableStateOf("")
+    var inChatQuery by mutableStateOf("")
+    var inChatResults by mutableStateOf<List<NovaChatMessage>?>(null)
+        private set
+    fun startEditMessage(m: NovaChatMessage) { if (m.role == "user") { editingMessageId = m.id; editingMessageText = m.content } }
+    fun saveEditedMessage() {
+        val chat = activeChat ?: return; val id = editingMessageId ?: return; val text = editingMessageText.trim()
+        if (text.isEmpty() || text.length > 4000) { error = "Сообщение должно быть от 1 до 4000 символов"; return }
+        execute {
+            service().editMessage(authorization(), chat.id, id, EditMessageBody(text))
+            editingMessageId = null
+            chatMessages = service().chatMessages(authorization(), chat.id).items
+            notification = "Сообщение изменено. Нажми «Другой ответ», чтобы персонаж ответил на новый текст."
+        }
+    }
+    fun deleteMessage(m: NovaChatMessage) {
+        val chat = activeChat ?: return
+        execute {
+            service().deleteMessage(authorization(), chat.id, m.id)
+            chatMessages = service().chatMessages(authorization(), chat.id).items
+            notification = if (m.role == "user") "Сообщение и ответ на него удалены" else "Ответ удалён"
+        }
+    }
+    fun searchInChat() {
+        val chat = activeChat ?: return; val q = inChatQuery.trim()
+        if (q.isEmpty()) { inChatResults = null; return }
+        execute { inChatResults = service().chatMessages(authorization(), chat.id, null, q.take(100)).items }
+    }
     var profileCharacter by mutableStateOf<NovaCharacter?>(null)
     fun showCharacterProfile(id:String) {execute {profileCharacter=service().character(authorization(),id).character} }
     fun hideCharacter(id:String) {execute {service().hideCharacter(authorization(),id);owned=service().myCharacters(authorization()).items;notification="Персонаж скрыт из каталога"} }

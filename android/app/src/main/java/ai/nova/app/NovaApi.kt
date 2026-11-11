@@ -188,8 +188,12 @@ interface NovaApi {
     @GET("v1/chats/{id}/messages")
     suspend fun chatMessages(
         @Header("Authorization") bearer: String,
-        @Path("id") id: String, @Query("before") before: Int? = null
+        @Path("id") id: String, @Query("before") before: Int? = null, @Query("q") query: String? = null
     ): NovaChatMessagesResponse
+    @retrofit2.http.PATCH("v1/chats/{id}/messages/{messageId}") suspend fun editMessage(@Header("Authorization") bearer: String,
+        @Path("id") id: String, @Path("messageId") messageId: String, @Body body: EditMessageBody)
+    @DELETE("v1/chats/{id}/messages/{messageId}") suspend fun deleteMessage(@Header("Authorization") bearer: String,
+        @Path("id") id: String, @Path("messageId") messageId: String)
 
     /** Server-Sent Events: "delta" events, then one "done" or "error". Read off the main thread. */
     @retrofit2.http.Streaming
@@ -237,3 +241,5 @@ data class ContentSettingsBody(val showMature: Boolean, val confirmAdult: Boolea
 data class ContentSettings(val showMature: Boolean = false)
 data class MeProfile(val showMature: Boolean = false)
 data class MeResponse(val profile: MeProfile? = null)
+
+data class EditMessageBody(val content: String)
