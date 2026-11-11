@@ -71,19 +71,42 @@ export async function registerCharacterRoutes(app: FastifyInstance, db: PrismaCl
     };
   });
 
+  // Discover searches exclusively through approved public characters.
+  // Optional text, category and tag filters are combined using AND.
   app.get('/v1/characters/catalog', protectedRoute, async (req: any, reply) => {
-    const query = pageQuery.safeParse(req.query);
+    const query = pageQuery.extend({
+      q: z.string().trim().max(80).optional(),
+      category: z.string().trim().max(50).optional(),
+      tag: z.string().trim().max(40).optional(),
+      sort: z.enum(['recent', 'name']).default('recent'),
+    }).safeParse(req.query);
     if (!query.success) return reply.code(400).send({ error: 'INVALID_QUERY' });
+    const { q, category, tag, sort, cursor, limit } = query.data;
+    const where: Prisma.CharacterWhereInput = {
+      isHidden: false,
+      publication: { is: { status: 'PUBLISHED' } },
+      ...(category ? { category: { equals: category, mode: 'insensitive' } } : {}),
+      ...(tag ? { tags: { has: tag } } : {}),
+      ...(q ? {
+        OR: [
+          { name: { contains: q, mode: 'insensitive' } },
+          { biography: { contains: q, mode: 'insensitive' } },
+          { personality: { contains: q, mode: 'insensitive' } },
+          { greeting: { contains: q, mode: 'insensitive' } },
+        ],
+      } : {}),
+    };
     const characters = await db.character.findMany({
-      where: { isHidden: false, publication: { is: { status: 'PUBLISHED' } } },
+      where,
       select: publicSelection,
-      orderBy: { id: 'asc' },
-      take: query.data.limit,
-      ...(query.data.cursor ? { cursor: { id: query.data.cursor }, skip: 1 } : {}),
+      orderBy: sort === 'name' ? [{ name: 'asc' }, { id: 'asc' }]
+        : [{ createdAt: 'desc' }, { id: 'desc' }],
+      take: limit,
+      ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
     });
     return {
       items: characters,
-      nextCursor: characters.length === query.data.limit ? characters.at(-1)?.id : null,
+      nextCursor: characters.length === limit ? characters.at(-1)?.id : null,
     };
   });
 
