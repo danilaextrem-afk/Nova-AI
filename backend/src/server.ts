@@ -11,6 +11,7 @@ import { balance } from './ledger.js';
 import { verifySsv } from './admobSsv.js';
 import { verifyAndCreditPurchase } from './billing.js';
 import { registerCharacterRoutes } from './characters.js';
+import { seedStarterCast } from './starterCast.js';
 
 const db = new PrismaClient();
 const app = Fastify({
@@ -207,5 +208,7 @@ await registerCharacterRoutes(app, db);
 for (const [sku, tokens] of Object.entries(PRODUCT_SEED)) {
   await db.paymentProduct.upsert({ where: { sku }, create: { sku, tokens }, update: {} });
 }
+
+await seedStarterCast(db);
 
 await app.listen({ port: config.port, host: '0.0.0.0' });

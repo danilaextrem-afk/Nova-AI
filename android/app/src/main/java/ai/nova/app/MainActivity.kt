@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -15,10 +16,16 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.Image
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.clip
+import coil.compose.AsyncImage
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -181,6 +188,54 @@ private fun LoginScreen(model: NovaViewModel) {
             ) { Text("Создать аккаунт") }
         }
         StatusMessage(model)
+        GuestCastPreview()
+    }
+}
+
+private val showcaseNames = listOf(
+    "Аврора Вейл", "Лея Винтер", "Мира Соль", "Ника Блэйз",
+    "София Рейн", "Элина Фрост", "Кай Номад", "Леон Арден",
+    "Арсен Вольт", "Даниэль Рэй", "Рэн Блэквуд", "Тео Картер"
+)
+
+@Composable
+private fun GuestCastPreview() {
+    val context = LocalContext.current
+    Text("Знакомься с персонажами", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+    Text(
+        "Бесплатный просмотр героев. Для настоящего AI-чата потребуется подключённый сервер.",
+        color = Color.LightGray, style = MaterialTheme.typography.bodySmall
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        showcaseNames.forEachIndexed { index, name ->
+            val id = "00000000-0000-4000-8000-" +
+                (index + 101).toString().padStart(12, '0')
+            val image = remember(index, context) { NovaCastPortraits.find(context, id) }
+            Card(
+                modifier = Modifier.width(128.dp),
+                colors = CardDefaults.cardColors(containerColor = CardSurface),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(9.dp)) {
+                    if (image != null) {
+                        Image(
+                            bitmap = image,
+                            contentDescription = "Портрет персонажа " + name,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.size(110.dp).clip(RoundedCornerShape(12.dp))
+                        )
+                    }
+                    Text(
+                        name, maxLines = 2,
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
     }
 }
 
@@ -290,10 +345,39 @@ private fun CatalogScreen(model: NovaViewModel) {
     if (model.catalog.isEmpty()) {
         NovaCard { Text("Опубликованных персонажей пока нет.") }
     }
+    val context = LocalContext.current
     model.catalog.forEach { character ->
+        val bundledPortrait = remember(character.id, context) {
+            NovaCastPortraits.find(context, character.id)
+        }
         NovaCard {
+            if (!character.avatarUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = character.avatarUrl,
+                    contentDescription = "Портрет персонажа " + character.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxWidth().height(240.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                )
+            } else if (bundledPortrait != null) {
+                Image(
+                    bitmap = bundledPortrait,
+                    contentDescription = "Портрет персонажа " + character.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(120.dp).clip(RoundedCornerShape(16.dp))
+                )
+            } else {
+                Text(
+                    "NOVA STUDIO · " + character.category.uppercase(),
+                    color = Cyan,
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
             Text(character.name, color = Purple, fontSize = 21.sp, fontWeight = FontWeight.Bold)
             Text(character.category.uppercase(), color = Cyan, fontSize = 12.sp)
+            character.biography?.takeIf { it.isNotBlank() }?.let { bio ->
+                Text(bio, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
+            }
             Text(character.greeting, maxLines = 4, overflow = TextOverflow.Ellipsis)
             Button(onClick = { model.addFavorite(character.id) }, enabled = !model.loading) {
                 Text("В избранное")

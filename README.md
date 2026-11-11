@@ -38,3 +38,13 @@ The Docker Compose configuration uses NOVA_DEV_SCHEMA_SYNC=true for a **local de
 - Admin panel, moderation workflows, terms/privacy, legal and store policy review.
 - Secure session persistence, signed release keystore, Android UI and security tests, load tests.
 - Production APK/AAB/ZIP are not yet verified; release signing requires owner-provided secrets.
+
+## Starter character gallery (new)
+
+The server seeds 12 original adults (six heroines and six male heroes) with character biography, personality, greetings and moderated public catalog entries. The seed is safe to run repeatedly and does not overwrite subsequent moderation decisions.
+
+The Android app bundles a compressed, original photorealistic contact sheet and shows all 12 portraits on the welcome screen without login or purchases. When the backend is running, character cards also show the portraits. They are launch-preview thumbnails, not final high-resolution marketing artwork. See docs/CHARACTER_VISUAL_STYLE.md.
+
+## AI provider foundation (not yet connected)
+
+Backend code supports configurable, server-only OpenAI-compatible adapters for OpenRouter, Groq and Gemini. This is **not** evidence of live chat: API keys, backend chat routes, UI conversation flow and provider integration tests are still missing. The app must not show canned AI responses when no provider is configured.
