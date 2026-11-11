@@ -88,7 +88,9 @@ class NovaUiTest {
  }
  private fun clickWhenEnabled(text:String){
   waitFor("enabled button '$text'"){compose.onAllNodes(hasText(text) and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
-  compose.onNode(hasText(text) and isEnabled()).performScrollTo().performClick()
+  val node=compose.onNode(hasText(text) and isEnabled())
+  runCatching{node.performScrollTo()} // Dialog buttons have no scrollable parent.
+  node.performClick()
  }
  @Test fun loginCatalogChatAndEncryptedDraftSurviveRecreation(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")
