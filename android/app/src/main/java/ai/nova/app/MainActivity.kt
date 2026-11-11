@@ -15,6 +15,9 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
+import androidx.compose.foundation.Image
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -293,7 +296,11 @@ private fun CatalogScreen(model: NovaViewModel) {
     if (model.catalog.isEmpty()) {
         NovaCard { Text("Опубликованных персонажей пока нет.") }
     }
+    val context = LocalContext.current
     model.catalog.forEach { character ->
+        val bundledPortrait = remember(character.id, context) {
+            NovaCastPortraits.find(context, character.id)
+        }
         NovaCard {
             if (!character.avatarUrl.isNullOrBlank()) {
                 AsyncImage(
@@ -302,6 +309,13 @@ private fun CatalogScreen(model: NovaViewModel) {
                     contentScale = ContentScale.Crop,
                     modifier = Modifier.fillMaxWidth().height(240.dp)
                         .clip(RoundedCornerShape(14.dp))
+                )
+            } else if (bundledPortrait != null) {
+                Image(
+                    bitmap = bundledPortrait,
+                    contentDescription = "Портрет персонажа " + character.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.size(120.dp).clip(RoundedCornerShape(16.dp))
                 )
             } else {
                 Text(
