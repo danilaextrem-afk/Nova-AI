@@ -199,7 +199,7 @@ private fun StatusMessage(model: NovaViewModel) {
 private fun NovaCard(content: @Composable ColumnScope.() -> Unit) {
     Card(
         shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = Surface),
+        colors = CardDefaults.cardColors(containerColor = CardSurface),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
