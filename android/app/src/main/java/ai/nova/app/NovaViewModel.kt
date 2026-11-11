@@ -34,6 +34,10 @@ class NovaViewModel : ViewModel() {
         private set
     var transactions by mutableStateOf<List<TokenTransaction>>(emptyList())
         private set
+    var catalogQuery by mutableStateOf("")
+    var catalogCategory by mutableStateOf("")
+    var catalogTag by mutableStateOf("")
+    var catalogSort by mutableStateOf("recent")
     var draftName by mutableStateOf("")
     var draftGreeting by mutableStateOf("")
     var draftCategory by mutableStateOf("fantasy")
@@ -98,7 +102,15 @@ class NovaViewModel : ViewModel() {
     }
 
     fun refreshCatalog() {
-        execute { catalog = service().catalog(authorization()).items }
+        execute {
+            catalog = service().catalog(
+                bearer = authorization(),
+                query = catalogQuery.trim().takeIf { it.isNotEmpty() },
+                category = catalogCategory.trim().takeIf { it.isNotEmpty() },
+                tag = catalogTag.trim().takeIf { it.isNotEmpty() },
+                sort = catalogSort
+            ).items
+        }
     }
 
     fun refreshOwned() {
