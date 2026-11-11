@@ -92,3 +92,22 @@ jobs:
         with:
           name: NOVA-AI-SOURCE
           path: NOVA-AI-SOURCE.zip
+
+
+  migration_baseline:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm install --no-audit --no-fund
+      - name: Generate initial migration SQL from verified Prisma data model
+        run: npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > schema_init.sql
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NOVA-INITIAL-SQL
+          path: backend/schema_init.sql
