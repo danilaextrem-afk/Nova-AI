@@ -398,6 +398,21 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     fun refreshNotifications() {execute {notifications=service().notifications(authorization()).items} }
     fun readNotification(id:String) {execute {service().readNotification(authorization(),id);notifications=service().notifications(authorization()).items} }
     fun reportMessage(id:String) {execute {service().report(authorization(),ReportBody("MESSAGE",id,"Жалоба пользователя на ответ AI"));notification="Жалоба отправлена"} }
+    /** New version of the latest AI reply. Free in free mode; Premium is charged once, only on success. */
+    fun regenerate(message: NovaChatMessage) {
+        val current = activeChat ?: return
+        if (message.role != "assistant" || chatMessages.lastOrNull()?.id != message.id) return
+        val tier = if (premiumChatSelected) "premium" else "free"
+        val requestId = java.util.UUID.randomUUID().toString()
+        execute {
+            val api = service()
+            api.sendChatMessage(authorization(), current.id,
+                NovaChatSendBody(null, requestId, tier, if (tier == "premium") aiStatus?.premiumPriceTokens else null, message.id))
+            chatMessages = api.chatMessages(authorization(), current.id).items
+            aiStatus = api.aiStatus(authorization())
+            notification = if (tier == "premium") "Новый Premium-ответ готов" else "Новый ответ готов"
+        }
+    }
     fun sendSupport() {execute {service().report(authorization(),ReportBody("SUPPORT","support",supportText));supportText="";notification="Обращение сохранено"} }
     fun exportAccount() {execute {exportText=service().export(authorization()).string()} }
     fun deleteAccount() {execute {service().deleteAccount(authorization(),mapOf("confirmation" to "DELETE"));clearAccount()} }
