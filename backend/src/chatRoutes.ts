@@ -3,7 +3,7 @@ import type { PrismaClient, Prisma } from '@prisma/client';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { aiSettings, completeAiChat, AiProviderError, premiumReady } from './aiGateway.js';
-import type { AiMessage } from './aiGateway.js';
+import type { AiMessage, AiStreamOptions } from './aiGateway.js';
 import { summarizeChat } from './storyRoutes.js';
 import { balance, debitInTransaction, InsufficientTokensError } from './ledger.js';
 
@@ -70,7 +70,32 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
     const r=await db.chat.deleteMany({where:{id:req.params.id,userId:req.user.sub}});
     return r.count?reply.code(204).send():reply.code(404).send({error:'CHAT_NOT_FOUND'});
   });
-  app.post('/v1/chats/:id/messages',{preHandler:app.auth,config:{rateLimit:{max:20,timeWindow:'1 minute'}}},async(req:any,reply)=>{
+  const sendConfig={preHandler:app.auth,config:{rateLimit:{max:20,timeWindow:'1 minute'}}};
+  app.post('/v1/chats/:id/messages',sendConfig,async(req:any,reply)=>sendMessage(req,reply));
+  // Server-Sent Events: "delta" events while the model writes, then one "done" or "error" event.
+  // Same idempotency, queue and charging as the JSON route. Closing the connection cancels the
+  // upstream call; a cancelled or interrupted answer is not saved and never charged.
+  app.post('/v1/chats/:id/messages/stream',sendConfig,async(req:any,reply)=>{
+    const controller=new AbortController();
+    reply.hijack();
+    const raw=reply.raw;
+    raw.writeHead(200,{'Content-Type':'text/event-stream; charset=utf-8','Cache-Control':'no-cache, no-transform',
+      'X-Accel-Buffering':'no','X-Content-Type-Options':'nosniff',Connection:'keep-alive'});
+    raw.on('close',()=>{if(!raw.writableFinished)controller.abort();});
+    const event=(name:string,data:unknown)=>{if(!raw.destroyed&&!raw.writableEnded)raw.write(`event: ${name}\ndata: ${JSON.stringify(data)}\n\n`);};
+    const ping=setInterval(()=>{if(!raw.destroyed&&!raw.writableEnded)raw.write(': ping\n\n');},15000);
+    const captured:any={statusCode:200,headers:{} as Record<string,unknown>,body:undefined,
+      code(c:number){this.statusCode=c;return this;},header(k:string,v:unknown){this.headers[k]=v;return this;},
+      send(b:unknown){this.body=b;return captured;}};
+    try{
+      const result=await sendMessage(req,captured,{onDelta:text=>event('delta',{text}),signal:controller.signal});
+      if(result===captured)event(captured.statusCode<300?'done':'error',{status:captured.statusCode,
+        retryAfter:captured.headers['Retry-After']??null,...(captured.body as object)});
+      else event('done',result);
+    }catch(error){req.log.error({err:error},'Stream handler failed');event('error',{status:500,error:'STREAM_FAILURE'});}
+    finally{clearInterval(ping);if(!raw.writableEnded)raw.end();}
+  });
+  async function sendMessage(req:any,reply:any,stream:AiStreamOptions={}){
     const body=sendInput.safeParse(req.body);
     if(!id.safeParse(req.params.id).success||!body.success)return reply.code(400).send({error:'INVALID_MESSAGE'});
     const userId=req.user.sub as string;
@@ -147,7 +172,7 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       const recent:AiMessage[]=[];let remaining=budget;
       for(const msg of history){const text=msg.content.slice(0,Math.min(2500,remaining));if(!text)break;recent.unshift({role:msg.role as 'user'|'assistant',content:text});remaining-=text.length;}
       const messages:AiMessage[]=[{role:'system',content:system.slice(0,18000)},...recent,{role:'user',content}];
-      const output=await completeAiChat(messages,tier,db,requestId);
+      const output=await completeAiChat(messages,tier,db,requestId,stream);
       const saved=await db.$transaction(async tx=>{
         await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
         const reserved=await tx.chatRequest.findUnique({where:{id:requestId}});
@@ -184,5 +209,5 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       return reply.code(error instanceof AiProviderError?error.httpStatus:error instanceof InsufficientTokensError?402:
         error instanceof RegenerateTargetChanged?409:503).send({error:code,requestId});
     }
-  });
+  }
 }

@@ -18,8 +18,15 @@ class NovaUiTest {
  private val chat="10000000-0000-4000-8000-000000000001"
  private var sent=false
  @Volatile private var regenerated=false
+ @Volatile private var streamCalls=0
  @Before fun setUp(){
   server.dispatcher=object:Dispatcher(){override fun dispatch(r:RecordedRequest):MockResponse {
+   if(r.path=="/v1/chats/$chat/messages/stream"){
+    sent=true;streamCalls++
+    val sse="event: delta\ndata: {\"text\":\"Тестовый \"}\n\n"+"event: delta\ndata: {\"text\":\"ответ сервера\"}\n\n"+
+     "event: done\ndata: {\"userMessage\":{\"id\":\"u\",\"role\":\"user\",\"content\":\"Привет\"},\"assistantMessage\":{\"id\":\"a\",\"role\":\"assistant\",\"content\":\"Тестовый ответ сервера\"},\"tokensCharged\":0}\n\n"
+    return MockResponse().setHeader("Content-Type","text/event-stream").setBody(sse)
+   }
    val json=when {
     r.path=="/v1/auth/login" -> """{"accessToken":"fixture-token","refreshToken":"fixture-refresh-token"}"""
     r.path?.startsWith("/v1/characters/catalog")==true -> """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет, исследователь!","category":"Приключения","tags":[]}]}"""
@@ -73,6 +80,7 @@ class NovaUiTest {
   clickWhenEnabled("Отправить бесплатно")
   compose.waitUntil(20000){compose.onAllNodesWithText("Тестовый ответ сервера").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Тестовый ответ сервера").performScrollTo();screenshot("03-chat")
+  assertEquals("chat reply must arrive over the SSE stream route",1,streamCalls)
   clickWhenEnabled("Другой ответ")
   compose.waitUntil(20000){compose.onAllNodesWithText("Новая версия ответа").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Версия 2 · прежние сохранены").performScrollTo().assertExists();screenshot("04-regenerated")

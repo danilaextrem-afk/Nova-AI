@@ -561,6 +561,11 @@ private fun ChatsScreen(model: NovaViewModel) {
                     style = MaterialTheme.typography.bodySmall, color = Color.LightGray
                 )
             }
+            model.streamingText?.let { partial ->
+                Text("AI-персонаж", color = Cyan, style = MaterialTheme.typography.labelMedium)
+                Text(if (partial.isEmpty()) "печатает…" else partial, style = MaterialTheme.typography.bodyLarge)
+                OutlinedButton(onClick = { model.stopReply() }, modifier = Modifier.fillMaxWidth()) { Text("Остановить ответ") }
+            }
             OutlinedTextField(
                 value = model.chatInput,
                 onValueChange = { model.updateChatInput(it) },
