@@ -59,15 +59,23 @@ data class NovaChatMessage(
     val createdAt: String? = null
 )
 data class NovaChatMessagesResponse(val items: List<NovaChatMessage> = emptyList())
-data class NovaChatSendBody(val content: String, val requestId: String)
+data class NovaChatSendBody(val content: String, val requestId: String, val tier: String = "free")
 data class NovaChatSendResponse(
     val assistantMessage: NovaChatMessage?,
     val userMessage: NovaChatMessage?,
-    val duplicate: Boolean = false
+    val duplicate: Boolean = false,
+    val tier: String? = null,
+    val tokensCharged: Int = 0
 )
 data class NovaAiStatus(
     val provider: String, val model: String,
-    val configured: Boolean, val dailyFreeLimit: Int
+    val configured: Boolean,
+    val freeUnlimited: Boolean = true,
+    val premiumConfigured: Boolean = false,
+    val premiumProvider: String? = null,
+    val premiumModel: String? = null,
+    val premiumPriceTokens: Int = 5,
+    val tokenBalance: Int = 0
 )
 
 interface NovaApi {
