@@ -28,8 +28,8 @@ jobs:
           node-version: 22
       - run: npm install --no-audit --no-fund
       - run: npx prisma generate
-      - name: Sync isolated CI database schema (until versioned migrations land)
-        run: npx prisma db push --skip-generate
+      - name: Apply versioned Prisma migrations to isolated CI PostgreSQL
+        run: npx prisma migrate deploy
       - run: npx tsc --noEmit
       - run: npm test
 
@@ -40,6 +40,7 @@ jobs:
       KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
       KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
       KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      NOVA_API_BASE_URL: ${{ vars.NOVA_API_BASE_URL }}
     steps:
       - uses: actions/checkout@v4
       - name: Detect Android project
@@ -92,39 +93,3 @@ jobs:
         with:
           name: NOVA-AI-SOURCE
           path: NOVA-AI-SOURCE.zip
-
-
-  migration_baseline:
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: npm install --no-audit --no-fund
-      - name: Generate initial migration SQL from verified Prisma data model
-        run: npx prisma migrate diff --from-empty --to-schema-datamodel prisma/schema.prisma --script > schema_init.sql
-      - name: Place generated schema in versioned Prisma migration
-        run: |
-          mkdir -p prisma/migrations/20261111_nova_initial
-          cp schema_init.sql prisma/migrations/20261111_nova_initial/migration.sql
-          printf 'provider = "postgresql"\n' > prisma/migrations/migration_lock.toml
-      - name: Commit generated migration to working feature branch
-        if: github.ref == 'refs/heads/feature/render-openrouter-deploy-20261111' && github.event_name == 'push'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add prisma/migrations
-          if ! git diff --cached --quiet; then
-            git commit -m "Add generated initial Prisma migration for NOVA AI"
-            git push origin HEAD:feature/render-openrouter-deploy-20261111
-          fi
-      - uses: actions/upload-artifact@v4
-        with:
-          name: NOVA-INITIAL-SQL
-          path: backend/schema_init.sql
