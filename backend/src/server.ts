@@ -10,6 +10,7 @@ import { config, PRODUCT_SEED } from './config.js';
 import { balance } from './ledger.js';
 import { verifySsv } from './admobSsv.js';
 import { verifyAndCreditPurchase } from './billing.js';
+import { registerCharacterRoutes } from './characters.js';
 
 const db = new PrismaClient();
 const app = Fastify({
@@ -190,6 +191,8 @@ app.get('/v1/ads/ssv', async (req, reply) => {
     return reply.code(503).send({ error: 'REWARD_RETRYABLE' });
   }
 });
+
+await registerCharacterRoutes(app, db);
 
 for (const [sku, tokens] of Object.entries(PRODUCT_SEED)) {
   await db.paymentProduct.upsert({ where: { sku }, create: { sku, tokens }, update: {} });
