@@ -132,7 +132,7 @@ jobs:
           profile: pixel_2
           disable-animations: true
           script: |
-            cd android && gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace
+            cd android && gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
             adb pull /sdcard/Android/data/ai.nova.app/files/screenshots ../ui-screenshots
       - uses: actions/upload-artifact@v4
         if: always()
