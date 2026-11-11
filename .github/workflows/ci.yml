@@ -28,8 +28,8 @@ jobs:
           node-version: 22
       - run: npm install --no-audit --no-fund
       - run: npx prisma generate
-      - name: Sync isolated CI database schema (until versioned migrations land)
-        run: npx prisma db push --skip-generate
+      - name: Apply versioned Prisma migrations to isolated CI PostgreSQL
+        run: npx prisma migrate deploy
       - run: npx tsc --noEmit
       - run: npm test
 
@@ -40,6 +40,7 @@ jobs:
       KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
       KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
       KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+      NOVA_API_BASE_URL: ${{ vars.NOVA_API_BASE_URL }}
     steps:
       - uses: actions/checkout@v4
       - name: Detect Android project
@@ -92,3 +93,10 @@ jobs:
         with:
           name: NOVA-AI-SOURCE
           path: NOVA-AI-SOURCE.zip
+
+  docker_image:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the exact backend Docker image used by Render
+        run: docker build --file backend/Dockerfile --tag nova-ai-preview:ci backend
