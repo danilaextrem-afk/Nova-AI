@@ -38,7 +38,7 @@ const app = Fastify({
 
 await app.register(helmet);
 await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
-await app.register(jwt, { secret: config.jwtSecret, sign: { expiresIn: config.accessTtlSec } });
+await app.register(jwt, { secret: config.jwtSecret, sign: { expiresIn: config.accessTtlSec, algorithm:'HS256' }, verify:{algorithms:['HS256']} });
 
 app.decorate('auth', async (req: any, reply: any) => {
   try {

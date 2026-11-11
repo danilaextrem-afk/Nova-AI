@@ -20,9 +20,13 @@ class NovaUiTest {
  @Volatile private var commentSent=false
  @Volatile private var regenerated=false
  @Volatile private var streamCalls=0
+ @Volatile private var streamFailure=false
+ private val streamIds=java.util.Collections.synchronizedList(mutableListOf<String>())
  @Before fun setUp(){
   server.dispatcher=object:Dispatcher(){override fun dispatch(r:RecordedRequest):MockResponse {
    if(r.path=="/v1/chats/$chat/messages/stream"){
+    streamIds.add(com.google.gson.JsonParser.parseString(r.body.readUtf8()).asJsonObject.get("requestId").asString)
+    if(streamFailure)return MockResponse().setResponseCode(503).setHeader("Content-Type","application/json").setBody("{\"error\":\"AI_NOT_CONFIGURED\"}")
     sent=true;streamCalls++
     val sse="event: delta\ndata: {\"text\":\"Тестовый \"}\n\n"+"event: delta\ndata: {\"text\":\"ответ сервера\"}\n\n"+
      "event: done\ndata: {\"userMessage\":{\"id\":\"u\",\"role\":\"user\",\"content\":\"Привет\"},\"assistantMessage\":{\"id\":\"a\",\"role\":\"assistant\",\"content\":\"Тестовый ответ сервера\"},\"tokensCharged\":0}\n\n"
@@ -60,7 +64,7 @@ class NovaUiTest {
  private fun screenshot(name:String){
   val image=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
   val dir=File(compose.activity.getExternalFilesDir(null),"screenshots");dir.mkdirs()
-  File(dir,name+".png").outputStream().use {image.compress(Bitmap.CompressFormat.PNG,100,it)}
+  File(dir,name+"-"+image.width+"x"+image.height+".png").outputStream().use {image.compress(Bitmap.CompressFormat.PNG,100,it)}
  }
  // Buttons are disabled while a request is in flight (enabled=!model.loading). Clicking a disabled
  // button is a no-op, so wait for the enabled state exactly as a person would before tapping.
@@ -91,6 +95,23 @@ class NovaUiTest {
   compose.activityRule.scenario.recreate()
   compose.waitUntil(20000){compose.onAllNodesWithText("Сохранённый черновик").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Сохранённый черновик").performScrollTo().assertExists()
+ }
+ @Test fun failedNetworkRequestKeepsDraftAndRequestIdAcrossRecreation(){
+  streamFailure=true
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  compose.waitUntil(20000){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Каталог").performClick();clickWhenEnabled("Начать AI-чат")
+  compose.waitUntil(20000){compose.onAllNodesWithText("Напиши сообщение").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Напиши сообщение").performScrollTo().performTextInput("Привет")
+  clickWhenEnabled("Отправить бесплатно")
+  compose.waitUntil(20000){compose.onAllNodesWithText("AI-провайдер ещё не подключён или временно недоступен").fetchSemanticsNodes().isNotEmpty()}
+  compose.activityRule.scenario.recreate()
+  compose.waitUntil(20000){compose.onAllNodesWithText("Привет").fetchSemanticsNodes().isNotEmpty()}
+  streamFailure=false;clickWhenEnabled("Отправить бесплатно")
+  compose.waitUntil(20000){compose.onAllNodesWithText("Тестовый ответ сервера").fetchSemanticsNodes().isNotEmpty()}
+  assertEquals(2,streamIds.size);assertEquals(streamIds[0],streamIds[1])
  }
  @Test fun communityCommentClearlyShowsPendingModeration(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")

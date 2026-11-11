@@ -252,10 +252,14 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    var chatSearch by mutableStateOf("")
+    var profileCharacter by mutableStateOf<NovaCharacter?>(null)
+    fun showCharacterProfile(id:String) {execute {profileCharacter=service().character(authorization(),id).character} }
+    fun hideCharacter(id:String) {execute {service().hideCharacter(authorization(),id);owned=service().myCharacters(authorization()).items;notification="Персонаж скрыт из каталога"} }
     fun refreshChats() {
         execute {
             val api = service()
-            chats = api.chats(authorization()).items
+            chats = api.chats(authorization(),chatSearch.trim().takeIf{it.isNotEmpty()}).items
             aiStatus = api.aiStatus(authorization())
         }
     }
@@ -465,11 +469,15 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         val current = activeChat ?: return
         if (message.role != "assistant" || chatMessages.lastOrNull()?.id != message.id) return
         val tier = if (premiumChatSelected) "premium" else "free"
-        val requestId = java.util.UUID.randomUUID().toString()
+        val key = "${current.id}:${message.id}:$tier"
+        val pending = store.get("pendingRegenerate")?.split("|", limit=2)
+        val requestId = if (pending?.size == 2 && pending[0] == key) pending[1] else java.util.UUID.randomUUID().toString()
+        store.put("pendingRegenerate", "$key|$requestId")
         execute {
             val api = service()
             api.sendChatMessage(authorization(), current.id,
                 NovaChatSendBody(null, requestId, tier, if (tier == "premium") aiStatus?.premiumPriceTokens else null, message.id))
+            store.put("pendingRegenerate", "")
             chatMessages = api.chatMessages(authorization(), current.id).items
             aiStatus = api.aiStatus(authorization())
             notification = if (tier == "premium") "Новый Premium-ответ готов" else "Новый ответ готов"

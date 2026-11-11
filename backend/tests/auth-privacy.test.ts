@@ -31,3 +31,11 @@ it('preserves client-error status without leaking parser errors or request conte
  const malformed=await app.inject({method:'POST',url:'/v1/auth/login',headers:{'content-type':'application/json'},payload:'{private:'});expect(malformed.statusCode).toBe(400);expect(malformed.body).not.toContain('private');
  const large=await app.inject({method:'POST',url:'/v1/auth/login',payload:{email:'adult@test.invalid',password:'x'.repeat(70000)}});expect(large.statusCode).toBe(413);
 });
+it('rejects unsigned and expired JWTs, including tokens with no issued-at claim',async()=>{
+ const {createHmac}=await import('node:crypto');const {config}=await import('../src/config.js');
+ const b64=(obj:unknown)=>Buffer.from(JSON.stringify(obj)).toString('base64url');
+ const expired=b64({alg:'HS256',typ:'JWT'})+'.'+b64({sub:userId,exp:1});
+ const signed=expired+'.'+createHmac('sha256',config.jwtSecret).update(expired).digest('base64url');
+ const unsigned=b64({alg:'none'})+'.'+b64({sub:userId,exp:9999999999})+'.';
+ for(const token of [signed,unsigned])expect((await app.inject({url:'/v1/me',headers:{authorization:'Bearer '+token}})).statusCode).toBe(401);
+});

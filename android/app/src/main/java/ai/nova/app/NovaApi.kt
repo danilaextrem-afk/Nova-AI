@@ -106,6 +106,7 @@ data class VerifyPurchaseBody(val sku: String, val purchaseToken: String)
 data class VerifyPurchaseResult(val status: String, val tokens: Int = 0)
 data class AdStatus(val configured: Boolean, val adUnit: String?, val userId: String, val remainingToday: Int, val secondsUntilNext: Int)
 interface NovaApi {
+    @POST("v1/characters/{id}/hide") suspend fun hideCharacter(@Header("Authorization") bearer: String, @Path("id") id: String)
     @GET("v1/community/following") suspend fun following(@Header("Authorization") bearer: String): CharacterPage
     @PUT("v1/creators/{id}/follow") suspend fun follow(@Header("Authorization") bearer: String, @Path("id") id: String)
     @DELETE("v1/creators/{id}/follow") suspend fun unfollow(@Header("Authorization") bearer: String, @Path("id") id: String)
@@ -170,7 +171,7 @@ interface NovaApi {
     suspend fun aiStatus(@Header("Authorization") bearer: String): NovaAiStatus
 
     @GET("v1/chats")
-    suspend fun chats(@Header("Authorization") bearer: String): NovaChatsResponse
+    suspend fun chats(@Header("Authorization") bearer: String, @Query("q") query: String? = null): NovaChatsResponse
 
     @POST("v1/chats")
     suspend fun createChat(

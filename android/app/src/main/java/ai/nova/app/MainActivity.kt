@@ -368,6 +368,16 @@ private fun CatalogScreen(model: NovaViewModel) {
     if (model.catalog.isEmpty()) {
         NovaCard { Text("Опубликованных персонажей пока нет.") }
     }
+    model.profileCharacter?.let { c ->
+        AlertDialog(onDismissRequest={model.profileCharacter=null},title={Text(c.name)},
+            text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
+                Text("Оригинальный вымышленный взрослый персонаж",color=Cyan)
+                listOf("Биография" to c.biography,"Характер" to c.personality,"Внешность" to c.appearance,
+                    "Интересы" to c.interests,"Предыстория" to c.backstory,"Манера речи" to c.speechStyle,"Сценарий" to c.scenario)
+                    .forEach{(label,value)->if(!value.isNullOrBlank()){Text(label,fontWeight=FontWeight.Bold,color=Purple);Text(value)}}
+                Text(c.greeting)
+            }},confirmButton={TextButton(onClick={model.profileCharacter=null}){Text("Закрыть профиль")}})
+    }
     val context = LocalContext.current
     model.catalog.forEach { character ->
         val bundledPortrait = remember(character.id, context) {
@@ -398,6 +408,7 @@ private fun CatalogScreen(model: NovaViewModel) {
             }
             Text(character.name, color = Purple, fontSize = 21.sp, fontWeight = FontWeight.Bold)
             Text(character.category.uppercase(), color = Cyan, fontSize = 12.sp)
+            TextButton(onClick={model.showCharacterProfile(character.id)},enabled=!model.loading){Text("Полный профиль")}
             character.ownerId?.let {creator->Row(Modifier.horizontalScroll(rememberScrollState())) {
                 TextButton(onClick={model.follow(creator,true)},enabled=!model.loading){Text("Подписаться на автора")}
                 TextButton(onClick={model.follow(creator,false)},enabled=!model.loading){Text("Отписаться")}
@@ -439,6 +450,7 @@ private fun ChatsScreen(model: NovaViewModel) {
     val active = model.activeChat
     if (active == null) {
         SectionHeader("Мои чаты", "Разговоры с AI-персонажами хранятся на сервере")
+        OutlinedTextField(value=model.chatSearch,onValueChange={model.chatSearch=it},label={Text("Поиск в переписках")},modifier=Modifier.fillMaxWidth())
         val status = model.aiStatus
         NovaCard {
             if (status == null) {
@@ -639,6 +651,7 @@ private fun CreateScreen(model: NovaViewModel) {
             Text(character.greeting)
             Button(onClick={model.startChat(character)},enabled=!model.loading){Text("Общаться")}
             OutlinedButton(onClick={model.editCharacter(character)},enabled=!model.loading){Text("Редактировать")}
+            OutlinedButton(onClick={model.hideCharacter(character.id)},enabled=!model.loading){Text("Скрыть из каталога")}
             OutlinedButton(onClick={model.publishCharacter(character.id)},enabled=!model.loading){Text("Отправить на модерацию")}
         }
     }
