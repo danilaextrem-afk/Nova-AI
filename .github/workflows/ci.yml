@@ -45,17 +45,24 @@ jobs:
       - name: Detect Android project
         id: android_check
         run: |
-          if [ -f android/gradlew ]; then echo 'present=true' >> "$GITHUB_OUTPUT"; else echo 'present=false' >> "$GITHUB_OUTPUT"; fi
+          if [ -f android/app/build.gradle.kts ]; then echo 'present=true' >> "$GITHUB_OUTPUT"; else echo 'present=false' >> "$GITHUB_OUTPUT"; fi
       - uses: actions/setup-java@v4
         if: steps.android_check.outputs.present == 'true'
         with:
           distribution: temurin
           java-version: 17
+      - uses: android-actions/setup-android@v3
+        if: steps.android_check.outputs.present == 'true'
+      - name: Install Android SDK 36
+        if: steps.android_check.outputs.present == 'true'
+        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
         if: steps.android_check.outputs.present == 'true'
+        with:
+          gradle-version: '8.13'
       - name: Assemble and test Android
         if: steps.android_check.outputs.present == 'true'
-        run: cd android && chmod +x gradlew && ./gradlew assembleDebug testDebugUnitTest
+        run: cd android && gradle :app:assembleDebug :app:testDebugUnitTest --no-daemon --stacktrace
       - uses: actions/upload-artifact@v4
         if: steps.android_check.outputs.present == 'true'
         with:
@@ -67,7 +74,7 @@ jobs:
         run: |
           echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
           cd android
-          ./gradlew bundleRelease assembleRelease \
+          gradle :app:bundleRelease :app:assembleRelease \
             -Pandroid.injected.signing.store.file="$RUNNER_TEMP/release.jks" \
             -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
