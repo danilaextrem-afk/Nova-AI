@@ -36,6 +36,8 @@ class NovaViewModel : ViewModel() {
         private set
     var chatInput by mutableStateOf("")
     var premiumChatSelected by mutableStateOf(false)
+    private var pendingChatFingerprint: String? = null
+    private var pendingChatRequestId: String? = null
     var aiStatus by mutableStateOf<NovaAiStatus?>(null)
         private set
     var owned by mutableStateOf<List<NovaCharacter>>(emptyList())
@@ -159,6 +161,8 @@ class NovaViewModel : ViewModel() {
     }
 
     fun closeChat() {
+        pendingChatRequestId = null
+        pendingChatFingerprint = null
         activeChat = null
         chatMessages = emptyList()
         refreshChats()
@@ -175,23 +179,38 @@ class NovaViewModel : ViewModel() {
             error = "Сообщение слишком длинное"
             return
         }
+        val tier = if (premiumChatSelected) "premium" else "free"
+        val fingerprint = current.id + ":" + tier + ":" + text
+        if (pendingChatFingerprint != fingerprint || pendingChatRequestId == null) {
+            pendingChatFingerprint = fingerprint
+            pendingChatRequestId = java.util.UUID.randomUUID().toString()
+        }
+        val requestId = checkNotNull(pendingChatRequestId)
         execute {
             val api = service()
-            val result = api.sendChatMessage(
-                authorization(), current.id,
-                NovaChatSendBody(
-                    text, java.util.UUID.randomUUID().toString(),
-                    if (premiumChatSelected) "premium" else "free"
+            try {
+                val result = api.sendChatMessage(
+                    authorization(), current.id,
+                    NovaChatSendBody(text, requestId, tier)
                 )
-            )
-            if (result.assistantMessage != null) {
-                chatInput = ""
-                chatMessages = api.chatMessages(authorization(), current.id).items
-                chats = api.chats(authorization()).items
-                aiStatus = api.aiStatus(authorization())
-            } else {
-                error = "Ответ модели не получен"
+                if (result.assistantMessage != null) {
+                    pendingChatRequestId = null
+                    pendingChatFingerprint = null
+                    chatInput = ""
+                    chatMessages = api.chatMessages(authorization(), current.id).items
+                    chats = api.chats(authorization()).items
+                    aiStatus = api.aiStatus(authorization())
+                } else {
+                    error = "Ответ ещё обрабатывается. Повтори отправку."
+                }
+            } catch (e: HttpException) {
+                // The server explicitly rejected this request. The next attempt gets a fresh ID.
+                pendingChatRequestId = null
+                pendingChatFingerprint = null
+                throw e
             }
+            // For network timeouts we deliberately retain requestId to avoid double charges
+            // when retrying an earlier Premium request that may have succeeded server-side.
         }
     }
 
@@ -248,6 +267,8 @@ class NovaViewModel : ViewModel() {
     }
 
     fun logout() {
+        pendingChatRequestId = null
+        pendingChatFingerprint = null
         accessToken = null
         email = ""
         password = ""
