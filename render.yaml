@@ -27,6 +27,9 @@ services:
         value: openrouter/free
       - key: OPENROUTER_API_KEY
         sync: false
+      # Optional second independent free provider. Each Groq model has its own free quota.
+      - key: GROQ_API_KEY
+        sync: false
       - key: NOVA_PREMIUM_TOKENS_PER_MESSAGE
         value: "5"
       - key: NOVA_DEV_SCHEMA_SYNC

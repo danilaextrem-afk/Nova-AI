@@ -5,7 +5,7 @@ import jwt from '@fastify/jwt';
 import {randomUUID} from 'node:crypto';
 import {registerChatRoutes} from '../src/chatRoutes.js';
 import {registerStoryRoutes} from '../src/storyRoutes.js';
-import {completeAiChat,retryAfterMs,modelPool} from '../src/aiGateway.js';
+import {completeAiChat,retryAfterMs,modelPool,quotaKey} from '../src/aiGateway.js';
 import {credit,balance,debit} from '../src/ledger.js';
 const db=new PrismaClient();const app=Fastify();let userId:string;let other:string;let characterId:string;let chatId:string;
 const model=(provider:string,tier='free',extras:any={})=>({provider,tier,model:provider==='openrouter'?'openrouter/free':'test-'+tier,approved:true,rpm:10000,rpd:10000,tpm:10000000,tpd:100000000,inputUsdPerMillion:0,outputUsdPerMillion:0,dailyBudgetMicros:0,...extras});
@@ -40,7 +40,7 @@ describe('PostgreSQL router and persisted chat invariants (HTTP fixtures, not li
  it.each([429,503,'timeout'])('fails over to an independent provider after %s with unchanged messages',async(failure)=>{
   let first:any;const mock=vi.fn(async(url:string,init:any)=>{const body=JSON.parse(init.body);if(url.includes('groq')){first=body.messages;if(failure==='timeout')throw new DOMException('timed out','TimeoutError');return new Response('',{status:failure as number,headers:{'Retry-After':'60'}})}expect(body.messages).toEqual(first);return ok('Резервный ответ')});
   vi.stubGlobal('fetch',mock);const result=await send('Продолжи');expect(result.statusCode,result.body).toBe(200);
-  expect(mock).toHaveBeenCalledTimes(2);expect((await db.aiProviderState.findUnique({where:{key:'groq'}}))!.retryAt!.getTime()).toBeGreaterThan(Date.now());
+  expect(mock).toHaveBeenCalledTimes(2);expect((await db.aiProviderState.findUnique({where:{key:quotaKey({provider:'groq',model:'test-free'})}}))!.retryAt!.getTime()).toBeGreaterThan(Date.now());
   const attempts=await db.aiAttempt.findMany({orderBy:{createdAt:'asc'}});expect(attempts.map(x=>x.status)).toEqual(['FAILED','SUCCEEDED']);
  });
  it('preserves failed user text, charges nothing, and retries the same request ID',async()=>{
@@ -89,5 +89,24 @@ describe('PostgreSQL router and persisted chat invariants (HTTP fixtures, not li
   await credit(db,{userId,bucket:'BONUS',amount:20,source:'test',idempotencyKey:randomUUID()});const before=await balance(db,userId);const key=randomUUID();
   await Promise.all(Array.from({length:10},()=>debit(db,{userId,amount:5,source:'test',idempotencyKey:key})));
   expect((await balance(db,userId)).total).toBe(before.total-5);
+ });
+});
+
+describe('Default free pool (no NOVA_AI_MODELS_JSON; HTTP fixtures, not live AI)',()=>{
+ beforeEach(()=>{vi.stubEnv('NOVA_AI_MODELS_JSON','');vi.stubEnv('AI_PROVIDER','groq');vi.stubEnv('AI_MODEL','');vi.stubEnv('NOVA_GROQ_FREE_MODELS','');vi.stubEnv('NOVA_PREMIUM_MODEL','')});
+ it('uses separate per-model Groq quota buckets and falls through to the next Groq model',async()=>{
+  expect(modelPool('free').map(m=>m.provider+':'+m.model)).toEqual(['groq:openai/gpt-oss-20b','groq:openai/gpt-oss-120b','openrouter:openrouter/free']);
+  const day=new Date(new Date().toISOString().slice(0,10));
+  await db.aiProviderState.create({data:{key:'groq:openai/gpt-oss-20b',minuteAt:new Date(Math.floor(Date.now()/60000)*60000),dayAt:day,dayRequests:1000}});
+  const mock=vi.fn(async(_u:any,init:any)=>ok());vi.stubGlobal('fetch',mock);
+  const r=await send('Привет');expect(r.statusCode,r.body).toBe(200);
+  expect(mock).toHaveBeenCalledTimes(1);expect(JSON.parse(mock.mock.calls[0][1].body).model).toBe('openai/gpt-oss-120b');
+  expect((await db.aiProviderState.findUnique({where:{key:'groq:openai/gpt-oss-120b'}}))!.dayRequests).toBe(1);
+  expect((await db.aiProviderState.findUnique({where:{key:'groq:openai/gpt-oss-20b'}}))!.dayRequests).toBe(1000);
+ });
+ it('never hands out the configured Premium model as Free',async()=>{
+  vi.stubEnv('NOVA_PREMIUM_MODEL','openai/gpt-oss-120b');vi.stubEnv('NOVA_AI_DAILY_BUDGET_MICROS','100000');
+  expect(modelPool('free').map(m=>m.model)).toEqual(['openai/gpt-oss-20b','openrouter/free']);
+  expect(modelPool('premium').map(m=>m.model)).toEqual(['openai/gpt-oss-120b']);
  });
 });

@@ -29,15 +29,24 @@ export function modelPool(tier: AiTier): ModelConfig[] {
     try { models = z.array(modelSchema).max(20).parse(JSON.parse(process.env.NOVA_AI_MODELS_JSON)); }
     catch { return []; } // Invalid deployment configuration fails closed.
   } else {
+    // Official free-plan limits (console.groq.com/docs/rate-limits, checked 2026-11-11): Groq counts quotas
+    // per model and organization, so each listed Groq model is an independent free bucket. OpenRouter's
+    // openrouter/free router is the only OpenRouter free entry by default.
     const preferred = (process.env.AI_PROVIDER || 'groq') as AiProviderName;
-    const order = Array.from(new Set([preferred, 'groq', 'openrouter'])) as AiProviderName[];
-    models = order.filter(p => p === 'groq' || p === 'openrouter').map(provider => ({
-      provider, model: provider === preferred ? (process.env.AI_MODEL || providers[provider].model) : providers[provider].model,
-      tier: 'free', approved: true, rpm: provider === 'groq' ? 30 : 20,
-      rpd: provider === 'groq' ? 1000 : 50, tpm: provider === 'groq' ? 8000 : 20000,
-      tpd: provider === 'groq' ? 200000 : 100000, inputUsdPerMillion: 0, outputUsdPerMillion: 0,
-      dailyBudgetMicros: 0, concurrency: 2,
-    }));
+    const groqModels = Array.from(new Set([
+      ...(preferred === 'groq' && process.env.AI_MODEL?.trim() ? [process.env.AI_MODEL.trim()] : []),
+      ...(process.env.NOVA_GROQ_FREE_MODELS?.trim() || 'openai/gpt-oss-20b,openai/gpt-oss-120b').split(',').map(x => x.trim()).filter(Boolean),
+    ])).filter(model => !((process.env.NOVA_PREMIUM_PROVIDER || 'groq') === 'groq' && model === process.env.NOVA_PREMIUM_MODEL?.trim()))
+      .slice(0, 6); // A model sold as Premium is never also handed out as Free.
+    const free = (provider: AiProviderName, model: string): ModelConfig => ({
+      provider, model, tier: 'free', approved: true,
+      rpm: provider === 'groq' ? 30 : 20, rpd: provider === 'groq' ? 1000 : 50,
+      tpm: provider === 'groq' ? 8000 : 20000, tpd: provider === 'groq' ? 200000 : 100000,
+      inputUsdPerMillion: 0, outputUsdPerMillion: 0, dailyBudgetMicros: 0, concurrency: 2,
+    });
+    const groq = groqModels.map(model => free('groq', model));
+    const openrouter = [free('openrouter', preferred === 'openrouter' && process.env.AI_MODEL?.trim() ? process.env.AI_MODEL.trim() : providers.openrouter.model)];
+    models = preferred === 'openrouter' ? [...openrouter, ...groq] : [...groq, ...openrouter];
     if (process.env.NOVA_PREMIUM_MODEL?.trim()) {
       const provider = (process.env.NOVA_PREMIUM_PROVIDER || 'groq') as AiProviderName;
       if (provider in providers) models.push({
@@ -55,6 +64,9 @@ export function modelPool(tier: AiTier): ModelConfig[] {
     .filter(m => m.provider !== 'gemini' || process.env.NOVA_GEMINI_TERMS_REVIEWED === 'true')
     .filter(m => m.provider !== 'cerebras' || tier !== 'free')
     .filter(m => m.inputUsdPerMillion + m.outputUsdPerMillion === 0 || m.dailyBudgetMicros > 0);
+}
+export function quotaKey(m: Pick<ModelConfig,'provider'|'model'>): string {
+  return m.provider === 'groq' ? 'groq:' + m.model : m.provider;
 }
 export function aiSettings(tier: AiTier = 'free') {
   const candidate = modelPool(tier)[0];
@@ -110,7 +122,7 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
       const day = new Date(now.toISOString().slice(0,10));
       const estimate = inputEstimate + maxOutput;
       const maxCost = micros(m,inputEstimate,maxOutput);
-      const key = m.provider; // Conservative shared organization bucket, including both tiers/models.
+      const key = quotaKey(m); // Groq limits are per model; other providers share one conservative bucket.
       const attempt = await db.$transaction(async tx => {
         await tx.aiProviderState.upsert({where:{key},create:{key,minuteAt:minute,dayAt:day},update:{}});
         await tx.$queryRaw`SELECT key FROM "AiProviderState" WHERE key = ${key} FOR UPDATE`;
