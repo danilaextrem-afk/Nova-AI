@@ -205,3 +205,21 @@ describe('Truncated SSE protection (HTTP fixture)',()=>{
   expect(await balance(db,userId)).toEqual(before);expect(await db.message.count({where:{chatId}})).toBe(0);expect(mock).toHaveBeenCalledTimes(1);
  });
 });
+
+describe('Edit, delete and search messages',()=>{
+ it('edits only own text, deletes a turn with its reply, searches inside one chat and isolates other users',async()=>{
+  vi.stubGlobal('fetch',vi.fn(async()=>ok('Ответ про драконов')));
+  const a=(await send('Расскажи о драконах')).json();await send('А теперь о море');
+  const url=(m:string)=>`/v1/chats/${chatId}/messages/${m}`;
+  const e=await app.inject({method:'PATCH',url:url(a.userMessage.id),headers:auth(),payload:{content:'Расскажи о северных драконах'}});
+  expect(e.statusCode,e.body).toBe(200);expect(e.json().message.editedAt).not.toBeNull();
+  expect((await app.inject({method:'PATCH',url:url(a.assistantMessage.id),headers:auth(),payload:{content:'подмена'}})).statusCode).toBe(409);
+  expect((await app.inject({method:'PATCH',url:url(a.userMessage.id),headers:auth(other),payload:{content:'чужое'}})).statusCode).toBe(404);
+  const found=await app.inject({url:`/v1/chats/${chatId}/messages?q=СЕВЕРН`,headers:auth()});
+  expect(found.json().items.map((m:any)=>m.id)).toEqual([a.userMessage.id]);
+  expect((await app.inject({method:'DELETE',url:url(a.userMessage.id),headers:auth(other)})).statusCode).toBe(404);
+  const d=await app.inject({method:'DELETE',url:url(a.userMessage.id),headers:auth()});
+  expect(d.json().deleted).toBe(2);
+  expect((await db.message.findMany({where:{chatId},orderBy:{sequence:'asc'}})).map(m=>m.content)).toEqual(['А теперь о море','Ответ про драконов']);
+ });
+});

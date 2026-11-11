@@ -532,6 +532,23 @@ private fun ChatsScreen(model: NovaViewModel) {
         }
         StoryControls(model)
         if(model.nextBefore!=null)OutlinedButton(onClick={model.loadOlder()},enabled=!model.loading){Text("Более ранние сообщения")}
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(value = model.inChatQuery, onValueChange = { model.inChatQuery = it }, singleLine = true,
+                label = { Text("Поиск в этой переписке") }, modifier = Modifier.weight(1f))
+            TextButton(onClick = { model.searchInChat() }, enabled = !model.loading) { Text("Найти") }
+        }
+        model.inChatResults?.let { found ->
+            NovaCard {
+                Text(if (found.isEmpty()) "Ничего не найдено" else "Найдено: " + found.size, color = Cyan)
+                found.forEach { Text((if (it.role == "user") "Ты: " else "AI: ") + it.content.take(160), style = MaterialTheme.typography.bodySmall) }
+            }
+        }
+        model.editingMessageId?.let {
+            AlertDialog(onDismissRequest = { model.editingMessageId = null }, title = { Text("Изменить сообщение") },
+                text = { OutlinedTextField(value = model.editingMessageText, onValueChange = { model.editingMessageText = it }, modifier = Modifier.fillMaxWidth()) },
+                confirmButton = { TextButton(onClick = { model.saveEditedMessage() }, enabled = !model.loading) { Text("Сохранить") } },
+                dismissButton = { TextButton(onClick = { model.editingMessageId = null }) { Text("Отмена") } })
+        }
         model.chatMessages.forEach { message ->
             Card(
                 colors = CardDefaults.cardColors(
@@ -560,6 +577,13 @@ private fun ChatsScreen(model: NovaViewModel) {
                                 Text(if(model.premiumChatSelected)"Другой ответ · "+(model.aiStatus?.premiumPriceTokens?:5)+" ◈" else "Другой ответ")
                             }
                         if(message.role=="assistant")TextButton(onClick={model.reportMessage(message.id)},enabled=!model.loading){Text("Пожаловаться")}
+                        if(message.role=="user")TextButton(onClick={model.startEditMessage(message)},enabled=!model.loading){Text("Изменить")}
+                        var confirmDelete by remember { mutableStateOf(false) }
+                        TextButton(onClick={confirmDelete=true},enabled=!model.loading){Text("Удалить")}
+                        if(confirmDelete)AlertDialog(onDismissRequest={confirmDelete=false},title={Text("Удалить сообщение?")},
+                            text={Text(if(message.role=="user")"Сообщение и ответ персонажа на него будут удалены." else "Ответ персонажа будет удалён.")},
+                            confirmButton={TextButton(onClick={confirmDelete=false;model.deleteMessage(message)}){Text("Удалить")}},
+                            dismissButton={TextButton(onClick={confirmDelete=false}){Text("Отмена")}})
                     }
                 }
             }

@@ -52,10 +52,12 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
     return {items:items.map(({character,...chat})=>({...chat,characterName:character.name}))};
   });
   app.get('/v1/chats/:id/messages',auth,async(req:any,reply)=>{
-    const q=z.object({before:z.coerce.number().int().positive().optional(),limit:z.coerce.number().int().min(1).max(100).default(50)}).safeParse(req.query);
+    const q=z.object({before:z.coerce.number().int().positive().optional(),limit:z.coerce.number().int().min(1).max(100).default(50),
+      q:z.string().trim().min(1).max(100).optional()}).safeParse(req.query); // q: search inside this conversation
     if(!id.safeParse(req.params.id).success||!q.success)return reply.code(400).send({error:'INVALID_QUERY'});
     if(!await db.chat.findFirst({where:{id:req.params.id,userId:req.user.sub}}))return reply.code(404).send({error:'CHAT_NOT_FOUND'});
-    const rows=await db.message.findMany({where:{chatId:req.params.id,...(q.data.before?{sequence:{lt:q.data.before}}:{})},orderBy:{sequence:'desc'},take:q.data.limit});
+    const rows=await db.message.findMany({where:{chatId:req.params.id,...(q.data.before?{sequence:{lt:q.data.before}}:{}),
+      ...(q.data.q?{content:{contains:q.data.q,mode:'insensitive'}}:{})},orderBy:{sequence:'desc'},take:q.data.limit});
     return {items:rows.reverse(),nextBefore:rows.length===q.data.limit?rows[0].sequence:null};
   });
   app.get('/v1/chats/:id/requests',auth,async(req:any,reply)=>{

@@ -24,6 +24,7 @@ class NovaUiTest {
  private val streamIds=java.util.Collections.synchronizedList(mutableListOf<String>())
  @Volatile private var bonusClaims=0
  @Volatile private var showMature=false
+ @Volatile private var userText="Привет"
  @Before fun setUp(){
   server.dispatcher=object:Dispatcher(){override fun dispatch(r:RecordedRequest):MockResponse {
    if(r.path=="/v1/chats/$chat/messages/stream"){
@@ -49,7 +50,8 @@ class NovaUiTest {
     r.path=="/v1/ai/status" -> """{"provider":"fixture","model":"fixture-only","configured":true,"premiumConfigured":false,"premiumPriceTokens":5,"tokenBalance":0}"""
     r.path=="/v1/chats/$chat/messages" && r.method=="POST" && r.body.clone().readUtf8().contains("\"regenerateMessageId\":\"a\"") -> {regenerated=true;"""{"duplicate":false,"assistantMessage":{"id":"a","role":"assistant","content":"Новая версия ответа","alternatives":["Тестовый ответ сервера"]},"tokensCharged":0}"""}
     r.path=="/v1/chats/$chat/messages" && r.method=="POST" -> {sent=true;"""{"userMessage":{"id":"u","role":"user","content":"Привет"},"assistantMessage":{"id":"a","role":"assistant","content":"Тестовый ответ сервера"}}"""}
-    r.path=="/v1/chats/$chat/messages" && regenerated -> """{"items":[{"id":"u","role":"user","content":"Привет","sequence":1},{"id":"a","role":"assistant","content":"Новая версия ответа","sequence":2,"alternatives":["Тестовый ответ сервера"]}]}"""
+    r.path=="/v1/chats/$chat/messages/u" && r.method=="PATCH" -> {val b=r.body.clone().readUtf8();userText=com.google.gson.JsonParser.parseString(b).asJsonObject.get("content").asString;"""{"updated":true}"""}
+    r.path=="/v1/chats/$chat/messages" && regenerated -> """{"items":[{"id":"u","role":"user","content":"$userText","sequence":1},{"id":"a","role":"assistant","content":"Новая версия ответа","sequence":2,"alternatives":["Тестовый ответ сервера"]}]}"""
     r.path=="/v1/chats/$chat/messages" -> if(sent) """{"items":[{"id":"u","role":"user","content":"Привет","sequence":1},{"id":"a","role":"assistant","content":"Тестовый ответ сервера","sequence":2}]}""" else """{"items":[]}"""
     r.path=="/v1/chats/$chat/memories" -> """{"items":[]}"""
     r.path=="/v1/publications/fixture-publication/comments" && r.method=="POST" -> {commentSent=true;"{}"}
@@ -100,6 +102,12 @@ class NovaUiTest {
   clickWhenEnabled("Другой ответ")
   compose.waitUntil(20000){compose.onAllNodesWithText("Новая версия ответа").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Версия 2 · прежние сохранены").performScrollTo().assertExists();screenshot("04-regenerated")
+  clickWhenEnabled("Изменить")
+  compose.waitUntil(20000){compose.onAllNodes(hasText("Привет") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty()}
+  compose.onNode(hasText("Привет") and hasSetTextAction()).performTextReplacement("Привет, изменено")
+  clickWhenEnabled("Сохранить")
+  compose.waitUntil(20000){compose.onAllNodesWithText("Привет, изменено").fetchSemanticsNodes().isNotEmpty()}
+  assertEquals("Привет, изменено",userText)
   compose.onNodeWithText("Напиши сообщение").performScrollTo().performTextInput("Сохранённый черновик")
   compose.activityRule.scenario.recreate()
   compose.waitUntil(20000){compose.onAllNodesWithText("Сохранённый черновик").fetchSemanticsNodes().isNotEmpty()}
