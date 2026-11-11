@@ -171,6 +171,8 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
           const reader=response.body.getReader();const decoder=new TextDecoder();let buffer='';let out='';
           const limit=tier==='premium'?12000:4000;
           for(;;){
+            // Do not rely on the fetch implementation to abort the body: stop reading as soon as the user cancels.
+            if(opts.signal?.aborted){reader.cancel().catch(()=>{});throw new Error('AI_CANCELLED');}
             const {done,value}=await reader.read();
             buffer+=decoder.decode(value,{stream:!done});
             let nl:number;

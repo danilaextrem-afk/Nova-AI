@@ -157,7 +157,7 @@ describe('Streaming replies over SSE (HTTP fixtures, not live AI)',()=>{
  const streamResponse=(parts:string[],mode:{fail?:boolean,signal?:AbortSignal}={})=>{let i=0;return new Response(new ReadableStream({async pull(c){
   if(i<parts.length){c.enqueue(enc.encode(parts[i++]));return;}
   if(mode.fail)throw new Error('socket hang up');
-  if(mode.signal)await new Promise((_,reject)=>mode.signal!.addEventListener('abort',()=>reject(new Error('aborted'))));
+  if(mode.signal)await new Promise((_,reject)=>{if(mode.signal!.aborted)return reject(new Error('aborted'));mode.signal!.addEventListener('abort',()=>reject(new Error('aborted')));});
   c.close();}}),{status:200,headers:{'content-type':'text/event-stream'}});};
  const stream=(payload:any)=>app.inject({method:'POST',url:`/v1/chats/${chatId}/messages/stream`,headers:auth(),payload});
  const events=(body:string)=>body.split('\n\n').filter(b=>b.startsWith('event:')).map(b=>({name:b.split('\n')[0].slice(7),data:JSON.parse(b.split('\n')[1].slice(6))}));
