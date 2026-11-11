@@ -56,6 +56,9 @@ model User {
   status       String    @default("ACTIVE") // ACTIVE | BLOCKED | DELETED
   createdAt    DateTime  @default(now())
   deletedAt    DateTime?
+  referralCode       String?   @unique // Shareable invite code, created on first request.
+  referredById       String?             // Inviter; set once, within 7 days of registration.
+  referralRewardedAt DateTime?           // Both sides credited (after the invitee's first real chats).
 
   profile       Profile?
   sessions      Session[]
@@ -78,6 +81,7 @@ model User {
   blocksGot     UserBlock[]     @relation("blocked")
 
   @@index([createdAt])
+  @@index([referredById])
 }
 
 model Profile {

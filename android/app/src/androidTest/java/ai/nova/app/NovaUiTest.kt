@@ -22,6 +22,7 @@ class NovaUiTest {
  @Volatile private var streamCalls=0
  @Volatile private var streamFailure=false
  private val streamIds=java.util.Collections.synchronizedList(mutableListOf<String>())
+ @Volatile private var bonusClaims=0
  @Before fun setUp(){
   server.dispatcher=object:Dispatcher(){override fun dispatch(r:RecordedRequest):MockResponse {
    if(r.path=="/v1/chats/$chat/messages/stream"){
@@ -37,6 +38,10 @@ class NovaUiTest {
     r.path?.startsWith("/v1/characters/catalog")==true -> """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет, исследователь!","category":"Приключения","tags":[],"ownerId":"fixture-creator","publication":{"id":"fixture-publication","likesCount":0}}]}"""
     r.path=="/v1/chats" && r.method=="POST" -> """{"chat":{"id":"$chat","characterId":"$character","title":"Аврора Вейл"}}"""
     r.path=="/v1/chats" -> """{"items":[{"id":"$chat","characterId":"$character","title":"Аврора Вейл"}]}"""
+    r.path=="/v1/rewards/daily" && r.method=="POST" -> {bonusClaims++;"""{"granted":true,"amount":2}"""}
+    r.path=="/v1/rewards/daily" -> """{"enabled":true,"amount":2,"claimedToday":${bonusClaims>0}}"""
+    r.path=="/v1/wallet" -> """{"purchased":0,"adReward":0,"bonus":${bonusClaims*2},"total":${bonusClaims*2}}"""
+    r.path=="/v1/referrals" -> """{"code":"NOVA2345","bonusTokens":20,"invited":0,"rewarded":0,"requiredTurns":3,"canApplyCode":true}"""
     r.path=="/v1/ai/status" -> """{"provider":"fixture","model":"fixture-only","configured":true,"premiumConfigured":false,"premiumPriceTokens":5,"tokenBalance":0}"""
     r.path=="/v1/chats/$chat/messages" && r.method=="POST" && r.body.clone().readUtf8().contains("\"regenerateMessageId\":\"a\"") -> {regenerated=true;"""{"duplicate":false,"assistantMessage":{"id":"a","role":"assistant","content":"Новая версия ответа","alternatives":["Тестовый ответ сервера"]},"tokensCharged":0}"""}
     r.path=="/v1/chats/$chat/messages" && r.method=="POST" -> {sent=true;"""{"userMessage":{"id":"u","role":"user","content":"Привет"},"assistantMessage":{"id":"a","role":"assistant","content":"Тестовый ответ сервера"}}"""}
@@ -138,5 +143,17 @@ class NovaUiTest {
  @Test fun allTwelveIndividualPortraitsDecode(){
   for(i in 101..112){val image=NovaCastPortraits.find(compose.activity,"00000000-0000-4000-8000-000000000$i");assertNotNull(image);assertTrue(image!!.width>=1024)}
   assertNull(NovaCastPortraits.find(compose.activity,"ffffffff-ffff-4fff-8fff-000000000101"))
+ }
+ @Test fun dailyBonusAndInviteCodeOnWallet(){
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  compose.waitUntil(20000){compose.onAllNodesWithText("Токены").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Токены").performClick()
+  compose.waitUntil(20000){compose.onAllNodesWithText("NOVA2345").fetchSemanticsNodes().isNotEmpty()}
+  clickWhenEnabled("Забрать +2 ◈")
+  compose.waitUntil(20000){compose.onAllNodesWithText("Получено сегодня. Следующий бонус — завтра.").fetchSemanticsNodes().isNotEmpty()}
+  assertEquals(1,bonusClaims)
+  compose.onNodeWithText("NOVA2345").performScrollTo().assertExists();screenshot("05-wallet-rewards")
  }
 }
