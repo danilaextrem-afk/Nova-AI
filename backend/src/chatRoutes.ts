@@ -16,8 +16,12 @@ export async function premiumPrice(db:PrismaClient) {
   return Number.isInteger(price)&&price>0&&price<=1000?price:5;
 }
 const id=z.string().uuid();
-const sendInput=z.object({content:z.string().trim().min(1).max(4000),requestId:id,
-  tier:z.enum(['free','premium']).default('free'),expectedPriceTokens:z.number().int().min(0).max(1000).optional()}).strict();
+const sendInput=z.object({content:z.string().trim().min(1).max(4000).optional(),requestId:id,
+  tier:z.enum(['free','premium']).default('free'),expectedPriceTokens:z.number().int().min(0).max(1000).optional(),
+  // Regenerate the latest assistant reply instead of sending new text. Earlier versions are kept.
+  regenerateMessageId:id.optional()}).strict()
+  .refine(v=>!!v.content!==!!v.regenerateMessageId,{message:'Exactly one of content or regenerateMessageId'});
+class RegenerateTargetChanged extends Error {}
 function characterPrompt(c:any){return JSON.stringify({name:c.name,biography:c.biography,personality:c.personality,
   speechStyle:c.speechStyle,backstory:c.backstory,scenario:c.scenario,greeting:c.greeting}).slice(0,4500);}
 export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
@@ -72,11 +76,27 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
     const userId=req.user.sub as string;
     const chat=await db.chat.findFirst({where:{id:req.params.id,userId},include:{character:true}});
     if(!chat)return reply.code(404).send({error:'CHAT_NOT_FOUND'});
-    const {content,tier,requestId}=body.data;
-    const fingerprint=createHash('sha256').update(JSON.stringify([chat.id,content,tier])).digest('hex');
+    const {tier,requestId,regenerateMessageId}=body.data;
+    // For regeneration the prompt is the user turn that preceded the latest assistant reply.
+    let content=body.data.content??'';let target:{id:string,sequence:number}|null=null;let promptUser:{sequence:number}|null=null;
+    if(regenerateMessageId){
+      const last=await db.message.findFirst({where:{chatId:chat.id},orderBy:{sequence:'desc'}});
+      const prior=await db.chatRequest.findUnique({where:{id:requestId}});
+      const priorPrint=createHash('sha256').update(JSON.stringify([chat.id,'regenerate',regenerateMessageId,tier])).digest('hex');
+      if(prior&&(prior.userId!==userId||prior.fingerprint!==priorPrint))return reply.code(409).send({error:'REQUEST_ID_USED'});
+      if(prior?.status==='SUCCEEDED'){
+        // Replay returns the committed result even if newer turns were added since.
+        return {duplicate:true,userMessage:null,assistantMessage:(await db.message.findUnique({where:{regeneratedByRequestId:requestId}}))??(prior.targetMessageId?await db.message.findUnique({where:{id:prior.targetMessageId}}):null),tier:prior.tier,tokensCharged:prior.priceTokens};
+      }
+      if(!last||last.id!==regenerateMessageId||last.role!=='assistant')return reply.code(409).send({error:'REGENERATE_ONLY_LATEST_REPLY'});
+      const user=await db.message.findFirst({where:{chatId:chat.id,role:'user',sequence:{lt:last.sequence}},orderBy:{sequence:'desc'}});
+      if(!user)return reply.code(409).send({error:'REGENERATE_NO_USER_TURN'});
+      target={id:last.id,sequence:last.sequence};promptUser={sequence:user.sequence};content=user.content.slice(0,4000);
+    }
+    const fingerprint=createHash('sha256').update(JSON.stringify(regenerateMessageId?[chat.id,'regenerate',regenerateMessageId,tier]:[chat.id,content,tier])).digest('hex');
     const old=await db.chatRequest.findUnique({where:{id:requestId}});
     if(old&&(old.userId!==userId||old.fingerprint!==fingerprint))return reply.code(409).send({error:'REQUEST_ID_USED'});
-    if(old?.status==='SUCCEEDED'){
+    if(old?.status==='SUCCEEDED'&&!regenerateMessageId){
       const [userMessage,assistantMessage]=await Promise.all([db.message.findUnique({where:{requestId}}),db.message.findUnique({where:{replyToRequestId:requestId}})]);
       return {duplicate:true,userMessage,assistantMessage,tier:old.tier,tokensCharged:old.priceTokens};
     }
@@ -99,7 +119,7 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
         const w=await tx.walletAccount.findUnique({where:{userId}});
         if((w?.purchased??0)+(w?.adReward??0)+(w?.bonus??0)<price)return 'INSUFFICIENT_TOKENS';
       }
-      await tx.chatRequest.upsert({where:{id:requestId},create:{id:requestId,userId,chatId:chat.id,content,fingerprint,tier,priceTokens:price},
+      await tx.chatRequest.upsert({where:{id:requestId},create:{id:requestId,userId,chatId:chat.id,content,fingerprint,tier,priceTokens:price,targetMessageId:target?.id??null},
         update:{status:'PENDING',errorCode:null,startedAt:new Date(),priceTokens:price}});
       return 'READY';
     });
@@ -107,7 +127,7 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
     const started=Date.now();
     try {
       const [history,memories,others]=await Promise.all([
-        db.message.findMany({where:{chatId:chat.id},orderBy:{sequence:'desc'},take:tier==='premium'?32:12}),
+        db.message.findMany({where:{chatId:chat.id,...(promptUser?{sequence:{lt:promptUser.sequence}}:{})},orderBy:{sequence:'desc'},take:tier==='premium'?32:12}),
         db.memory.findMany({where:{chatId:chat.id},orderBy:[{pinned:'desc'},{updatedAt:'desc'}],take:tier==='premium'?20:8}),
         db.character.findMany({where:{id:{in:chat.participantIds},...visibleCharacter(userId)}}),
       ]);
@@ -132,9 +152,20 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
         await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
         const reserved=await tx.chatRequest.findUnique({where:{id:requestId}});
         if(!reserved||reserved.status!=='PENDING')throw new Error('REQUEST_EXPIRED');
-        if(price)await debitInTransaction(tx,{userId,amount:price,source:'premium_ai_chat',idempotencyKey:'premium:'+requestId});
-        const userMessage=await tx.message.create({data:{chatId:chat.id,role:'user',content,requestId}});
-        const assistantMessage=await tx.message.create({data:{chatId:chat.id,role:'assistant',content:output.text,replyToRequestId:requestId}});
+        let userMessage:any=null;let assistantMessage:any;
+        if(target){
+          // Lock the chat so a concurrent new turn cannot slip in between the check and the replace.
+          await tx.$queryRaw`SELECT id FROM "Chat" WHERE id = ${chat.id} FOR UPDATE`;
+          const last=await tx.message.findFirst({where:{chatId:chat.id},orderBy:{sequence:'desc'}});
+          if(!last||last.id!==target.id)throw new RegenerateTargetChanged();
+          if(price)await debitInTransaction(tx,{userId,amount:price,source:'premium_ai_chat',idempotencyKey:'premium:'+requestId});
+          assistantMessage=await tx.message.update({where:{id:target.id},data:{content:output.text,editedAt:new Date(),
+            regeneratedByRequestId:requestId,alternatives:[...last.alternatives,last.content].slice(-5)}});
+        }else{
+          if(price)await debitInTransaction(tx,{userId,amount:price,source:'premium_ai_chat',idempotencyKey:'premium:'+requestId});
+          userMessage=await tx.message.create({data:{chatId:chat.id,role:'user',content,requestId}});
+          assistantMessage=await tx.message.create({data:{chatId:chat.id,role:'assistant',content:output.text,replyToRequestId:requestId}});
+        }
         await tx.chatRequest.update({where:{id:requestId},data:{status:'SUCCEEDED',errorCode:null}});
         await tx.aiUsage.create({data:{id:requestId,userId,feature:'chat',provider:output.provider,model:output.model,inputTokens:output.inputTokens,
           outputTokens:output.outputTokens,costMicros:output.costMicros,latencyMs:Date.now()-started,success:true}});
@@ -145,11 +176,13 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       void summarizeChat(db,chat.id,userId).catch(()=>req.log.warn({code:'SUMMARY_DEFERRED'},'Memory summary deferred'));
       return {...saved,duplicate:false,tier,tokensCharged:price};
     }catch(error){
-      const code=error instanceof AiProviderError?error.code:error instanceof InsufficientTokensError?'INSUFFICIENT_TOKENS':'CHAT_STORAGE_FAILURE';
+      const code=error instanceof AiProviderError?error.code:error instanceof InsufficientTokensError?'INSUFFICIENT_TOKENS':
+        error instanceof RegenerateTargetChanged?'REGENERATE_TARGET_CHANGED':'CHAT_STORAGE_FAILURE';
       await db.chatRequest.updateMany({where:{id:requestId,userId,status:'PENDING'},data:{status:'FAILED',errorCode:code}});
       if(error instanceof AiProviderError)reply.header('Retry-After',error.retryAfter);
       req.log.warn({code},'Chat request failed; no token debit committed');
-      return reply.code(error instanceof AiProviderError?error.httpStatus:error instanceof InsufficientTokensError?402:503).send({error:code,requestId});
+      return reply.code(error instanceof AiProviderError?error.httpStatus:error instanceof InsufficientTokensError?402:
+        error instanceof RegenerateTargetChanged?409:503).send({error:code,requestId});
     }
   });
 }

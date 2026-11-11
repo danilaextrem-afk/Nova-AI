@@ -516,9 +516,14 @@ private fun ChatsScreen(model: NovaViewModel) {
                         style = MaterialTheme.typography.labelMedium
                     )
                     Text(message.content, style = MaterialTheme.typography.bodyLarge)
+                    if (!message.alternatives.isNullOrEmpty()) Text("Версия " + (message.alternatives.size + 1) + " · прежние сохранены", style = MaterialTheme.typography.labelSmall)
                     Row(Modifier.horizontalScroll(rememberScrollState())) {
                         SpeakButton(message.content)
                         TextButton(onClick={model.branch(message)},enabled=!model.loading){Text("Ответвить историю")}
+                        if(message.role=="assistant"&&model.chatMessages.lastOrNull()?.id==message.id)
+                            TextButton(onClick={model.regenerate(message)},enabled=!model.loading){
+                                Text(if(model.premiumChatSelected)"Другой ответ · "+(model.aiStatus?.premiumPriceTokens?:5)+" ◈" else "Другой ответ")
+                            }
                         if(message.role=="assistant")TextButton(onClick={model.reportMessage(message.id)},enabled=!model.loading){Text("Пожаловаться")}
                     }
                 }

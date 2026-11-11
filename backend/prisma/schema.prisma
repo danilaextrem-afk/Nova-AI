@@ -176,6 +176,8 @@ model Message {
   sequence  Int @unique @default(autoincrement())
   replyToRequestId String? @unique
   requestId String?  @unique // Idempotency key on user message; the assistant response remains separate.
+  alternatives String[] @default([]) // Earlier versions of a regenerated assistant reply (newest last, max 5).
+  regeneratedByRequestId String? @unique
   chat      Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
 
   @@index([chatId, createdAt])
@@ -383,6 +385,7 @@ model ChatRequest {
   priceTokens Int @default(0)
   status String @default("PENDING")
   errorCode String?
+  targetMessageId String? // Set for regeneration requests: the assistant message being replaced.
   startedAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)

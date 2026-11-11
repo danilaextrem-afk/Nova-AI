@@ -17,6 +17,7 @@ class NovaUiTest {
  private val character="00000000-0000-4000-8000-000000000101"
  private val chat="10000000-0000-4000-8000-000000000001"
  private var sent=false
+ @Volatile private var regenerated=false
  @Before fun setUp(){
   server.dispatcher=object:Dispatcher(){override fun dispatch(r:RecordedRequest):MockResponse {
    val json=when {
@@ -25,7 +26,9 @@ class NovaUiTest {
     r.path=="/v1/chats" && r.method=="POST" -> """{"chat":{"id":"$chat","characterId":"$character","title":"Аврора Вейл"}}"""
     r.path=="/v1/chats" -> """{"items":[{"id":"$chat","characterId":"$character","title":"Аврора Вейл"}]}"""
     r.path=="/v1/ai/status" -> """{"provider":"fixture","model":"fixture-only","configured":true,"premiumConfigured":false,"premiumPriceTokens":5,"tokenBalance":0}"""
+    r.path=="/v1/chats/$chat/messages" && r.method=="POST" && r.body.clone().readUtf8().contains("\"regenerateMessageId\":\"a\"") -> {regenerated=true;"""{"duplicate":false,"assistantMessage":{"id":"a","role":"assistant","content":"Новая версия ответа","alternatives":["Тестовый ответ сервера"]},"tokensCharged":0}"""}
     r.path=="/v1/chats/$chat/messages" && r.method=="POST" -> {sent=true;"""{"userMessage":{"id":"u","role":"user","content":"Привет"},"assistantMessage":{"id":"a","role":"assistant","content":"Тестовый ответ сервера"}}"""}
+    r.path=="/v1/chats/$chat/messages" && regenerated -> """{"items":[{"id":"u","role":"user","content":"Привет","sequence":1},{"id":"a","role":"assistant","content":"Новая версия ответа","sequence":2,"alternatives":["Тестовый ответ сервера"]}]}"""
     r.path=="/v1/chats/$chat/messages" -> if(sent) """{"items":[{"id":"u","role":"user","content":"Привет","sequence":1},{"id":"a","role":"assistant","content":"Тестовый ответ сервера","sequence":2}]}""" else """{"items":[]}"""
     r.path=="/v1/chats/$chat/memories" -> """{"items":[]}"""
     r.path=="/v1/auth/logout" -> "{}"
@@ -70,6 +73,9 @@ class NovaUiTest {
   clickWhenEnabled("Отправить бесплатно")
   compose.waitUntil(20000){compose.onAllNodesWithText("Тестовый ответ сервера").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Тестовый ответ сервера").performScrollTo();screenshot("03-chat")
+  clickWhenEnabled("Другой ответ")
+  compose.waitUntil(20000){compose.onAllNodesWithText("Новая версия ответа").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Версия 2 · прежние сохранены").performScrollTo().assertExists();screenshot("04-regenerated")
   compose.onNodeWithText("Напиши сообщение").performScrollTo().performTextInput("Сохранённый черновик")
   compose.activityRule.scenario.recreate()
   compose.waitUntil(20000){compose.onAllNodesWithText("Сохранённый черновик").fetchSemanticsNodes().isNotEmpty()}

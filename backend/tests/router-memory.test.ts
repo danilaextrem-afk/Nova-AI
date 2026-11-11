@@ -110,3 +110,42 @@ describe('Default free pool (no NOVA_AI_MODELS_JSON; HTTP fixtures, not live AI)
   expect(modelPool('premium').map(m=>m.model)).toEqual(['openai/gpt-oss-120b']);
  });
 });
+
+describe('Regenerate latest reply (HTTP fixtures, not live AI)',()=>{
+ const regen=(messageId:string,requestId=randomUUID(),tier='free',expectedPriceTokens=5)=>app.inject({method:'POST',url:`/v1/chats/${chatId}/messages`,headers:auth(),payload:{regenerateMessageId:messageId,requestId,tier,expectedPriceTokens}});
+ it('replaces only the latest reply, keeps the old version, reuses the same user turn and charges nothing on Free',async()=>{
+  vi.stubGlobal('fetch',vi.fn(async()=>ok('Первый ответ')));const first=(await send('Расскажи историю')).json();
+  const start=await balance(db,userId);
+  const mock=vi.fn(async(_u:any,_i:any)=>ok('Другой ответ'));vi.stubGlobal('fetch',mock);
+  const id=randomUUID();const r=await regen(first.assistantMessage.id,id);
+  expect(r.statusCode,r.body).toBe(200);expect(r.json().tokensCharged).toBe(0);
+  const sent=JSON.parse(mock.mock.calls[0][1].body).messages;
+  expect(sent.at(-1)).toEqual({role:'user',content:'Расскажи историю'});
+  expect(sent.some((m:any)=>m.content==='Первый ответ')).toBe(false);
+  const msg=await db.message.findUnique({where:{id:first.assistantMessage.id}});
+  expect(msg!.content).toBe('Другой ответ');expect(msg!.alternatives).toEqual(['Первый ответ']);
+  expect(await db.message.count({where:{chatId}})).toBe(2);expect(await balance(db,userId)).toEqual(start);
+  const replay=await regen(first.assistantMessage.id,id);expect(replay.json().duplicate).toBe(true);
+  expect(replay.json().assistantMessage.content).toBe('Другой ответ');expect(mock).toHaveBeenCalledTimes(1);
+  const tierSwap=await regen(first.assistantMessage.id,id,'premium');expect(tierSwap.statusCode).toBe(409);
+ });
+ it('refuses to regenerate an older reply and never touches user text',async()=>{
+  vi.stubGlobal('fetch',vi.fn(async()=>ok()));const a=(await send('Один')).json();await send('Два');
+  const r=await regen(a.assistantMessage.id);expect(r.statusCode).toBe(409);expect(r.json().error).toBe('REGENERATE_ONLY_LATEST_REPLY');
+  const u=await regen(a.userMessage.id);expect(u.statusCode).toBe(409);
+  const both=await app.inject({method:'POST',url:`/v1/chats/${chatId}/messages`,headers:auth(),payload:{content:'x',regenerateMessageId:a.assistantMessage.id,requestId:randomUUID()}});
+  expect(both.statusCode).toBe(400);
+ });
+ it('Premium regeneration debits once on success and nothing when the provider fails',async()=>{
+  vi.stubGlobal('fetch',vi.fn(async()=>ok()));const a=(await send('Сцена')).json();
+  await credit(db,{userId,bucket:'BONUS',amount:20,source:'test',idempotencyKey:randomUUID()});const before=await balance(db,userId);
+  vi.stubGlobal('fetch',vi.fn(async()=>new Response('{}',{status:500})));
+  const failed=await regen(a.assistantMessage.id,randomUUID(),'premium');expect(failed.statusCode).toBeGreaterThanOrEqual(500);
+  expect(await balance(db,userId)).toEqual(before);
+  await db.aiProviderState.updateMany({data:{retryAt:null}});
+  vi.stubGlobal('fetch',vi.fn(async()=>ok('Премиум-версия')));const id=randomUUID();
+  const done=await regen(a.assistantMessage.id,id,'premium');expect(done.statusCode,done.body).toBe(200);
+  expect(done.json().tokensCharged).toBe(5);await regen(a.assistantMessage.id,id,'premium');
+  expect((await balance(db,userId)).total).toBe(before.total-5);
+ });
+});
