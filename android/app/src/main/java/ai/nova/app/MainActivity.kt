@@ -516,7 +516,7 @@ private fun ChatsScreen(model: NovaViewModel) {
                         style = MaterialTheme.typography.labelMedium
                     )
                     Text(message.content, style = MaterialTheme.typography.bodyLarge)
-                    if (message.alternatives.isNotEmpty()) Text("Версия " + (message.alternatives.size + 1) + " · прежние сохранены", style = MaterialTheme.typography.labelSmall)
+                    if (!message.alternatives.isNullOrEmpty()) Text("Версия " + (message.alternatives.size + 1) + " · прежние сохранены", style = MaterialTheme.typography.labelSmall)
                     Row(Modifier.horizontalScroll(rememberScrollState())) {
                         SpeakButton(message.content)
                         TextButton(onClick={model.branch(message)},enabled=!model.loading){Text("Ответвить историю")}
