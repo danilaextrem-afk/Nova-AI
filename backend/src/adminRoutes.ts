@@ -25,6 +25,12 @@ export async function registerAdminRoutes(app:FastifyInstance,db:PrismaClient){
   await db.$transaction(async tx=>{await tx.setting.upsert({where:{key:'premiumPriceTokens'},create:{key:'premiumPriceTokens',value:p.data.tokens},update:{value:p.data.tokens}});
    await tx.auditLog.create({data:{adminId:req.user.sub,action:'CHANGE_PREMIUM_PRICE',meta:{tokens:p.data.tokens}}});});return {ok:true};
  });
+ app.put('/v1/admin/reward-settings',{preHandler:admin},async(req:any,reply)=>{
+  const p=z.object({dailyBonusTokens:z.number().int().min(0).max(100).optional(),referralBonusTokens:z.number().int().min(0).max(500).optional()})
+   .strict().refine(v=>Object.keys(v).length>0).safeParse(req.body);if(!p.success)return reply.code(400).send({error:'INVALID_REWARD_SETTINGS'});
+  await db.$transaction(async tx=>{for(const [key,value] of Object.entries(p.data))await tx.setting.upsert({where:{key},create:{key,value},update:{value}});
+   await tx.auditLog.create({data:{adminId:req.user.sub,action:'CHANGE_REWARD_SETTINGS',meta:p.data}});});return {ok:true};
+ });
  app.put('/v1/admin/publications/:id',{preHandler:admin},async(req:any,reply)=>{
   const p=z.object({status:z.enum(['PUBLISHED','REJECTED','HIDDEN'])}).strict().safeParse(req.body);if(!p.success)return reply.code(400).send({error:'INVALID_STATUS'});
   await db.$transaction(async tx=>{const publication=await tx.publication.update({where:{id:req.params.id},data:{status:p.data.status,publishedAt:p.data.status==='PUBLISHED'?new Date():null},include:{character:true}});

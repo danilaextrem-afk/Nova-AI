@@ -198,7 +198,20 @@ interface NovaApi {
 
     @GET("v1/wallet")
     suspend fun wallet(@Header("Authorization") bearer: String): TokenWallet
+    @GET("v1/rewards/daily") suspend fun dailyBonus(@Header("Authorization") bearer: String): DailyBonusStatus
+    @POST("v1/rewards/daily") suspend fun claimDailyBonus(@Header("Authorization") bearer: String): DailyBonusResult
+    @GET("v1/referrals") suspend fun referrals(@Header("Authorization") bearer: String): ReferralStatus
+    @POST("v1/referrals/apply") suspend fun applyReferral(@Header("Authorization") bearer: String, @Body body: ApplyReferralBody): ApplyReferralResult
 
     @GET("v1/wallet/transactions")
     suspend fun transactions(@Header("Authorization") bearer: String): TransactionPage
 }
+
+// Rewards. Gson ignores Kotlin defaults for absent fields, so object/string fields are nullable.
+data class DailyBonusStatus(val enabled: Boolean = false, val amount: Int = 0, val claimedToday: Boolean = false, val nextAt: String? = null)
+data class DailyBonusResult(val granted: Boolean = false, val amount: Int = 0, val nextAt: String? = null)
+data class MyInvite(val rewarded: Boolean = false, val turns: Int = 0)
+data class ReferralStatus(val code: String? = null, val bonusTokens: Int = 0, val invited: Int = 0, val rewarded: Int = 0,
+    val requiredTurns: Int = 3, val myInvite: MyInvite? = null, val canApplyCode: Boolean = false)
+data class ApplyReferralBody(val code: String)
+data class ApplyReferralResult(val applied: Boolean = false, val rewarded: Boolean = false, val requiredTurns: Int = 3)

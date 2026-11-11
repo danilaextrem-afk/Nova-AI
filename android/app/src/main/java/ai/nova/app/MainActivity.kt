@@ -646,6 +646,7 @@ private fun WalletScreen(model: NovaViewModel) {
             Text("Обновить баланс")
         }
     }
+    RewardCards(model)
     NovaCard {
         Text("История операций", fontWeight = FontWeight.Bold)
         if (model.transactions.isEmpty()) Text("Пока нет операций.")
@@ -681,5 +682,46 @@ private fun AccountScreen(model: NovaViewModel) {
         model.notifications.forEach {n-> Text(n.title+" · "+n.body);if(n.readAt==null)TextButton(onClick={model.readNotification(n.id)}){Text("Прочитано")} }
         OutlinedTextField(value=model.supportText,onValueChange={model.supportText=it},label={Text("Обращение в поддержку")},modifier=Modifier.fillMaxWidth())
         Button(onClick={model.sendSupport()},enabled=!model.loading&&model.supportText.length>=5){Text("Отправить обращение")}
+    }
+}
+
+@Composable
+private fun RewardCards(model: NovaViewModel) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    model.dailyBonus?.takeIf { it.enabled }?.let { bonus ->
+        NovaCard {
+            Text("Ежедневный бонус", fontWeight = FontWeight.Bold, color = Cyan)
+            if (bonus.claimedToday) Text("Получено сегодня. Следующий бонус — завтра.", color = Color.LightGray)
+            else Button(onClick = { model.claimDailyBonus() }, enabled = !model.loading, modifier = Modifier.fillMaxWidth()) {
+                Text("Забрать +" + bonus.amount + " ◈")
+            }
+        }
+    }
+    model.referral?.let { ref ->
+        NovaCard {
+            Text("Пригласи друга", fontWeight = FontWeight.Bold, color = Cyan)
+            if (ref.bonusTokens > 0) Text("Вам обоим по " + ref.bonusTokens + " ◈, когда друг отправит " + ref.requiredTurns + " сообщения в чате.",
+                style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+            ref.code?.let { code ->
+                Text(code, fontSize = 28.sp, fontWeight = FontWeight.Black, letterSpacing = 3.sp)
+                OutlinedButton(onClick = {
+                    val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType("text/plain")
+                        .putExtra(android.content.Intent.EXTRA_TEXT, "Присоединяйся к NOVA AI! Мой код приглашения: " + code)
+                    runCatching { context.startActivity(android.content.Intent.createChooser(send, "Поделиться кодом")) }
+                }) { Text("Поделиться кодом") }
+            }
+            Text("Приглашено: " + ref.invited + " · бонус получен за: " + ref.rewarded)
+            ref.myInvite?.let { mine ->
+                Text(if (mine.rewarded) "Бонус за твоё приглашение получен"
+                    else "Твой код друга принят: " + mine.turns + " из " + ref.requiredTurns + " сообщений", color = Color.LightGray)
+            }
+            if (ref.canApplyCode) {
+                OutlinedTextField(value = model.referralInput, onValueChange = { model.referralInput = it.take(8) },
+                    label = { Text("Код друга") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                OutlinedButton(onClick = { model.applyReferralCode() }, enabled = !model.loading && model.referralInput.length == 8) {
+                    Text("Применить код")
+                }
+            }
+        }
     }
 }

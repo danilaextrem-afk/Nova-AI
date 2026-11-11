@@ -5,6 +5,7 @@ import { z } from 'zod';
 import { aiSettings, completeAiChat, AiProviderError, premiumReady } from './aiGateway.js';
 import type { AiMessage, AiStreamOptions } from './aiGateway.js';
 import { summarizeChat } from './storyRoutes.js';
+import { settleReferral } from './rewardRoutes.js';
 import { balance, debitInTransaction, InsufficientTokensError } from './ledger.js';
 
 export const visibleCharacter = (userId:string):Prisma.CharacterWhereInput => ({OR:[
@@ -199,6 +200,8 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       });
       // Summary is best-effort and never affects the committed answer or its charge.
       void summarizeChat(db,chat.id,userId).catch(()=>req.log.warn({code:'SUMMARY_DEFERRED'},'Memory summary deferred'));
+      // Referral rewards unlock after the invitee's first real chats; best-effort, idempotent.
+      void settleReferral(db,userId).catch(()=>req.log.warn({code:'REFERRAL_DEFERRED'},'Referral settle deferred'));
       return {...saved,duplicate:false,tier,tokensCharged:price};
     }catch(error){
       const code=error instanceof AiProviderError?error.code:error instanceof InsufficientTokensError?'INSUFFICIENT_TOKENS':

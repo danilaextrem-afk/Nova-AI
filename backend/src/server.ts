@@ -15,6 +15,7 @@ import { registerStoryRoutes } from './storyRoutes.js';
 import { registerProductRoutes } from './productRoutes.js';
 import { registerAdminRoutes } from './adminRoutes.js';
 import { registerChatRoutes } from './chatRoutes.js';
+import { registerRewardRoutes } from './rewardRoutes.js';
 import { seedStarterCast } from './starterCast.js';
 
 declare module 'fastify' {
@@ -231,6 +232,7 @@ await registerChatRoutes(app, db);
 await registerStoryRoutes(app,db);
 await registerProductRoutes(app,db);
 await registerAdminRoutes(app,db);
+await registerRewardRoutes(app,db);
 
 for (const [sku, tokens] of Object.entries(PRODUCT_SEED)) {
   await db.paymentProduct.upsert({ where: { sku }, create: { sku, tokens }, update: {} });
