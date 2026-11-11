@@ -168,21 +168,26 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
         if(streaming){
           // OpenAI-compatible SSE: "data: {choices:[{delta:{content}}]}" lines, optional usage chunk, "data: [DONE]".
           if(!response.body){code='AI_EMPTY_RESPONSE';throw new Error(code);}
-          const reader=response.body.getReader();const decoder=new TextDecoder();let buffer='';let out='';
+          const reader=response.body.getReader();const decoder=new TextDecoder();let buffer='';let out='';let completed=false;
           const limit=tier==='premium'?12000:4000;
           for(;;){
             // Do not rely on the fetch implementation to abort the body: stop reading as soon as the user cancels.
             if(opts.signal?.aborted){reader.cancel().catch(()=>{});throw new Error('AI_CANCELLED');}
             const {done,value}=await reader.read();
             buffer+=decoder.decode(value,{stream:!done});
+            if(buffer.length>1048576)throw new Error('AI_INVALID_STREAM');
+            if(done&&buffer&&!buffer.endsWith('\n'))buffer+='\n';
             let nl:number;
             while((nl=buffer.indexOf('\n'))>=0){
               const line=buffer.slice(0,nl).trim();buffer=buffer.slice(nl+1);
               if(!line.startsWith('data:'))continue;
-              const data=line.slice(5).trim();if(!data||data==='[DONE]')continue;
+              const data=line.slice(5).trim();if(data==='[DONE]'){completed=true;continue;}if(!data)continue;
               let chunk:any;try{chunk=JSON.parse(data);}catch{continue;}
               if(chunk?.error){code='AI_UPSTREAM_ERROR';throw new Error(code);}
               if(chunk?.usage)usage=chunk.usage;
+              const finish=chunk?.choices?.[0]?.finish_reason;
+              if(finish==='stop'||finish==='length')completed=true;
+              if(finish==='content_filter'){code='AI_CONTENT_FILTERED';throw new Error(code);}
               const delta=chunk?.choices?.[0]?.delta?.content;
               if(typeof delta==='string'&&delta&&out.length<limit){
                 const piece=delta.slice(0,limit-out.length);out+=piece;emitted=true;opts.onDelta!(piece);
@@ -190,11 +195,13 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
             }
             if(done)break;
           }
+          if(!completed){code='AI_STREAM_INTERRUPTED';throw new Error(code);}
           text=out;
         }else{
           const obj=await response.json() as {choices?:{message?:{content?:unknown}}[];usage?:Usage};
           text=obj?.choices?.[0]?.message?.content;usage=obj?.usage;
         }
+        if(opts.signal?.aborted)throw new Error('AI_CANCELLED');
         if(typeof text!=='string'||!text.trim()){code='AI_EMPTY_RESPONSE';throw new Error(code);}
         const num=(x:unknown,fallback:number)=>typeof x==='number'&&Number.isSafeInteger(x)&&x>=0?x:fallback;
         const inputTokens=num(usage?.prompt_tokens,inputEstimate), outputTokens=num(usage?.completion_tokens,maxOutput);

@@ -9,7 +9,7 @@ import { settleReferral } from './rewardRoutes.js';
 import { balance, debitInTransaction, InsufficientTokensError } from './ledger.js';
 
 export const visibleCharacter = (userId:string):Prisma.CharacterWhereInput => ({OR:[
-  {ownerId:userId},{isHidden:false,publication:{is:{status:'PUBLISHED'}}},
+  {ownerId:userId},{isHidden:false,publication:{is:{status:'PUBLISHED'}},owner:{blocksGot:{none:{blockerId:userId}},blocksMade:{none:{blockedId:userId}}}},
 ]});
 export async function premiumPrice(db:PrismaClient) {
   const setting=await db.setting.findUnique({where:{key:'premiumPriceTokens'}});
@@ -93,7 +93,7 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       if(result===captured)event(captured.statusCode<300?'done':'error',{status:captured.statusCode,
         retryAfter:captured.headers['Retry-After']??null,...(captured.body as object)});
       else event('done',result);
-    }catch(error){req.log.error({err:error},'Stream handler failed');event('error',{status:500,error:'STREAM_FAILURE'});}
+    }catch(error){req.log.error({code:'STREAM_FAILURE'},'Stream handler failed');event('error',{status:500,error:'STREAM_FAILURE'});}
     finally{clearInterval(ping);if(!raw.writableEnded)raw.end();}
   });
   async function sendMessage(req:any,reply:any,stream:AiStreamOptions={}){
@@ -122,6 +122,7 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
     const fingerprint=createHash('sha256').update(JSON.stringify(regenerateMessageId?[chat.id,'regenerate',regenerateMessageId,tier]:[chat.id,content,tier])).digest('hex');
     const old=await db.chatRequest.findUnique({where:{id:requestId}});
     if(old&&(old.userId!==userId||old.fingerprint!==fingerprint))return reply.code(409).send({error:'REQUEST_ID_USED'});
+    if(old?.status==='FAILED'&&['CHAT_STORAGE_FAILURE','AI_COORDINATOR_FAILURE'].includes(old.errorCode||''))return reply.code(409).send({error:'REQUEST_REQUIRES_REVIEW'});
     if(old?.status==='SUCCEEDED'&&!regenerateMessageId){
       const [userMessage,assistantMessage]=await Promise.all([db.message.findUnique({where:{requestId}}),db.message.findUnique({where:{replyToRequestId:requestId}})]);
       return {duplicate:true,userMessage,assistantMessage,tier:old.tier,tokensCharged:old.priceTokens};
@@ -175,7 +176,9 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       const messages:AiMessage[]=[{role:'system',content:system.slice(0,18000)},...recent,{role:'user',content}];
       const output=await completeAiChat(messages,tier,db,requestId,stream);
       const saved=await db.$transaction(async tx=>{
+        if(stream.signal?.aborted)throw new AiProviderError('AI_CANCELLED',499,1);
         await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+        if(stream.signal?.aborted)throw new AiProviderError('AI_CANCELLED',499,1);
         const reserved=await tx.chatRequest.findUnique({where:{id:requestId}});
         if(!reserved||reserved.status!=='PENDING')throw new Error('REQUEST_EXPIRED');
         let userMessage:any=null;let assistantMessage:any;

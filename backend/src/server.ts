@@ -11,6 +11,7 @@ import { balance } from './ledger.js';
 import { verifySsv } from './admobSsv.js';
 import { verifyAndCreditPurchase } from './billing.js';
 import { registerCharacterRoutes } from './characters.js';
+import { registerSocialRoutes } from './socialRoutes.js';
 import { registerStoryRoutes } from './storyRoutes.js';
 import { registerProductRoutes } from './productRoutes.js';
 import { registerAdminRoutes } from './adminRoutes.js';
@@ -38,7 +39,7 @@ const app = Fastify({
 
 await app.register(helmet);
 await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
-await app.register(jwt, { secret: config.jwtSecret, sign: { expiresIn: config.accessTtlSec } });
+await app.register(jwt, { secret: config.jwtSecret, sign: { expiresIn: config.accessTtlSec, algorithm:'HS256' }, verify:{algorithms:['HS256']} });
 
 app.decorate('auth', async (req: any, reply: any) => {
   try {
@@ -70,7 +71,11 @@ const creds = z.object({ email: z.string().email().max(254), password: z.string(
 
 app.get('/health', async () => ({ ok: true }));
 app.get('/ready',async(_req,reply)=>{try{await db.$queryRaw`SELECT 1`;return {ok:true};}catch{return reply.code(503).send({ok:false});}});
-app.setErrorHandler((error,req,reply)=>{req.log.error({code:(error as any).code||'INTERNAL'},'Request failed');return reply.code(500).send({error:'INTERNAL_ERROR'});});
+app.setErrorHandler((error,req,reply)=>{
+ const status=(error as any).statusCode;
+ if(Number.isInteger(status)&&status>=400&&status<500)return reply.code(status).send({error:status===429?'RATE_LIMITED':status===413?'BODY_TOO_LARGE':'INVALID_REQUEST'});
+ req.log.error({code:(error as any).code||'INTERNAL'},'Request failed');return reply.code(500).send({error:'INTERNAL_ERROR'});
+});
 app.post('/v1/auth/logout',{preHandler:app.auth},async(req:any)=>{await db.session.updateMany({where:{userId:req.user.sub},data:{revokedAt:new Date()}});return {ok:true};});
 
 app.post('/v1/auth/register', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
@@ -230,6 +235,7 @@ app.get('/v1/ads/ssv', async (req, reply) => {
 await registerCharacterRoutes(app, db);
 await registerChatRoutes(app, db);
 await registerStoryRoutes(app,db);
+await registerSocialRoutes(app,db);
 await registerProductRoutes(app,db);
 await registerAdminRoutes(app,db);
 await registerRewardRoutes(app,db);

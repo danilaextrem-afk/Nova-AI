@@ -16,13 +16,18 @@ class NovaUiTest {
  private val server=MockWebServer()
  private val character="00000000-0000-4000-8000-000000000101"
  private val chat="10000000-0000-4000-8000-000000000001"
- private var sent=false
+ @Volatile private var sent=false
+ @Volatile private var commentSent=false
  @Volatile private var regenerated=false
  @Volatile private var streamCalls=0
+ @Volatile private var streamFailure=false
+ private val streamIds=java.util.Collections.synchronizedList(mutableListOf<String>())
  @Volatile private var bonusClaims=0
  @Before fun setUp(){
   server.dispatcher=object:Dispatcher(){override fun dispatch(r:RecordedRequest):MockResponse {
    if(r.path=="/v1/chats/$chat/messages/stream"){
+    streamIds.add(com.google.gson.JsonParser.parseString(r.body.readUtf8()).asJsonObject.get("requestId").asString)
+    if(streamFailure)return MockResponse().setResponseCode(503).setHeader("Content-Type","application/json").setBody("{\"error\":\"AI_NOT_CONFIGURED\"}")
     sent=true;streamCalls++
     val sse="event: delta\ndata: {\"text\":\"Тестовый \"}\n\n"+"event: delta\ndata: {\"text\":\"ответ сервера\"}\n\n"+
      "event: done\ndata: {\"userMessage\":{\"id\":\"u\",\"role\":\"user\",\"content\":\"Привет\"},\"assistantMessage\":{\"id\":\"a\",\"role\":\"assistant\",\"content\":\"Тестовый ответ сервера\"},\"tokensCharged\":0}\n\n"
@@ -30,7 +35,7 @@ class NovaUiTest {
    }
    val json=when {
     r.path=="/v1/auth/login" -> """{"accessToken":"fixture-token","refreshToken":"fixture-refresh-token"}"""
-    r.path?.startsWith("/v1/characters/catalog")==true -> """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет, исследователь!","category":"Приключения","tags":[]}]}"""
+    r.path?.startsWith("/v1/characters/catalog")==true -> """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет, исследователь!","category":"Приключения","tags":[],"ownerId":"fixture-creator","publication":{"id":"fixture-publication","likesCount":0}}]}"""
     r.path=="/v1/chats" && r.method=="POST" -> """{"chat":{"id":"$chat","characterId":"$character","title":"Аврора Вейл"}}"""
     r.path=="/v1/chats" -> """{"items":[{"id":"$chat","characterId":"$character","title":"Аврора Вейл"}]}"""
     r.path=="/v1/rewards/daily" && r.method=="POST" -> {bonusClaims++;"""{"granted":true,"amount":2}"""}
@@ -43,6 +48,8 @@ class NovaUiTest {
     r.path=="/v1/chats/$chat/messages" && regenerated -> """{"items":[{"id":"u","role":"user","content":"Привет","sequence":1},{"id":"a","role":"assistant","content":"Новая версия ответа","sequence":2,"alternatives":["Тестовый ответ сервера"]}]}"""
     r.path=="/v1/chats/$chat/messages" -> if(sent) """{"items":[{"id":"u","role":"user","content":"Привет","sequence":1},{"id":"a","role":"assistant","content":"Тестовый ответ сервера","sequence":2}]}""" else """{"items":[]}"""
     r.path=="/v1/chats/$chat/memories" -> """{"items":[]}"""
+    r.path=="/v1/publications/fixture-publication/comments" && r.method=="POST" -> {commentSent=true;"{}"}
+    r.path=="/v1/publications/fixture-publication/comments" -> if(commentSent) """{"items":[{"id":"comment","content":"Интересная история","status":"PENDING_REVIEW"}]}""" else """{"items":[]}"""
     r.path=="/v1/auth/logout" -> "{}"
     else -> """{"items":[]}"""
    };return MockResponse().setHeader("Content-Type","application/json").setBody(json)
@@ -62,7 +69,7 @@ class NovaUiTest {
  private fun screenshot(name:String){
   val image=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
   val dir=File(compose.activity.getExternalFilesDir(null),"screenshots");dir.mkdirs()
-  File(dir,name+".png").outputStream().use {image.compress(Bitmap.CompressFormat.PNG,100,it)}
+  File(dir,name+"-"+image.width+"x"+image.height+".png").outputStream().use {image.compress(Bitmap.CompressFormat.PNG,100,it)}
  }
  // Buttons are disabled while a request is in flight (enabled=!model.loading). Clicking a disabled
  // button is a no-op, so wait for the enabled state exactly as a person would before tapping.
@@ -93,6 +100,39 @@ class NovaUiTest {
   compose.activityRule.scenario.recreate()
   compose.waitUntil(20000){compose.onAllNodesWithText("Сохранённый черновик").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Сохранённый черновик").performScrollTo().assertExists()
+ }
+ @Test fun failedNetworkRequestKeepsDraftAndRequestIdAcrossRecreation(){
+  streamFailure=true
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  compose.waitUntil(20000){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Каталог").performClick();clickWhenEnabled("Начать AI-чат")
+  compose.waitUntil(20000){compose.onAllNodesWithText("Напиши сообщение").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Напиши сообщение").performScrollTo().performTextInput("Привет")
+  clickWhenEnabled("Отправить бесплатно")
+  compose.waitUntil(20000){compose.onAllNodesWithText("AI-провайдер ещё не подключён или временно недоступен").fetchSemanticsNodes().isNotEmpty()}
+  compose.activityRule.scenario.recreate()
+  compose.waitUntil(20000){compose.onAllNodesWithText("Привет").fetchSemanticsNodes().isNotEmpty()}
+  streamFailure=false;clickWhenEnabled("Отправить бесплатно")
+  compose.waitUntil(20000){compose.onAllNodesWithText("Тестовый ответ сервера").fetchSemanticsNodes().isNotEmpty()}
+  assertEquals(2,streamIds.size);assertEquals(streamIds[0],streamIds[1])
+ }
+ @Test fun communityCommentClearlyShowsPendingModeration(){
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  compose.onNodeWithText("Войти",useUnmergedTree=true).performScrollTo().performClick()
+  compose.waitUntil(20000){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Каталог").performClick()
+  compose.waitUntil(20000){compose.onAllNodes(hasText("Обсуждение") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Обсуждение").performScrollTo().performClick()
+  compose.waitUntil(20000){compose.onAllNodesWithText("Комментарий").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Комментарий").performScrollTo().performTextInput("Интересная история")
+  compose.waitUntil(20000){compose.onAllNodes(hasText("Отправить комментарий") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Отправить комментарий").performScrollTo().performClick()
+  compose.waitUntil(20000){compose.onAllNodesWithText("Интересная история · На модерации").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Интересная история · На модерации").performScrollTo().assertExists()
+  screenshot("04-comment-pending")
  }
  @Test fun sessionStoreEncryptsAndReadsAcrossInstances(){
   val a=SessionStore(compose.activity);a.put("secret-test","never-plaintext-123")

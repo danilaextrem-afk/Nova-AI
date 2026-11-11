@@ -69,3 +69,9 @@ describe('AdMob server-side signature verification', () => {
     });
   });
 });
+
+it('rejects unsigned appended reward data and duplicate signed parameters', async()=>{
+ expect(await verifySsv(signedCallback()+'&user_id=attacker',opts)).toEqual({ok:false,reason:'INVALID_SIGNATURE_TRAILER'});
+ const raw='user_id=one&user_id=two&signature=xxx&key_id=999';
+ expect(await verifySsv(raw,opts)).toEqual({ok:false,reason:'DUPLICATE_PARAMETER'});
+});

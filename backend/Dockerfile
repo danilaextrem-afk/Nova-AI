@@ -4,7 +4,7 @@ RUN apt-get update && apt-get install -y openssl && rm -rf /var/lib/apt/lists/*
 COPY package*.json ./
 RUN npm ci --no-audit --no-fund
 COPY . .
-RUN npm run build
+RUN npm run build && npm prune --omit=dev --no-audit --no-fund
 
 FROM node:22-slim
 WORKDIR /app

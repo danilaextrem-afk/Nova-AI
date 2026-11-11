@@ -34,6 +34,7 @@ jobs:
         with:
           node-version: 22
       - run: npm ci --no-audit --no-fund
+      - run: npm audit --omit=dev --audit-level=high
       - run: npx prisma generate
       - name: Apply versioned Prisma migrations to isolated CI PostgreSQL
         run: npx prisma migrate deploy
@@ -133,7 +134,13 @@ jobs:
           disable-animations: true
           script: |
             cd android && gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
-            adb pull /sdcard/Android/data/ai.nova.app/files/screenshots ../ui-screenshots
+            adb pull /sdcard/Android/data/ai.nova.app/files/screenshots "$GITHUB_WORKSPACE/ui-screenshots"
+            mkdir -p "$GITHUB_WORKSPACE/ui-standard-reports"
+            cp -R "$GITHUB_WORKSPACE/android/app/build/reports/androidTests" "$GITHUB_WORKSPACE/ui-standard-reports/"
+            adb shell wm size 480x800
+            adb shell wm density 240
+            cd "$GITHUB_WORKSPACE/android" && gradle :app:connectedDebugAndroidTest --rerun-tasks --no-daemon -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
+            adb pull /sdcard/Android/data/ai.nova.app/files/screenshots "$GITHUB_WORKSPACE/ui-small-screenshots"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -142,17 +149,19 @@ jobs:
             android/app/build/reports/androidTests
             android/app/build/outputs/androidTest-results
             ui-screenshots
+            ui-standard-reports
+            ui-small-screenshots
 
   source_archive:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - name: Package tracked source files
-        run: git archive --format=zip --output=NOVA-AI-FINAL-SOURCE.zip HEAD
+        run: git archive --format=zip --output=NOVA-AI-FULL-SOURCE.zip HEAD
       - uses: actions/upload-artifact@v4
         with:
-          name: NOVA-AI-FINAL-SOURCE
-          path: NOVA-AI-FINAL-SOURCE.zip
+          name: NOVA-AI-FULL-SOURCE
+          path: NOVA-AI-FULL-SOURCE.zip
 
   docker_image:
     runs-on: ubuntu-latest
@@ -160,3 +169,30 @@ jobs:
       - uses: actions/checkout@v4
       - name: Build the exact backend Docker image used by Render
         run: docker build --file backend/Dockerfile --tag nova-ai-preview:ci backend
+      - name: Run container, migrate fresh PostgreSQL, and restore a backup
+        run: |
+          docker network create nova-ci
+          docker run -d --name nova-db --network nova-ci -e POSTGRES_PASSWORD=ci-only -e POSTGRES_DB=nova postgres:16
+          for i in $(seq 1 30); do
+            if docker exec nova-db pg_isready -U postgres; then break; fi
+            sleep 2
+          done
+          docker run -d --name nova-api --network nova-ci -p 8080:8080 -e DATABASE_URL=postgresql://postgres:ci-only@nova-db:5432/nova -e JWT_SECRET=ci-only-long-container-test-secret-32-chars nova-ai-preview:ci
+          ready=false
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://localhost:8080/ready; then ready=true; break; fi
+            sleep 2
+          done
+          if [ "$ready" != true ]; then docker logs nova-api; exit 1; fi
+          curl --fail --silent http://localhost:8080/health
+          docker exec nova-db pg_dump -U postgres -Fc -f /tmp/nova.dump nova
+          docker exec nova-db createdb -U postgres nova_restore
+          docker exec nova-db pg_restore -U postgres --exit-on-error -d nova_restore /tmp/nova.dump
+          test "$(docker exec nova-db psql -U postgres -d nova_restore -tAc 'SELECT COUNT(*) FROM "Character"')" = 12
+          docker restart nova-api
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://localhost:8080/ready; then exit 0; fi
+            sleep 2
+          done
+          docker logs nova-api
+          exit 1

@@ -26,6 +26,9 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     private val gson = Gson()
     private val refreshLock = Any()
     var adultConfirmed by mutableStateOf(false)
+    var comments by mutableStateOf<List<SocialComment>>(emptyList())
+    var commentInput by mutableStateOf("")
+    var selectedPublication by mutableStateOf<String?>(null)
     var favorites by mutableStateOf<List<NovaCharacter>>(emptyList())
     var memories by mutableStateOf<List<MemoryItem>>(emptyList())
     var notifications by mutableStateOf<List<NovaNotification>>(emptyList())
@@ -133,14 +136,20 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         private set
     private var streamJob: Job? = null
     /** Stops the reply being written. Unsaved, uncharged; the draft and request ID stay for a retry. */
-    fun stopReply() { streamJob?.cancel() }
+    private var activeStreamBody: okhttp3.ResponseBody? = null
+    fun stopReply() {
+        streamJob?.cancel()
+        val body = activeStreamBody
+        viewModelScope.launch(Dispatchers.IO) { body?.close() }
+    }
 
     private class StreamError(val status: Int, val code: String?) : Exception(code)
     /** Reads SSE from the stream route and returns the final "done" payload. */
     private suspend fun streamReply(api: NovaApi, chatId: String, body: NovaChatSendBody): NovaChatSendResponse {
         streamingText = ""
         val response = api.sendChatMessageStream(authorization(), chatId, body)
-        return withContext(Dispatchers.IO) {
+        activeStreamBody = response
+        return try { withContext(Dispatchers.IO) {
             response.use { rb ->
                 val source = rb.source(); var event = ""; var result: NovaChatSendResponse? = null
                 while (result == null) {
@@ -161,7 +170,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 result ?: throw StreamError(502, "STREAM_ENDED")
             }
-        }
+        } } finally { activeStreamBody = null }
     }
 
     private fun httpErrorText(code: Int, error: String? = null): String = when {
@@ -183,7 +192,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 block()
             } catch (e: CancellationException) {
-                if (streamingText != null) notification = "Ответ остановлен. Токены не списаны, сообщение сохранено в поле ввода."
+                if (streamingText != null) notification = "Остановка запрошена. Черновик сохранён. Обнови историю: ответ мог завершиться до остановки."
                 throw e
             } catch (e: StreamError) {
                 error = httpErrorText(e.status, e.code)
@@ -243,10 +252,14 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    var chatSearch by mutableStateOf("")
+    var profileCharacter by mutableStateOf<NovaCharacter?>(null)
+    fun showCharacterProfile(id:String) {execute {profileCharacter=service().character(authorization(),id).character} }
+    fun hideCharacter(id:String) {execute {service().hideCharacter(authorization(),id);owned=service().myCharacters(authorization()).items;notification="Персонаж скрыт из каталога"} }
     fun refreshChats() {
         execute {
             val api = service()
-            chats = api.chats(authorization()).items
+            chats = api.chats(authorization(),chatSearch.trim().takeIf{it.isNotEmpty()}).items
             aiStatus = api.aiStatus(authorization())
         }
     }
@@ -498,11 +511,15 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         val current = activeChat ?: return
         if (message.role != "assistant" || chatMessages.lastOrNull()?.id != message.id) return
         val tier = if (premiumChatSelected) "premium" else "free"
-        val requestId = java.util.UUID.randomUUID().toString()
+        val key = "${current.id}:${message.id}:$tier"
+        val pending = store.get("pendingRegenerate")?.split("|", limit=2)
+        val requestId = if (pending?.size == 2 && pending[0] == key) pending[1] else java.util.UUID.randomUUID().toString()
+        store.put("pendingRegenerate", "$key|$requestId")
         execute {
             val api = service()
             api.sendChatMessage(authorization(), current.id,
                 NovaChatSendBody(null, requestId, tier, if (tier == "premium") aiStatus?.premiumPriceTokens else null, message.id))
+            store.put("pendingRegenerate", "")
             chatMessages = api.chatMessages(authorization(), current.id).items
             aiStatus = api.aiStatus(authorization())
             notification = if (tier == "premium") "Новый Premium-ответ готов" else "Новый ответ готов"
@@ -513,5 +530,12 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteAccount() {execute {service().deleteAccount(authorization(),mapOf("confirmation" to "DELETE"));clearAccount()} }
     suspend fun verifyPurchase(sku:String,token:String):Boolean = service().verifyPurchase(authorization(),VerifyPurchaseBody(sku,token)).status=="VERIFIED"
     fun showNotice(text:String) {notification=text}
+
+    fun loadFollowing() {execute {catalog=service().following(authorization()).items} }
+    fun follow(id:String,enabled:Boolean) {execute {if(enabled)service().follow(authorization(),id)else service().unfollow(authorization(),id);notification=if(enabled)"Подписка сохранена" else "Подписка отменена"} }
+    fun like(id:String) {execute {service().like(authorization(),id);notification="Отметка сохранена"} }
+    fun openComments(id:String) {execute {selectedPublication=id;comments=service().comments(authorization(),id).items} }
+    fun sendComment() {val id=selectedPublication?:return;execute {service().comment(authorization(),id,mapOf("content" to commentInput));commentInput="";comments=service().comments(authorization(),id).items;notification="Комментарий отправлен на модерацию"} }
+    fun fictionalScene(kind:String) {updateChatInput("Напиши $kind нашего персонажа. Начни с пометки «Вымышленная сцена». Это художественное произведение, а не реальные мысли или данные человека.");sendChatMessage()}
 
 }

@@ -30,7 +30,7 @@ data class NovaCharacter(
     val avatarUrl: String? = null,
     val biography: String? = null, val appearance: String? = null, val personality: String? = null,
     val interests: String? = null, val backstory: String? = null, val speechStyle: String? = null,
-    val scenario: String? = null, val language: String = "ru", val ownerId: String? = null
+    val scenario: String? = null, val language: String = "ru", val ownerId: String? = null, val publication: PublicationInfo? = null
 )
 data class CharacterPage(val items: List<NovaCharacter> = emptyList(), val nextCursor: String? = null)
 data class CreatedCharacter(val character: NovaCharacter)
@@ -86,6 +86,9 @@ data class NovaAiStatus(
     val tokenBalance: Int = 0
 )
 
+data class PublicationInfo(val id: String, val likesCount: Int = 0)
+data class SocialComment(val id: String, val content: String, val status: String)
+data class CommentPage(val items: List<SocialComment> = emptyList())
 data class RefreshBody(val refreshToken: String)
 data class MemoryItem(val id: String, val content: String, val kind: String, val pinned: Boolean = false)
 data class MemoryPage(val items: List<MemoryItem> = emptyList())
@@ -103,6 +106,14 @@ data class VerifyPurchaseBody(val sku: String, val purchaseToken: String)
 data class VerifyPurchaseResult(val status: String, val tokens: Int = 0)
 data class AdStatus(val configured: Boolean, val adUnit: String?, val userId: String, val remainingToday: Int, val secondsUntilNext: Int)
 interface NovaApi {
+    @POST("v1/characters/{id}/hide") suspend fun hideCharacter(@Header("Authorization") bearer: String, @Path("id") id: String)
+    @GET("v1/community/following") suspend fun following(@Header("Authorization") bearer: String): CharacterPage
+    @PUT("v1/creators/{id}/follow") suspend fun follow(@Header("Authorization") bearer: String, @Path("id") id: String)
+    @DELETE("v1/creators/{id}/follow") suspend fun unfollow(@Header("Authorization") bearer: String, @Path("id") id: String)
+    @PUT("v1/publications/{id}/like") suspend fun like(@Header("Authorization") bearer: String, @Path("id") id: String)
+    @GET("v1/publications/{id}/comments") suspend fun comments(@Header("Authorization") bearer: String, @Path("id") id: String): CommentPage
+    @POST("v1/publications/{id}/comments") suspend fun comment(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: Map<String,String>)
+
     @POST("v1/auth/refresh") fun refreshSync(@Body body: RefreshBody): retrofit2.Call<AuthTokens>
     @POST("v1/auth/logout") suspend fun logout(@Header("Authorization") bearer: String)
     @GET("v1/characters/{id}") suspend fun character(@Header("Authorization") bearer: String, @Path("id") id: String): CreatedCharacter
@@ -160,7 +171,7 @@ interface NovaApi {
     suspend fun aiStatus(@Header("Authorization") bearer: String): NovaAiStatus
 
     @GET("v1/chats")
-    suspend fun chats(@Header("Authorization") bearer: String): NovaChatsResponse
+    suspend fun chats(@Header("Authorization") bearer: String, @Query("q") query: String? = null): NovaChatsResponse
 
     @POST("v1/chats")
     suspend fun createChat(

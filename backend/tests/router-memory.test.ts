@@ -195,3 +195,13 @@ describe('Streaming replies over SSE (HTTP fixtures, not live AI)',()=>{
   expect((await db.aiAttempt.findFirst({orderBy:{createdAt:'desc'}}))!.errorCode).toBe('AI_CANCELLED');
  });
 });
+
+describe('Truncated SSE protection (HTTP fixture)',()=>{
+ it('does not save or debit Premium on a clean EOF without a completion marker',async()=>{
+  await credit(db,{userId,bucket:'BONUS',amount:20,source:'test',idempotencyKey:randomUUID()});const before=await balance(db,userId);
+  const mock=vi.fn(async()=>new Response('data: '+JSON.stringify({choices:[{delta:{content:'Незаконченный ответ'}}]})+'\n\n',{headers:{'content-type':'text/event-stream'}}));vi.stubGlobal('fetch',mock);
+  const r=await app.inject({method:'POST',url:`/v1/chats/${chatId}/messages/stream`,headers:auth(),payload:{content:'Сцена',requestId:randomUUID(),tier:'premium',expectedPriceTokens:5}});
+  expect(r.body).toContain('AI_STREAM_INTERRUPTED');expect(r.body).not.toContain('event: done');
+  expect(await balance(db,userId)).toEqual(before);expect(await db.message.count({where:{chatId}})).toBe(0);expect(mock).toHaveBeenCalledTimes(1);
+ });
+});

@@ -1,125 +1,94 @@
-# NOVA AI — сравнение с MiraiMind (актуальный статус)
+# NOVA AI — проверенная матрица возможностей
 
-**Дата проверки:** 2026-11-11 · **Состояние кода:** `main` после PR #18 (обновлено 2026-11-11 вечером)
-**Основа:** 73 требования из [`MIRAIMIND_FEATURE_PARITY.md`](MIRAIMIND_FEATURE_PARITY.md); статусы там устарели и заменены этой таблицей.
+Аудит 2026-11-11. Основа: актуальный main после PR #12–18 и изменения PR #20. Коммерческая готовность **не достигнута**. Все 73 исходных требования сохранены; отклонение ни одного требования не считается согласованным.
 
-## Как ставились статусы
-- **✅ Проверено** — есть автотест в CI (сервер на реальной PostgreSQL и/или UI-тест на эмуляторе). Провайдер ИИ в тестах замокан: это проверка логики, а не реальных ответов модели.
-- **🟡 Частично** — часть сценария есть, но пользовательский поток неполный.
-- **🔵 В коде, не проверено на устройстве** — сервер и/или Android-код есть, ручной или автоматической проверки на устройстве нет.
-- **❌ Отсутствует** — кода нет.
-- **🔑 Нужен внешний API/аккаунт** — код есть или его нельзя проверить без ключа, аккаунта или консоли владельца.
-- **⛔ Ограничено правилами** — сознательно не делаем или делаем урезанно из-за безопасности/политик.
+«Проверено на стенде» означает реальную PostgreSQL и/или Android-эмулятор с явно тестовым HTTP-сервером. Это не проверка живого AI, Play Billing sandbox или AdMob end-to-end. Окончательный прогон этой ветки и ссылки на доказательства — в NOVA-AI-TEST-REPORT.md.
 
-Зелёная сборка APK не считается доказательством работы функции.
+Публичные руководства подтверждают направления продукта MiraiMind; исходная матрица также содержит наши целевые детализации. Не каждый подпункт из 73 доказан как точная функция текущего MiraiMind. Неподтверждённые детали остаются требованиями NOVA, а не фактами о конкуренте.
 
-## Итог
-- ✅ Проверено: **8**
-- 🟡 Частично: **18**
-- 🔵 В коде, не проверено на устройстве: **15**
-- ❌ Отсутствует: **19**
-- 🔑 Нужен внешний API/аккаунт: **12**
-- ⛔ Ограничено правилами: **1**
+| ID / функция MiraiMind или целевое требование | Возможность NOVA и наличие в коде | Проверка на устройстве | Что необходимо исправить / критерий приёмки | Итоговый статус |
+|---|---|---|---|---|
+| D01 · Character card catalog with cover art and short intro | Каталог карточек `/v1/characters/catalog`; серверные тесты каталога и 12 портретов; UI-тест эмулятора вход→каталог (на тестовом сервере); `characters.ts + MainActivity.kt` | Есть сценарий NovaUiTest; точный итог прогона см. отчёт | Backend returns published moderated characters; Android displays image, intro and metadata | Проверено на стенде |
+| D02 · Swipe left/right discovery interface | Свайп-ленты нет; `characters.ts + MainActivity.kt` | Нет функции | Gestures, accessibility alternative, no duplicates until page exhausted | Отсутствует |
+| D03 · Search by character name and description | Серверный поиск протестирован (`discovers only moderated public characters by text…`); поле поиска в Android не проверено на устройстве; `characters.ts + MainActivity.kt` | Не проверено отдельно | Server-side search, no private character data returned | В коде; устройство не проверено |
+| D04 · Tag and category filters | Фильтры категория/тег протестированы на сервере; Android UI не проверен на устройстве; `characters.ts + MainActivity.kt` | Не проверено отдельно | Server pagination, category and tags filters combine correctly | В коде; устройство не проверено |
+| D05 · Sort by recent, rating, trending, featured | Сортировки recent/name/popular по подтверждённым лайкам; social.test.ts; `characters.ts + MainActivity.kt` | Не проверено отдельно | Нет рейтинга по оценкам и персональных рекомендаций | Частично |
+| D06 · Character details (bio, tags, author, scenes) | Полный профиль в Android, GET /characters/:id, приватность на сервере; `characters.ts + MainActivity.kt` | Не проверено отдельно | Нет публичных deep links; профиль ещё не покрыт UI-тестом | Частично |
+| D07 · Favorite/collection | Избранное: сервер + тест приватности; Android-вызовы есть, на устройстве не проверено; `characters.ts + MainActivity.kt` | Не проверено отдельно | Add/remove/list persisted, sync across devices | В коде; устройство не проверено |
+| D08 · Share links and comments | Комментарии на публикациях, премодерация, Android-обсуждение, adminRoutes; `characters.ts + MainActivity.kt` | Добавлен UI-сценарий статуса комментария; итог см. отчёт | Нет публичных ссылок и ответов на комментарии | Частично |
+| C01 · Create character with name, traits, history, language | Создание/редактирование: сервер + тесты; поля в `CreatorFields`; `characters.ts + NovaViewModel.kt` | Не проверено отдельно | All schema fields editable in Android; API validation | В коде; устройство не проверено |
+| C02 · Appearance, avatar upload, generation, crop | Модель `CharacterAsset` есть, но нет загрузки, обрезки и генерации аватара; `characters.ts + NovaViewModel.kt` | Нет функции | Moderated asset pipeline, S3-style store, signed URLs | Отсутствует |
+| C03 · Custom voice and speech style | Только системный TTS устройства; голос персонажа требует TTS-провайдера; `characters.ts + NovaViewModel.kt` | Не проверено отдельно | Voice presets, preview, no cloning real persons without authorization | Внешний доступ / частично |
+| C04 · Introduction, prologue, first message | Поле greeting показывается в каталоге и чате; `characters.ts + NovaViewModel.kt` | Не проверено отдельно | Both supported and shown in chat and card | В коде; устройство не проверено |
+| C05 · Multiple story scenarios and alternate universes | Сценарий на уровне чата + ветки; нет вариантов сценария у самого персонажа; `characters.ts + NovaViewModel.kt` | Не проверено отдельно | Per-character variants with independent state | Частично |
+| C06 · Player role/persona card | Ролевая карточка игрока: `persona` у чата (сервер + Android); `characters.ts + NovaViewModel.kt` | Не проверено отдельно | Name, identity, role and scene supplied on user consent | В коде; устройство не проверено |
+| C07 · Save drafts, edit, clone, hide, publish | Android редактирование/клонирование/скрытие/публикация; characters.test.ts; `characters.ts + NovaViewModel.kt` | Не проверено отдельно | Черновик редактора не сохраняется целиком после завершения процесса | Частично |
+| C08 · Paid creator characters / unlock entitlement | Платных персонажей авторов нет; `characters.ts + NovaViewModel.kt` | Нет функции | Play-compliant entitlement, moderation, transparent terms | Отсутствует |
+| C09 · Starter library of original safe characters | 12 оригинальных взрослых персонажей; тесты сида и декодирования портретов на эмуляторе; `characters.ts + NovaViewModel.kt` | Есть сценарий NovaUiTest; точный итог прогона см. отчёт | Curated original art/licensed images; no third-party character cloning | Проверено на стенде |
+| H01 · Text conversations with true model gateway | Gateway Groq/OpenRouter/Gemini/Cerebras в коде; тесты на формате провайдера (mock). Реальный ответ требует ключа; `chatRoutes.ts + aiGateway.ts` | Не проверено отдельно | AI output from configured provider, not canned responses | Внешний доступ / частично |
+| H02 · Streaming with cancel/retry/failure states | SSE, Stop, повтор с тем же ID; серверные тесты нормального потока, обрыва и отмены; `chatRoutes.ts + aiGateway.ts` | Есть сценарий NovaUiTest; точный итог прогона см. отчёт | Проверить реальные провайдеры и отмену на нестабильной мобильной сети | Проверено на стенде |
+| H03 · Chat history and search | История с пагинацией, серверный поиск по тексту и названию, поле поиска Android; `chatRoutes.ts + aiGateway.ts` | Не проверено отдельно | Поиск и большой архив ещё не проверены UI-тестом | Частично |
+| H04 · Edit, regenerate, pin, branch/replay | Повторная генерация последнего ответа, 5 прошлых версий, pin, branch; `chatRoutes.ts + aiGateway.ts` | Есть сценарий NovaUiTest; точный итог прогона см. отчёт | Нет свободного редактирования сообщений; воспроизведение старой регенерации может вернуть более новую версию | Частично |
+| H05 · Multiple model-quality modes | Free/Premium с разными моделями — серверные тесты (провайдер замокан); `chatRoutes.ts + aiGateway.ts` | Не проверено отдельно | Free/basic and premium model tiers, actual provider routing | Проверено на стенде |
+| H06 · Reply style: concise/balanced/story | `responseStyle` в чате; влияние на ответ живой моделью не проверено; `chatRoutes.ts + aiGateway.ts` | Не проверено отдельно | Token and length bounds, scene/narration ratio | В коде; устройство не проверено |
+| H07 · Character initiative and tone controls | Тон есть; инициативы персонажа нет; `chatRoutes.ts + aiGateway.ts` | Не проверено отдельно | Controls survive restart and are reflected in prompts | Частично |
+| H08 · Worldbuilding & interactive branching plots | Ветки и сценарий есть; нет сущности «мир», контрольных точек сюжета; `chatRoutes.ts + aiGateway.ts` | Не проверено отдельно | Scene state, branching, checkpoints, replay | Частично |
+| H09 · Group chat (up to 5 AI characters target) | До 5 персонажей в системном контексте одного AI-вызова; `chatRoutes.ts + aiGateway.ts` | Не проверено отдельно | Нет независимых агентов и проверенного порядка реплик участников | Частично |
+| H10 · Group chat member selection and theme | Выбор участников есть; нет управления комнатой и темой; `chatRoutes.ts + aiGateway.ts` | Не проверено отдельно | Member roles, private/public controls, room management | Частично |
+| M01 · Context summary & long-term memory | Автосводка каждые 80 сообщений (`summarizeChat`); на реальной модели не проверено; `storyRoutes.ts + StoryControls.kt` | Не проверено отдельно | Regular summarization and relevance retrieval | В коде; устройство не проверено |
+| M02 · Manual add/edit/delete/pin memory | Добавить/изменить/закрепить/удалить память — серверный тест изоляции; `storyRoutes.ts + StoryControls.kt` | Не проверено отдельно | User-owned and deletable memory records | Проверено на стенде |
+| M03 · Memory scopes: character, chat, story | Память привязана к чату, ветки изолированы (тест); нет памяти уровня персонажа; `storyRoutes.ts + StoryControls.kt` | Не проверено отдельно | Explicit scope and isolation between stories | Частично |
+| M04 · Forgetting policy, memory transparency | Просмотр/удаление памяти + экспорт `/v1/me/export`; `storyRoutes.ts + StoryControls.kt` | Не проверено отдельно | View/export/delete memories, no hidden sensitive profiling | В коде; устройство не проверено |
+| V01 · TTS play button on messages | Кнопка «Озвучить» через системный TTS Android; `MainActivity.kt (Android TTS/RecognizerIntent)` | Не проверено отдельно | Audio from server provider, pause/replay, accessible captions | В коде; устройство не проверено |
+| V02 · Voice presets, pronunciation, revoice | Голосовые пресеты требуют TTS-провайдера; `MainActivity.kt (Android TTS/RecognizerIntent)` | Не проверено отдельно | Voice licensing and safety validation | Внешний доступ / частично |
+| V03 · Live AI voice conversation | Живой голосовой разговор требует потокового STT/TTS; `MainActivity.kt (Android TTS/RecognizerIntent)` | Не проверено отдельно | STT/streaming TTS, mute, hang up, latency/errors | Внешний доступ / частично |
+| V04 · Optional voice notes/transcription | Диктовка через системный распознаватель (`RecognizerIntent`); аудио не хранится; `MainActivity.kt (Android TTS/RecognizerIntent)` | Не проверено отдельно | Consent and user-controlled audio retention | В коде; устройство не проверено |
+| A01 · Text to image with real provider | Нет работающего runtime API генерации изображений; `runtime отсутствует` | Нет функции | Нужны реализация, модерация, хранилище и разрешённый API | Отсутствует |
+| A02 · Templates/AI prompt optimization | Шаблонов промптов нет; `runtime отсутствует` | Нет функции | Predefined style and shot templates | Отсутствует |
+| A03 · Style presets, negative prompts | Пресетов и негативных промптов нет; `runtime отсутствует` | Нет функции | Input filters, preview of price | Отсутствует |
+| A04 · Img2Img reference guidance | Нет Img2Img API и пользовательского потока; `runtime отсутствует` | Нет функции | Нужны разработка и внешний провайдер | Отсутствует |
+| A05 · Image history, gallery, share, regenerate | Галереи генераций нет; `runtime отсутствует` | Нет функции | Persistent media records, deletion and moderation | Отсутствует |
+| A06 · Optional face repair and own style adapters | Нет face repair и собственных стилевых адаптеров; `runtime отсутствует` | Нет функции | Не является общим запретом безопасности; нужны разрешённые изображения и реализация | Отсутствует |
+| L01 · Character fictional timeline/feed and diary | Художественный дневник в истории чата, отдельная кнопка; данные сохраняются как сообщение; `socialRoutes.ts + StoryControls.kt` | Не проверено отдельно | Нет отдельной хронологической ленты и проверки настоящей моделью | Частично |
+| L02 · Simulated 'phone' search/chat/shopping pages | Генерация вымышленной заметки телефона через обычный AI-маршрут; `socialRoutes.ts + StoryControls.kt` | Не проверено отдельно | Нет отдельных страниц поиска/покупок/переписки | Частично |
+| L03 · Inner monologue / thoughts | Кнопка художественного внутреннего монолога с явной пометкой вымысла; `socialRoutes.ts + StoryControls.kt` | Не проверено отдельно | Ответ настоящего провайдера не проверен | Частично |
+| L04 · Daily events & hobby posts | Кнопка повседневного события по запросу пользователя; `socialRoutes.ts + StoryControls.kt` | Не проверено отдельно | Нет планировщика ежедневных постов | Частично |
+| S01 · User profiles & creator follows | Профиль, follows/unfollow, блокировка в обе стороны; social.test.ts; `socialRoutes.ts + adminRoutes.ts` | Не проверено отдельно | Нет отдельного публичного профиля автора | Частично |
+| S02 · Public publication feed and comment replies | Каталог публикаций, лента подписок, комментарии и премодерация; `socialRoutes.ts + adminRoutes.ts` | Не проверено отдельно | Нет вложенных ответов на комментарии и полной ленты событий | Частично |
+| S03 · Likes, rankings, discovery topics | Лайк с идемпотентным подсчётом, сортировка popular; `socialRoutes.ts + adminRoutes.ts` | Не проверено отдельно | Нет рейтинга, тематических подборок и защиты от сетей фейковых аккаунтов | Частично |
+| S04 · Image gallery and creator showcase | Нет галереи авторов; `socialRoutes.ts + adminRoutes.ts` | Нет функции | Moderated images and attribution | Отсутствует |
+| S05 · Challenges/events and community notifications | Нет конкурсов и событий; `socialRoutes.ts + adminRoutes.ts` | Нет функции | Admin-run safe themed events with controls | Отсутствует |
+| S06 · Creator dashboard, analytics, earnings | Админ-панель не является кабинетом автора; `socialRoutes.ts + adminRoutes.ts` | Нет функции | Нужны аналитика автора и отдельная проверка модели выплат | Отсутствует |
+| E01 · Three token balances & ledger | Леджер токенов: тесты идемпотентности, порядка списания, возвратов; `ledger.ts + billing.ts + MonetizationControls.kt` | Не проверено отдельно | Ledger tests, reconciliation, audit logs | Проверено на стенде |
+| E02 · Free basic dialogue | 100 подряд бесплатных сообщений без списания и без дневного лимита (тест с тестовой моделью); `ledger.ts + billing.ts + MonetizationControls.kt` | Есть сценарий NovaUiTest; точный итог прогона см. отчёт | Sustainable quota, transparent costs without coercive limits | Проверено на стенде |
+| E03 · Premium paid chat and imagery | Premium-чат проверен (одно списание, отказ провайдера — без списания); Premium-картинок нет; `ledger.ts + billing.ts + MonetizationControls.kt` | Не проверено отдельно | Cost displayed before requests, rollback on failed jobs | Частично |
+| E04 · Five Play Billing token packages | Play Billing в коде + серверная проверка; нужен Play Console и sandbox; `ledger.ts + billing.ts + MonetizationControls.kt` | Не проверено отдельно | Android Billing UI + Google server verification + refunds | Внешний доступ / частично |
+| E05 · AdMob rewarded views for tokens | AdMob SSV проверен тестами подписи; нужен аккаунт AdMob; `ledger.ts + billing.ts + MonetizationControls.kt` | Не проверено отдельно | Android opt-in + signed server validation + idempotency | Внешний доступ / частично |
+| E06 · Optional memberships/subscriptions | Подписок нет; `ledger.ts + billing.ts + MonetizationControls.kt` | Нет функции | Store entitlements, grace period, cancel and restore | Отсутствует |
+| E07 · Daily check-in bonus and promotions | Ежедневного бонуса нет; `ledger.ts + billing.ts + MonetizationControls.kt` | Нет функции | Anti-fraud, rate-limits, eligibility | Отсутствует |
+| E08 · Gifts and story unlock collections | Подарков нет; `ledger.ts + billing.ts + MonetizationControls.kt` | Нет функции | Clear fictional rewards and no gambling/randomized paid winnings | Отсутствует |
+| E09 · Transaction history and balance breakdown | `/v1/wallet/transactions` + экран кошелька; `ledger.ts + billing.ts + MonetizationControls.kt` | Не проверено отдельно | Android shows wallet, complete detailed history | В коде; устройство не проверено |
+| U01 · Premium dark theme & original branding | Тёмная тема Compose; нет единой дизайн-системы; `MainActivity.kt` | Есть сценарий NovaUiTest; точный итог прогона см. отчёт | Consistent components, responsive typography, low-end profiling | Частично |
+| U02 · Home, Discover, Search, Create, Chats, Profile | 6 вкладок: Главная, Каталог, Чаты, Создать, Кошелёк, Аккаунт; `MainActivity.kt` | Есть сценарий NovaUiTest; точный итог прогона см. отчёт | Real destination for each navigation item | В коде; устройство не проверено |
+| U03 · Stories, Collections, Notifications, Creator hub | Уведомления есть; нет коллекций и хаба автора; `MainActivity.kt` | Не проверено отдельно | Working workflows with empty/loading/error states | Частично |
+| U04 · Localizations (RU/EN first) | Строки зашиты в код, ресурсов локализации нет; `MainActivity.kt` | Нет функции | Android resources and translated server content | Отсутствует |
+| U05 · Accessibility/contrast/screen readers | Compose semantic controls, описания портретов; CI на обычном и малом экране; `MainActivity.kt` | Не проверено отдельно | Нет аудита TalkBack, увеличенного шрифта и всех контрастов | Частично |
+| U06 · Web/browser experience | Пользовательского веб-клиента нет (есть только админ-панель); `MainActivity.kt` | Нет функции | Responsive web app with same backend and permissions | Отсутствует |
+| T01 · Moderation before public UGC | Очередь модерации и жалобы есть (тест); нет апелляций; `server.ts + CI + Dockerfile` | Не проверено отдельно | Report/review queues and human appeals, not just status enum | Частично |
+| T02 · Age-appropriate content policies | Системные ограничения в промптах; нет проверки ответов модели классификатором; `server.ts + CI + Dockerfile` | Не проверено отдельно | Nonsexual fictional content, safety checks for text/art/voice | Частично |
+| T03 · Privacy, account deletion, data export | Export без auth-секретов; удаление профиля, комментариев, подписок; блокировка старого доступа; `server.ts + CI + Dockerfile` | Не проверено отдельно | UI удаления и политика хранения финансовых документов требуют проверки | Проверено на стенде |
+| T04 · Subscription/Play/AdMob compliance | Нужны аккаунты Play/AdMob и проверка политик; `server.ts + CI + Dockerfile` | Не проверено отдельно | Current policy review + sandbox purchases + owner accounts | Внешний доступ / частично |
+| T05 · Deployment, backups, monitoring, incident readiness | Render Blueprint, `/health`, `/ready`, миграции; деплой требует аккаунта Render; `server.ts + CI + Dockerfile` | Не проверено отдельно | Hosted HTTPS server, migrations, audit and recovery exercises | Внешний доступ / частично |
+| T06 · Anti-spam, protections, billing fraud tests | Квоты/бюджеты/IDOR/повторные списания/подпись SSV/покупки с fixture Google; `server.ts + CI + Dockerfile` | Не проверено отдельно | Нет внешнего пентеста и распределённого нагрузочного теста | Проверено на стенде |
+| T07 · End-to-end device tests & signed releases | UI-тесты на эмуляторе проходят (3/3); подписанный релиз требует ключей владельца; `server.ts + CI + Dockerfile` | Есть сценарий NovaUiTest; точный итог прогона см. отчёт | Debug APK built; release AAB with owner signing keys not ready | Внешний доступ / частично |
 
-## Таблица (73 пункта)
+## Официальные источники
 
-| ID | Функция | Статус | Доказательство / что не так |
-|---|---|---|---|
-| D01 | Character card catalog with cover art and short intro | ✅ Проверено | Каталог карточек `/v1/characters/catalog`; серверные тесты каталога и 12 портретов; UI-тест эмулятора вход→каталог (на тестовом сервере) |
-| D02 | Swipe left/right discovery interface | ❌ Отсутствует | Свайп-ленты нет |
-| D03 | Search by character name and description | 🔵 В коде, не проверено на устройстве | Серверный поиск протестирован (`discovers only moderated public characters by text…`); поле поиска в Android не проверено на устройстве |
-| D04 | Tag and category filters | 🔵 В коде, не проверено на устройстве | Фильтры категория/тег протестированы на сервере; Android UI не проверен на устройстве |
-| D05 | Sort by recent, rating, trending, featured | 🟡 Частично | Есть только `recent` и `name`; нет rating/trending/featured |
-| D06 | Character details (bio, tags, author, scenes) | 🟡 Частично | `GET /v1/characters/:id` есть; нет отдельного богатого профиля и deep link |
-| D07 | Favorite/collection | 🔵 В коде, не проверено на устройстве | Избранное: сервер + тест приватности; Android-вызовы есть, на устройстве не проверено |
-| D08 | Share links and comments | ❌ Отсутствует | Нет ссылок «поделиться» и комментариев |
-| C01 | Create character with name, traits, history, language | 🔵 В коде, не проверено на устройстве | Создание/редактирование: сервер + тесты; поля в `CreatorFields` |
-| C02 | Appearance, avatar upload, generation, crop | ❌ Отсутствует | Модель `CharacterAsset` есть, но нет загрузки, обрезки и генерации аватара |
-| C03 | Custom voice and speech style | 🔑 Нужен внешний API/аккаунт | Только системный TTS устройства; голос персонажа требует TTS-провайдера |
-| C04 | Introduction, prologue, first message | 🔵 В коде, не проверено на устройстве | Поле greeting показывается в каталоге и чате |
-| C05 | Multiple story scenarios and alternate universes | 🟡 Частично | Сценарий на уровне чата + ветки; нет вариантов сценария у самого персонажа |
-| C06 | Player role/persona card | 🔵 В коде, не проверено на устройстве | Ролевая карточка игрока: `persona` у чата (сервер + Android) |
-| C07 | Save drafts, edit, clone, hide, publish | 🟡 Частично | Clone/hide/publish/review на сервере (тесты модерации); в Android нет кнопки «скрыть» |
-| C08 | Paid creator characters / unlock entitlement | ❌ Отсутствует | Платных персонажей авторов нет |
-| C09 | Starter library of original safe characters | ✅ Проверено | 12 оригинальных взрослых персонажей; тесты сида и декодирования портретов на эмуляторе |
-| H01 | Text conversations with true model gateway | 🔑 Нужен внешний API/аккаунт | Gateway Groq/OpenRouter/Gemini/Cerebras в коде; тесты на формате провайдера (mock). Реальный ответ требует ключа |
-| H02 | Streaming with cancel/retry/failure states | ✅ Проверено | SSE-стриминг `/messages/stream` + «Остановить ответ» (PR #18): тесты порядка фрагментов, без переключения на другую модель после показанного текста, без списания при обрыве, отмена без срабатывания circuit breaker; E2E на эмуляторе идёт через стрим |
-| H03 | Chat history and search | 🟡 Частично | История с пагинацией проверена; серверный поиск по чатам `GET /v1/chats?q=` есть, но в Android нет поля поиска |
-| H04 | Edit, regenerate, pin, branch/replay | 🟡 Частично | «Другой ответ» готов и проверен (PR #17: старые версии сохраняются, без двойного списания, E2E); нет редактирования своего сообщения |
-| H05 | Multiple model-quality modes | ✅ Проверено | Free/Premium с разными моделями — серверные тесты (провайдер замокан) |
-| H06 | Reply style: concise/balanced/story | 🔵 В коде, не проверено на устройстве | `responseStyle` в чате; влияние на ответ живой моделью не проверено |
-| H07 | Character initiative and tone controls | 🟡 Частично | Тон есть; инициативы персонажа нет |
-| H08 | Worldbuilding & interactive branching plots | 🟡 Частично | Ветки и сценарий есть; нет сущности «мир», контрольных точек сюжета |
-| H09 | Group chat (up to 5 AI characters target) | 🔵 В коде, не проверено на устройстве | Групповой чат: до 4 участников + основной (= 5); без тестов |
-| H10 | Group chat member selection and theme | 🟡 Частично | Выбор участников есть; нет управления комнатой и темой |
-| M01 | Context summary & long-term memory | 🔵 В коде, не проверено на устройстве | Автосводка каждые 80 сообщений (`summarizeChat`); на реальной модели не проверено |
-| M02 | Manual add/edit/delete/pin memory | ✅ Проверено | Добавить/изменить/закрепить/удалить память — серверный тест изоляции |
-| M03 | Memory scopes: character, chat, story | 🟡 Частично | Память привязана к чату, ветки изолированы (тест); нет памяти уровня персонажа |
-| M04 | Forgetting policy, memory transparency | 🔵 В коде, не проверено на устройстве | Просмотр/удаление памяти + экспорт `/v1/me/export` |
-| V01 | TTS play button on messages | 🔵 В коде, не проверено на устройстве | Кнопка «Озвучить» через системный TTS Android |
-| V02 | Voice presets, pronunciation, revoice | 🔑 Нужен внешний API/аккаунт | Голосовые пресеты требуют TTS-провайдера |
-| V03 | Live AI voice conversation | 🔑 Нужен внешний API/аккаунт | Живой голосовой разговор требует потокового STT/TTS |
-| V04 | Optional voice notes/transcription | 🔵 В коде, не проверено на устройстве | Диктовка через системный распознаватель (`RecognizerIntent`); аудио не хранится |
-| A01 | Text to image with real provider | 🔑 Нужен внешний API/аккаунт | Генерации изображений нет — нужен провайдер |
-| A02 | Templates/AI prompt optimization | ❌ Отсутствует | Шаблонов промптов нет |
-| A03 | Style presets, negative prompts | ❌ Отсутствует | Пресетов и негативных промптов нет |
-| A04 | Img2Img reference guidance | 🔑 Нужен внешний API/аккаунт | Img2Img нет — нужен провайдер + согласие/фильтры |
-| A05 | Image history, gallery, share, regenerate | ❌ Отсутствует | Галереи генераций нет |
-| A06 | Optional face repair and own style adapters | ⛔ Ограничено правилами | Адаптеры под лица реальных людей не делаем; «починка» лиц — только для своих генераций |
-| L01 | Character fictional timeline/feed and diary | ❌ Отсутствует | Нет ленты/дневника персонажа |
-| L02 | Simulated 'phone' search/chat/shopping pages | ❌ Отсутствует | Нет вымышленного «телефона» |
-| L03 | Inner monologue / thoughts | ❌ Отсутствует | Нет «мыслей персонажа» (с пометкой «вымысел») |
-| L04 | Daily events & hobby posts | ❌ Отсутствует | Нет ежедневных постов |
-| S01 | User profiles & creator follows | 🟡 Частично | Профиль и блокировка пользователей есть; подписок нет |
-| S02 | Public publication feed and comment replies | 🟡 Частично | Публикации и админ-модерация есть; нет пользовательской ленты и ответов |
-| S03 | Likes, rankings, discovery topics | 🟡 Частично | Лайки публикаций есть; рейтингов нет |
-| S04 | Image gallery and creator showcase | ❌ Отсутствует | Нет галереи авторов |
-| S05 | Challenges/events and community notifications | ❌ Отсутствует | Нет конкурсов и событий |
-| S06 | Creator dashboard, analytics, earnings | 🔑 Нужен внешний API/аккаунт | Кабинет автора отсутствует; выплаты авторам требуют юр. и платёжной инфраструктуры |
-| E01 | Three token balances & ledger | ✅ Проверено | Леджер токенов: тесты идемпотентности, порядка списания, возвратов |
-| E02 | Free basic dialogue | ✅ Проверено | 100 подряд бесплатных сообщений без списания (тест); бесплатный пул: Groq gpt-oss-20b → gpt-oss-120b (отдельные квоты) → openrouter/free (PR #15) |
-| E03 | Premium paid chat and imagery | 🟡 Частично | Premium-чат проверен (одно списание, отказ провайдера — без списания); Premium-картинок нет |
-| E04 | Five Play Billing token packages | 🔑 Нужен внешний API/аккаунт | Play Billing в коде + серверная проверка; нужен Play Console и sandbox |
-| E05 | AdMob rewarded views for tokens | 🔑 Нужен внешний API/аккаунт | AdMob SSV проверен тестами подписи; нужен аккаунт AdMob |
-| E06 | Optional memberships/subscriptions | ❌ Отсутствует | Подписок нет |
-| E07 | Daily check-in bonus and promotions | ❌ Отсутствует | Ежедневного бонуса нет |
-| E08 | Gifts and story unlock collections | ❌ Отсутствует | Подарков нет |
-| E09 | Transaction history and balance breakdown | 🔵 В коде, не проверено на устройстве | `/v1/wallet/transactions` + экран кошелька |
-| U01 | Premium dark theme & original branding | 🟡 Частично | Тёмная тема Compose; нет единой дизайн-системы |
-| U02 | Home, Discover, Search, Create, Chats, Profile | 🔵 В коде, не проверено на устройстве | 6 вкладок: Главная, Каталог, Чаты, Создать, Кошелёк, Аккаунт |
-| U03 | Stories, Collections, Notifications, Creator hub | 🟡 Частично | Уведомления есть; нет коллекций и хаба автора |
-| U04 | Localizations (RU/EN first) | ❌ Отсутствует | Строки зашиты в код, ресурсов локализации нет |
-| U05 | Accessibility/contrast/screen readers | ❌ Отсутствует | Проверки TalkBack и контраста не было |
-| U06 | Web/browser experience | ❌ Отсутствует | Пользовательского веб-клиента нет (есть только админ-панель) |
-| T01 | Moderation before public UGC | 🟡 Частично | Очередь модерации и жалобы есть (тест); нет апелляций |
-| T02 | Age-appropriate content policies | 🟡 Частично | Системные ограничения в промптах; нет проверки ответов модели классификатором |
-| T03 | Privacy, account deletion, data export | 🔵 В коде, не проверено на устройстве | Удаление аккаунта `DELETE /v1/me` и экспорт данных |
-| T04 | Subscription/Play/AdMob compliance | 🔑 Нужен внешний API/аккаунт | Нужны аккаунты Play/AdMob и проверка политик |
-| T05 | Deployment, backups, monitoring, incident readiness | 🔑 Нужен внешний API/аккаунт | Render Blueprint, `/health`, `/ready`, миграции; деплой требует аккаунта Render |
-| T06 | Anti-spam, protections, billing fraud tests | ✅ Проверено | Тесты: квоты под конкуренцией, дневной бюджет, двойные запросы, подписи SSV |
-| T07 | End-to-end device tests & signed releases | 🔑 Нужен внешний API/аккаунт | UI-тесты на эмуляторе проходят (3/3); подписанный релиз требует ключей владельца |
+- [MiraiMind](https://miraimind.ai/en/) и [объявление групп/миров](https://miraimind.ai/en/news/1/).
+- [Начало работы](https://miraimind.ai/en/guide/start-guide/), [настройки общения](https://miraimind.ai/en/guide/advanced-chat/), [создание персонажей](https://miraimind.ai/en/guide/create-character/).
+- [Память](https://miraimind.ai/en/guide/memory/), [голос](https://miraimind.ai/en/guide/voice-feature/), [AI Art](https://miraimind.ai/en/guide/image-gen/).
+- [Google Play](https://play.google.com/store/apps/details?id=com.immomo.miraimind). Доступность зависит от страны и версии.
 
-## Что подтвердилось о MiraiMind (перепроверено 2026-11-11)
-Источники — официальные страницы в App Store / Google Play и пресс-релизы разработчика (HELLO GROUP JAPAN):
-- Персонаж настраивается полностью: имя, внешность, голос, характер; акцент на долговременной памяти.
-- Групповые чаты с несколькими ИИ-персонажами, AI Art, построение миров с несколькими персонажами.
-- Внутренняя валюта (Konpeito), опциональная подписка, пакеты валюты; реферальный бонус 200 единиц.
-- Ежемесячные конкурсы авторов с наградами валютой.
-- Заявлено, что базовый чат полностью бесплатный.
-- Возрастной рейтинг 18+ с «Mature/Suggestive Themes» и проверкой возраста. NOVA сознательно **не** повторяет откровенный/сексуальный контент.
-- 13 языков интерфейса.
+## Ближайшие незакрытые требования
 
-### Новые находки, которых не было в списке из 73
-| ID | Функция | Статус |
-|---|---|---|
-| E10 | Реферальный бонус за приглашение друга (с антифродом) | ❌ Отсутствует |
-| U07 | Мультиязычность ≥ RU/EN (у конкурента 13 языков) | ❌ см. U04 |
-
-## Приоритет доработки (следующие PR)
-1. **H01** — реальный ответ провайдера (нужны ключи на сервере).
-2. **H03/H04** — поиск по чатам в Android, редактирование своего сообщения.
-3. **D05/D02/D06** — сортировки «популярное/рекомендуемое», свайп-лента, полноценный профиль персонажа.
-4. **E07/E10** — ежедневный бонус и рефералы (только серверное начисление, идемпотентно).
-5. **U04/U05** — вынос строк в ресурсы (RU/EN) и проверка доступности.
-6. **A01–A05, V02–V03** — после выбора провайдеров изображений и голоса.
-7. **L01–L04, S04–S05** — «жизнь персонажа» и события сообщества с пометкой «вымысел ИИ».
+Настоящий AI и публичный HTTPS; runtime AI Art/загрузка аватаров; голосовой разговор; модерация сгенерированных ответов; локализация; полный редактор/черновики; сценарии и независимые участники групп; магазинные интеграции, восстановление инфраструктуры и нагрузка. Указание этих пробелов не заменяет их реализацию и не является согласованным исключением.

@@ -34,7 +34,7 @@ export async function verifyAndCreditPurchase(
   const accountHash = createHash('sha256').update(p.userId).digest('hex');
   if(data.obfuscatedExternalAccountId!==accountHash)return {status:'REJECTED' as const,reason:'ACCOUNT_MISMATCH'};
   const result=await db.$transaction(async tx=>{
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${p.purchaseToken}, 0))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${p.purchaseToken}, 0))`;
     const existing=await tx.purchaseEvent.findUnique({where:{purchaseToken:p.purchaseToken}});
     if(existing&&(existing.userId!==p.userId||existing.sku!==p.sku))return {status:'REJECTED' as const,reason:'TOKEN_OWNED_BY_OTHER'};
     if(existing?.state==='REFUNDED'||existing?.state==='CANCELED')return {status:'REJECTED' as const,reason:'PURCHASE_REVOKED'};
@@ -58,7 +58,7 @@ export async function verifyAndCreditPurchase(
  */
 export async function handleVoidedPurchase(db: PrismaClient, purchaseToken: string) {
   return db.$transaction(async tx=>{
-    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${purchaseToken}, 0))`;
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${purchaseToken}, 0))`;
     const ev=await tx.purchaseEvent.findUnique({where:{purchaseToken}});
     if(!ev||ev.state!=='VERIFIED')return {handled:false};
     await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${ev.userId} FOR UPDATE`;
