@@ -20,6 +20,8 @@ const characterInput = z.object({
   speechStyle: z.string().max(500).nullable().optional(),
   scenario: z.string().max(2000).nullable().optional(),
   avatarUrl: z.string().url().startsWith('https://').max(2048).nullable().optional(),
+  // Adult audience (18+): romance and mature drama between adult characters, never sexually explicit.
+  mature: z.boolean().default(false),
 }).strict();
 
 const updateInput = characterInput.partial().refine(
@@ -33,14 +35,19 @@ const pageQuery = z.object({
 });
 const publicSelection = {
   id: true, name: true, appearance: true, biography: true, personality: true,
-  greeting: true, category: true, tags: true, language: true, avatarUrl: true,
+  greeting: true, category: true, tags: true, language: true, avatarUrl: true, mature: true,
   createdAt: true, publication:{select:{id:true,likesCount:true}}, ownerId:true, owner: { select: { profile: { select: { displayName: true } } } },
 } satisfies Prisma.CharacterSelect;
 
-const visibleTo = (userId: string): Prisma.CharacterWhereInput => ({
+/** Mature (18+) public characters are visible only to users who opted in after confirming 18+. */
+export async function showsMature(db: PrismaClient, userId: string) {
+  return !!(await db.profile.findUnique({ where: { userId }, select: { showMature: true } }))?.showMature;
+}
+const visibleTo = (userId: string, showMature = false): Prisma.CharacterWhereInput => ({
   OR: [
     { ownerId: userId },
-    { isHidden: false, publication: { is: { status: 'PUBLISHED' } }, owner:{blocksGot:{none:{blockerId:userId}},blocksMade:{none:{blockedId:userId}}} },
+    { isHidden: false, publication: { is: { status: 'PUBLISHED' } }, owner:{blocksGot:{none:{blockerId:userId}},blocksMade:{none:{blockedId:userId}}},
+      ...(showMature ? {} : { mature: false }) },
   ],
 });
 
@@ -79,11 +86,14 @@ export async function registerCharacterRoutes(app: FastifyInstance, db: PrismaCl
       category: z.string().trim().max(50).optional(),
       tag: z.string().trim().max(40).optional(),
       sort: z.enum(['recent', 'name', 'popular']).default('recent'),
+      // General and 18+ characters are listed in separate sections, never mixed.
+      section: z.enum(['general', 'mature']).default('general'),
     }).safeParse(req.query);
     if (!query.success) return reply.code(400).send({ error: 'INVALID_QUERY' });
-    const { q, category, tag, sort, cursor, limit } = query.data;
+    const { q, category, tag, sort, cursor, limit, section } = query.data;
+    if (section === 'mature' && !await showsMature(db, req.user.sub)) return reply.code(403).send({ error: 'MATURE_SECTION_DISABLED' });
     const where: Prisma.CharacterWhereInput = {
-      isHidden: false,
+      isHidden: false, mature: section === 'mature',
       owner:{blocksGot:{none:{blockerId:req.user.sub}},blocksMade:{none:{blockedId:req.user.sub}}},
       publication: { is: { status: 'PUBLISHED' } },
       ...(category ? { category: { equals: category, mode: 'insensitive' } } : {}),
@@ -115,7 +125,7 @@ export async function registerCharacterRoutes(app: FastifyInstance, db: PrismaCl
     const query = pageQuery.safeParse(req.query);
     if (!query.success) return reply.code(400).send({ error: 'INVALID_QUERY' });
     const favorites = await db.favorite.findMany({
-      where: { userId: req.user.sub, character: visibleTo(req.user.sub) },
+      where: { userId: req.user.sub, character: visibleTo(req.user.sub, await showsMature(db, req.user.sub)) },
       select: { character: { select: publicSelection }, createdAt: true },
       orderBy: { characterId: 'asc' },
       take: query.data.limit,
@@ -135,7 +145,7 @@ export async function registerCharacterRoutes(app: FastifyInstance, db: PrismaCl
     const params = uuidParam.safeParse(req.params);
     if (!params.success) return reply.code(400).send({ error: 'INVALID_ID' });
     const character = await db.character.findFirst({
-      where: { id: params.data.id, ...visibleTo(req.user.sub) },
+      where: { id: params.data.id, ...visibleTo(req.user.sub, await showsMature(db, req.user.sub)) },
     });
     if (!character) return reply.code(404).send({ error: 'NOT_FOUND' });
     return { character };
@@ -177,7 +187,7 @@ export async function registerCharacterRoutes(app: FastifyInstance, db: PrismaCl
     const params = uuidParam.safeParse(req.params);
     if (!params.success) return reply.code(400).send({ error: 'INVALID_ID' });
     const source = await db.character.findFirst({
-      where: { id: params.data.id, ...visibleTo(req.user.sub) },
+      where: { id: params.data.id, ...visibleTo(req.user.sub, await showsMature(db, req.user.sub)) },
     });
     if (!source) return reply.code(404).send({ error: 'NOT_FOUND' });
     const character = await db.character.create({
@@ -233,7 +243,7 @@ export async function registerCharacterRoutes(app: FastifyInstance, db: PrismaCl
     const params = uuidParam.safeParse(req.params);
     if (!params.success) return reply.code(400).send({ error: 'INVALID_ID' });
     const character = await db.character.findFirst({
-      where: { id: params.data.id, ...visibleTo(req.user.sub) }, select: { id: true },
+      where: { id: params.data.id, ...visibleTo(req.user.sub, await showsMature(db, req.user.sub)) }, select: { id: true },
     });
     if (!character) return reply.code(404).send({ error: 'NOT_FOUND' });
     await db.favorite.upsert({

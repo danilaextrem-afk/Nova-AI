@@ -317,6 +317,12 @@ private fun HomeScreen(model: NovaViewModel) {
 @Composable
 private fun CatalogScreen(model: NovaViewModel) {
     SectionHeader("Каталог", "Персонажи, прошедшие модерацию")
+    if (model.showMature) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        FilterChip(selected = !model.matureSection, onClick = { model.selectMatureSection(false) }, label = { Text("Для всех") })
+        FilterChip(selected = model.matureSection, onClick = { model.selectMatureSection(true) }, label = { Text("18+ Mature") })
+    }
+    if (model.matureSection) Text("Раздел 18+: романтика и взрослые драмы с совершеннолетними вымышленными персонажами. Откровенный контент запрещён.",
+        color = Color(0xFFFFB4A9), style = MaterialTheme.typography.bodySmall)
     NovaCard {
         OutlinedTextField(
             value = model.catalogQuery,
@@ -406,7 +412,10 @@ private fun CatalogScreen(model: NovaViewModel) {
                     style = MaterialTheme.typography.labelLarge
                 )
             }
-            Text(character.name, color = Purple, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(character.name, color = Purple, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+                if (character.mature) MatureBadge()
+            }
             Text(character.category.uppercase(), color = Cyan, fontSize = 12.sp)
             TextButton(onClick={model.showCharacterProfile(character.id)},enabled=!model.loading){Text("Полный профиль")}
             character.ownerId?.let {creator->Row(Modifier.horizontalScroll(rememberScrollState())) {
@@ -698,6 +707,7 @@ private fun AccountScreen(model: NovaViewModel) {
             "Сессия и неотправленный текст зашифрованы на устройстве. Чаты и память хранятся в твоём аккаунте.",
             color = Color.LightGray, style = MaterialTheme.typography.bodySmall
         )
+        MatureSettings(model)
         OutlinedButton(onClick = { model.logout() }) { Text("Выйти из аккаунта") }
         OutlinedButton(onClick={model.exportAccount()},enabled=!model.loading){Text("Экспортировать мои данные")}
         val context=LocalContext.current
@@ -751,4 +761,33 @@ private fun RewardCards(model: NovaViewModel) {
             }
         }
     }
+}
+
+@Composable
+fun MatureBadge() {
+    Surface(color = Color(0xFFB3261E), shape = RoundedCornerShape(6.dp)) {
+        Text("18+", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
+    }
+}
+
+@Composable
+private fun MatureSettings(model: NovaViewModel) {
+    var confirm by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) { model.loadContentSettings() }
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text("Раздел 18+ (Mature)", fontWeight = FontWeight.SemiBold)
+            Text("Выключен по умолчанию. Романтика без откровенного контента.", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
+        }
+        Switch(checked = model.showMature, enabled = !model.loading,
+            onCheckedChange = { if (it) confirm = true else model.updateShowMature(false) })
+    }
+    if (confirm) AlertDialog(
+        onDismissRequest = { confirm = false },
+        title = { Text("Только для взрослых") },
+        text = { Text("Раздел содержит романтические и взрослые сюжеты с вымышленными совершеннолетними персонажами. Откровенный сексуальный контент запрещён. Подтверди, что тебе исполнилось 18 лет.") },
+        confirmButton = { TextButton(onClick = { confirm = false; model.updateShowMature(true) }) { Text("Мне есть 18") } },
+        dismissButton = { TextButton(onClick = { confirm = false }) { Text("Отмена") } }
+    )
 }

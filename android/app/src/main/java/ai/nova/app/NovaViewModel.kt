@@ -94,6 +94,20 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     var catalogCategory by mutableStateOf("")
     var catalogTag by mutableStateOf("")
     var catalogSort by mutableStateOf("recent")
+    /** 18+ section: opt-in after confirmation; general and 18+ characters are never mixed in one list. */
+    var showMature by mutableStateOf(false)
+        private set
+    var matureSection by mutableStateOf(false)
+    var draftMature by mutableStateOf(false)
+    fun selectMatureSection(on: Boolean) { matureSection = on && showMature; refreshCatalog() }
+    fun updateShowMature(on: Boolean) {
+        execute {
+            showMature = service().contentSettings(authorization(), ContentSettingsBody(on, if (on) true else null)).showMature
+            if (!showMature) matureSection = false
+            notification = if (showMature) "Раздел 18+ включён" else "Раздел 18+ скрыт"
+        }
+    }
+    fun loadContentSettings() { execute { showMature = runCatching { service().me(authorization()).profile?.showMature == true }.getOrDefault(false) } }
     var draftName by mutableStateOf("")
     var draftGreeting by mutableStateOf("")
     var draftCategory by mutableStateOf("fantasy")
@@ -247,7 +261,8 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
                 query = catalogQuery.trim().takeIf { it.isNotEmpty() },
                 category = catalogCategory.trim().takeIf { it.isNotEmpty() },
                 tag = catalogTag.trim().takeIf { it.isNotEmpty() },
-                sort = catalogSort
+                sort = catalogSort,
+                section = if (matureSection && showMature) "mature" else "general"
             ).items
         }
     }
@@ -375,7 +390,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             val draft = CharacterDraft(name=draftName.trim(), greeting=draftGreeting.trim(), category=draftCategory.trim().ifBlank { "Приключения" },
                 tags=draftTags.split(',').map { it.trim() }.filter { it.isNotBlank() }.take(10), language=draftLanguage,
                 biography=draftBiography, personality=draftPersonality, appearance=draftAppearance, interests=draftInterests,
-                backstory=draftBackstory, speechStyle=draftSpeechStyle, scenario=draftScenario, avatarUrl=draftAvatar.takeIf { it.isNotBlank() })
+                backstory=draftBackstory, speechStyle=draftSpeechStyle, scenario=draftScenario, avatarUrl=draftAvatar.takeIf { it.isNotBlank() }, mature=draftMature)
             val editing = editingCharacterId
             if (editing == null) service().createCharacter(authorization(), draft) else service().editCharacter(authorization(), editing, draft)
             editingCharacterId = null
@@ -477,7 +492,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         editingCharacterId=c.id; draftName=c.name; draftGreeting=c.greeting; draftCategory=c.category
         draftBiography=c.biography.orEmpty(); draftPersonality=c.personality.orEmpty(); draftAppearance=c.appearance.orEmpty()
         draftInterests=c.interests.orEmpty(); draftBackstory=c.backstory.orEmpty(); draftSpeechStyle=c.speechStyle.orEmpty()
-        draftScenario=c.scenario.orEmpty(); draftAvatar=c.avatarUrl.orEmpty(); draftTags=c.tags.joinToString(", "); draftLanguage=c.language
+        draftScenario=c.scenario.orEmpty(); draftAvatar=c.avatarUrl.orEmpty(); draftTags=c.tags.joinToString(", "); draftLanguage=c.language; draftMature=c.mature
         activeTab=NovaTab.CREATE
     } }
     fun publishCharacter(id: String) { execute { service().publish(authorization(),id); notification="Персонаж отправлен на модерацию" } }

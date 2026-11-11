@@ -19,7 +19,8 @@ data class CharacterDraft(
     val language: String = "ru",
     val appearance: String = "", val biography: String = "", val personality: String = "",
     val interests: String = "", val backstory: String = "", val speechStyle: String = "",
-    val scenario: String = "", val avatarUrl: String? = null
+    val scenario: String = "", val avatarUrl: String? = null,
+    val mature: Boolean = false
 )
 data class NovaCharacter(
     val id: String,
@@ -30,7 +31,8 @@ data class NovaCharacter(
     val avatarUrl: String? = null,
     val biography: String? = null, val appearance: String? = null, val personality: String? = null,
     val interests: String? = null, val backstory: String? = null, val speechStyle: String? = null,
-    val scenario: String? = null, val language: String = "ru", val ownerId: String? = null, val publication: PublicationInfo? = null
+    val scenario: String? = null, val language: String = "ru", val ownerId: String? = null, val publication: PublicationInfo? = null,
+    val mature: Boolean = false
 )
 data class CharacterPage(val items: List<NovaCharacter> = emptyList(), val nextCursor: String? = null)
 data class CreatedCharacter(val character: NovaCharacter)
@@ -149,11 +151,15 @@ interface NovaApi {
         @Query("q") query: String? = null,
         @Query("category") category: String? = null,
         @Query("tag") tag: String? = null,
-        @Query("sort") sort: String = "recent"
+        @Query("sort") sort: String = "recent",
+        @Query("section") section: String = "general"
     ): CharacterPage
 
     @GET("v1/characters/mine")
     suspend fun myCharacters(@Header("Authorization") bearer: String): CharacterPage
+
+    @PUT("v1/me/content-settings") suspend fun contentSettings(@Header("Authorization") bearer: String, @Body body: ContentSettingsBody): ContentSettings
+    @GET("v1/me") suspend fun me(@Header("Authorization") bearer: String): MeResponse
 
     @POST("v1/characters")
     suspend fun createCharacter(
@@ -226,3 +232,8 @@ data class ReferralStatus(val code: String? = null, val bonusTokens: Int = 0, va
     val requiredTurns: Int = 3, val myInvite: MyInvite? = null, val canApplyCode: Boolean = false)
 data class ApplyReferralBody(val code: String)
 data class ApplyReferralResult(val applied: Boolean = false, val rewarded: Boolean = false, val requiredTurns: Int = 3)
+
+data class ContentSettingsBody(val showMature: Boolean, val confirmAdult: Boolean? = null)
+data class ContentSettings(val showMature: Boolean = false)
+data class MeProfile(val showMature: Boolean = false)
+data class MeResponse(val profile: MeProfile? = null)

@@ -80,4 +80,8 @@ import java.util.Locale
         Triple("Язык: ru / en",model.draftLanguage,{v:String->model.draftLanguage=v}),
         Triple("HTTPS-ссылка на свой портрет",model.draftAvatar,{v:String->model.draftAvatar=v})
     ).forEach {(label,value,set)->OutlinedTextField(value=value,onValueChange=set,label={Text(label)},modifier=Modifier.fillMaxWidth())}
+    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+        Checkbox(checked = model.draftMature, onCheckedChange = { model.draftMature = it })
+        Text("Для взрослой аудитории 18+ (романтика без откровенного контента). Проходит модерацию.")
+    }
 }
