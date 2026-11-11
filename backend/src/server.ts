@@ -10,6 +10,7 @@ import { config, PRODUCT_SEED } from './config.js';
 import { balance } from './ledger.js';
 import { verifySsv } from './admobSsv.js';
 import { verifyAndCreditPurchase } from './billing.js';
+import { registerCharacterRoutes } from './characters.js';
 
 const db = new PrismaClient();
 const app = Fastify({
@@ -40,7 +41,7 @@ app.decorate('auth', async (req: any, reply: any) => {
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
-async function issueTokens(userId: string, familyId = randomUUID()) {
+async function issueTokens(userId: string, familyId: string = randomUUID()) {
   const refresh = randomBytes(48).toString('base64url');
   await db.session.create({
     data: {
@@ -135,6 +136,10 @@ app.get('/v1/ads/status', { preHandler: app.auth }, async (req: any) => {
 
 // AdMob SSV callback (called by Google, unauthenticated; the signature is the authentication).
 app.get('/v1/ads/ssv', async (req, reply) => {
+  // Fail closed until an app-specific rewarded unit is configured.
+  if (!config.admob.adUnit || !Number.isSafeInteger(config.admob.rewardAmount) || config.admob.rewardAmount <= 0) {
+    return reply.code(503).send({ error: 'ADMOB_NOT_CONFIGURED' });
+  }
   const rawQuery = req.raw.url!.split('?')[1] ?? '';
   const r = await verifySsv(rawQuery, {
     expectedAdUnit: config.admob.adUnit || undefined,
@@ -167,6 +172,12 @@ app.get('/v1/ads/ssv', async (req, reply) => {
         where: { userId: user.id, createdAt: { gte: since } },
       });
       if (recentCount >= config.admob.dailyLimit) return false;
+      const lastReward = await tx.adReward.findFirst({
+        where: { userId: user.id }, orderBy: { createdAt: 'desc' },
+      });
+      if (lastReward && Date.now() - lastReward.createdAt.getTime() < config.admob.minIntervalSec * 1000) {
+        return false;
+      }
       await tx.walletAccount.upsert({ where: { userId: user.id }, create: { userId: user.id }, update: {} });
       await tx.adReward.create({
         data: { userId: user.id, transactionId: r.transactionId, adUnit: r.adUnit, amount: r.amount },
@@ -183,13 +194,15 @@ app.get('/v1/ads/ssv', async (req, reply) => {
       });
       return true;
     });
-    return { credited, ...(!credited ? { reason: 'DUPLICATE_OR_LIMIT' } : {}) };
+    return { credited, ...(!credited ? { reason: 'DUPLICATE_LIMIT_OR_COOLDOWN' } : {}) };
   } catch (e: any) {
     if (e?.code === 'P2002') return { credited: false, reason: 'DUPLICATE' };
     req.log.error({ err: e?.message }, 'ssv transaction failed');
     return reply.code(503).send({ error: 'REWARD_RETRYABLE' });
   }
 });
+
+await registerCharacterRoutes(app, db);
 
 for (const [sku, tokens] of Object.entries(PRODUCT_SEED)) {
   await db.paymentProduct.upsert({ where: { sku }, create: { sku, tokens }, update: {} });
