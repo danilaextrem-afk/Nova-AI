@@ -11,6 +11,16 @@ export async function registerProductRoutes(app:FastifyInstance,db:PrismaClient)
   if(!p.success)return reply.code(400).send({error:'INVALID_PROFILE'});
   return db.profile.upsert({where:{userId:req.user.sub},create:{userId:req.user.sub,...p.data},update:p.data});
  });
+ // 18+ section is opt-in: enabling requires an explicit confirmation in the same request; disabling never does.
+ app.put('/v1/me/content-settings',auth,async(req:any,reply)=>{
+  const p=z.object({showMature:z.boolean(),confirmAdult:z.literal(true).optional()}).strict().safeParse(req.body);
+  if(!p.success)return reply.code(400).send({error:'INVALID_SETTINGS'});
+  if(p.data.showMature&&!p.data.confirmAdult)return reply.code(400).send({error:'ADULT_CONFIRMATION_REQUIRED'});
+  const user=await db.user.findUnique({where:{id:req.user.sub},select:{email:true}});
+  const data={showMature:p.data.showMature,...(p.data.showMature?{matureConfirmedAt:new Date()}:{})};
+  const profile=await db.profile.upsert({where:{userId:req.user.sub},create:{userId:req.user.sub,displayName:user!.email.split('@')[0],...data},update:data});
+  return {showMature:profile.showMature};
+ });
  app.get('/v1/me/export',auth,async(req:any,reply)=>{
   const u=await db.user.findUnique({where:{id:req.user.sub},select:{email:true,createdAt:true,profile:true,
     characters:true,chats:{include:{messages:{orderBy:{sequence:'asc'}},memories:true}},favorites:true,notifications:true,comments:true,following:true,likes:true}});

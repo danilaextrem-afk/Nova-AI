@@ -23,6 +23,7 @@ class NovaUiTest {
  @Volatile private var streamFailure=false
  private val streamIds=java.util.Collections.synchronizedList(mutableListOf<String>())
  @Volatile private var bonusClaims=0
+ @Volatile private var showMature=false
  @Before fun setUp(){
   server.dispatcher=object:Dispatcher(){override fun dispatch(r:RecordedRequest):MockResponse {
    if(r.path=="/v1/chats/$chat/messages/stream"){
@@ -35,6 +36,9 @@ class NovaUiTest {
    }
    val json=when {
     r.path=="/v1/auth/login" -> """{"accessToken":"fixture-token","refreshToken":"fixture-refresh-token"}"""
+    r.path=="/v1/me" -> """{"id":"me","email":"adult@example.test","profile":{"showMature":$showMature}}"""
+    r.path=="/v1/me/content-settings" -> {val b=r.body.clone().readUtf8();showMature=b.contains("\"showMature\":true")&&b.contains("\"confirmAdult\":true");"""{"showMature":$showMature}"""}
+    r.path?.startsWith("/v1/characters/catalog")==true && r.path!!.contains("section=mature") -> """{"items":[{"id":"00000000-0000-4000-8000-000000000199","name":"Северина Лис","greeting":"Добрый вечер.","category":"Романтика","tags":[],"mature":true}]}"""
     r.path?.startsWith("/v1/characters/catalog")==true -> """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет, исследователь!","category":"Приключения","tags":[],"ownerId":"fixture-creator","publication":{"id":"fixture-publication","likesCount":0}}]}"""
     r.path=="/v1/chats" && r.method=="POST" -> """{"chat":{"id":"$chat","characterId":"$character","title":"Аврора Вейл"}}"""
     r.path=="/v1/chats" -> """{"items":[{"id":"$chat","characterId":"$character","title":"Аврора Вейл"}]}"""
@@ -155,5 +159,23 @@ class NovaUiTest {
   compose.waitUntil(20000){compose.onAllNodesWithText("Получено сегодня. Следующий бонус — завтра.").fetchSemanticsNodes().isNotEmpty()}
   assertEquals(1,bonusClaims)
   compose.onNodeWithText("NOVA2345").performScrollTo().assertExists();screenshot("05-wallet-rewards")
+ }
+ @Test fun matureSectionNeedsExplicitAdultConfirmation(){
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  compose.waitUntil(20000){compose.onAllNodesWithText("Профиль").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Профиль").performClick()
+  compose.waitUntil(20000){compose.onAllNodesWithText("Раздел 18+ (Mature)").fetchSemanticsNodes().isNotEmpty()}
+  compose.waitUntil(20000){compose.onAllNodes(isToggleable() and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
+  compose.onNode(isToggleable() and isEnabled()).performScrollTo().performClick()
+  compose.waitUntil(20000){compose.onAllNodesWithText("Мне есть 18").fetchSemanticsNodes().isNotEmpty()}
+  assertFalse("dialog alone must not enable 18+",showMature)
+  compose.onNodeWithText("Мне есть 18").performClick()
+  compose.waitUntil(20000){showMature}
+  compose.onNodeWithText("Каталог").performClick()
+  clickWhenEnabled("18+ Mature")
+  compose.waitUntil(20000){compose.onAllNodesWithText("Северина Лис").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("18+").assertExists();screenshot("06-mature-section")
  }
 }

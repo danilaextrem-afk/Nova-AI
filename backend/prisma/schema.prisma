@@ -89,6 +89,8 @@ model Profile {
   displayName String
   avatarUrl   String?
   bio         String? @db.VarChar(500)
+  showMature  Boolean @default(false) // Opt-in, after an explicit 18+ confirmation.
+  matureConfirmedAt DateTime?
   user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -124,6 +126,7 @@ model Character {
   avatarUrl     String?
   isHidden      Boolean  @default(false)
   isLibrary     Boolean  @default(false)
+  mature        Boolean  @default(false) // 18+ section: adult romance/drama, never sexually explicit.
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -135,6 +138,7 @@ model Character {
 
   @@index([ownerId])
   @@index([category])
+  @@index([mature])
 }
 
 model CharacterAsset {
