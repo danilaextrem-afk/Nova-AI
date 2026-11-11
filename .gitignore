@@ -1,0 +1,12 @@
+.env
+node_modules/
+dist/
+backups/
+*.jks
+*.keystore
+keystore.properties
+local.properties
+.gradle/
+build/
+*.apk
+*.aab

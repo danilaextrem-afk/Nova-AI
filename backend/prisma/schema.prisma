@@ -1,0 +1,361 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum TokenBucket {
+  PURCHASED
+  AD_REWARD
+  BONUS
+}
+
+enum TxType {
+  CREDIT_PURCHASE
+  CREDIT_AD_REWARD
+  CREDIT_BONUS
+  CREDIT_REFUND
+  DEBIT_SPEND
+  DEBIT_PURCHASE_REVOKE
+}
+
+enum TxStatus {
+  PENDING
+  COMPLETED
+  FAILED
+  REVERSED
+}
+
+enum PurchaseState {
+  VERIFIED
+  CANCELED
+  REFUNDED
+  REJECTED
+}
+
+enum ReportStatus {
+  OPEN
+  RESOLVED
+  DISMISSED
+}
+
+enum PublicationStatus {
+  PENDING_REVIEW
+  PUBLISHED
+  HIDDEN
+  REJECTED
+}
+
+model User {
+  id           String    @id @default(uuid())
+  email        String    @unique
+  passwordHash String
+  status       String    @default("ACTIVE") // ACTIVE | BLOCKED | DELETED
+  createdAt    DateTime  @default(now())
+  deletedAt    DateTime?
+
+  profile       Profile?
+  sessions      Session[]
+  characters    Character[]
+  chats         Chat[]
+  favorites     Favorite[]
+  likes         Like[]
+  wallet        WalletAccount?
+  transactions  WalletTransaction[]
+  purchases     PurchaseEvent[]
+  adRewards     AdReward[]
+  aiUsage       AiUsage[]
+  notifications Notification[]
+  reportsMade   Report[]        @relation("reporter")
+  blocksMade    UserBlock[]     @relation("blocker")
+  blocksGot     UserBlock[]     @relation("blocked")
+
+  @@index([createdAt])
+}
+
+model Profile {
+  userId      String  @id
+  displayName String
+  avatarUrl   String?
+  bio         String? @db.VarChar(500)
+  user        User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Session {
+  id               String    @id @default(uuid())
+  userId           String
+  refreshTokenHash String    @unique
+  familyId         String // rotation family: reuse of an old token revokes the family
+  expiresAt        DateTime
+  revokedAt        DateTime?
+  createdAt        DateTime  @default(now())
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([familyId])
+}
+
+model Character {
+  id            String   @id @default(uuid())
+  ownerId       String
+  name          String   @db.VarChar(80)
+  appearance    String?  @db.VarChar(1000)
+  biography     String?  @db.VarChar(3000)
+  personality   String?  @db.VarChar(1500)
+  interests     String?  @db.VarChar(500)
+  backstory     String?  @db.VarChar(3000)
+  speechStyle   String?  @db.VarChar(500)
+  greeting      String   @db.VarChar(1000)
+  scenario      String?  @db.VarChar(2000)
+  category      String
+  tags          String[]
+  language      String   @default("ru")
+  avatarUrl     String?
+  isHidden      Boolean  @default(false)
+  isLibrary     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  owner        User              @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  assets       CharacterAsset[]
+  chats        Chat[]
+  publication  Publication?
+  favorites    Favorite[]
+
+  @@index([ownerId])
+  @@index([category])
+}
+
+model CharacterAsset {
+  id          String   @id @default(uuid())
+  characterId String
+  url         String
+  kind        String // AVATAR | ILLUSTRATION
+  bytes       Int
+  createdAt   DateTime @default(now())
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+
+  @@index([characterId])
+}
+
+model Chat {
+  id          String   @id @default(uuid())
+  userId      String
+  characterId String
+  title       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  messages    Message[]
+  memories    Memory[]
+
+  @@index([userId, updatedAt])
+}
+
+model Message {
+  id        String   @id @default(uuid())
+  chatId    String
+  role      String // user | assistant
+  content   String
+  pinned    Boolean  @default(false)
+  createdAt DateTime @default(now())
+  editedAt  DateTime?
+  chat      Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([chatId, createdAt])
+}
+
+model Memory {
+  id        String   @id @default(uuid())
+  chatId    String
+  kind      String // SUMMARY | EVENT | FACT
+  content   String   @db.VarChar(2000)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  chat      Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
+
+  @@index([chatId])
+}
+
+model Favorite {
+  userId      String
+  characterId String
+  createdAt   DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
+
+  @@id([userId, characterId])
+}
+
+model Publication {
+  id          String            @id @default(uuid())
+  characterId String            @unique
+  status      PublicationStatus @default(PENDING_REVIEW)
+  likesCount  Int               @default(0)
+  ratingSum   Int               @default(0)
+  ratingCount Int               @default(0)
+  publishedAt DateTime?
+  createdAt   DateTime          @default(now())
+  character   Character         @relation(fields: [characterId], references: [id], onDelete: Cascade)
+  likes       Like[]
+
+  @@index([status, likesCount])
+  @@index([status, publishedAt])
+}
+
+model Like {
+  userId        String
+  publicationId String
+  createdAt     DateTime    @default(now())
+  user          User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  publication   Publication @relation(fields: [publicationId], references: [id], onDelete: Cascade)
+
+  @@id([userId, publicationId])
+}
+
+model Report {
+  id         String       @id @default(uuid())
+  reporterId String
+  targetType String // PUBLICATION | USER | MESSAGE
+  targetId   String
+  reason     String       @db.VarChar(500)
+  status     ReportStatus @default(OPEN)
+  createdAt  DateTime     @default(now())
+  reporter   User         @relation("reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+}
+
+model UserBlock {
+  blockerId String
+  blockedId String
+  createdAt DateTime @default(now())
+  blocker   User     @relation("blocker", fields: [blockerId], references: [id], onDelete: Cascade)
+  blocked   User     @relation("blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+
+  @@id([blockerId, blockedId])
+}
+
+// Balances live ONLY on the server. CHECK (>= 0) constraints are added in the SQL migration.
+model WalletAccount {
+  userId         String   @id
+  purchased      Int      @default(0)
+  adReward       Int      @default(0)
+  bonus          Int      @default(0)
+  updatedAt      DateTime @updatedAt
+  user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model WalletTransaction {
+  id             String      @id @default(uuid())
+  userId         String
+  type           TxType
+  bucket         TokenBucket
+  source         String // e.g. play_billing, admob_ssv, chat, art, admin
+  amount         Int // always positive; direction comes from type
+  status         TxStatus    @default(COMPLETED)
+  externalId     String? // purchase token / SSV transaction_id
+  idempotencyKey String      @unique
+  createdAt      DateTime    @default(now())
+  user           User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([source, externalId])
+  @@index([userId, createdAt])
+}
+
+model PaymentProduct {
+  sku       String  @id // nova_tokens_100 ...
+  tokens    Int
+  active    Boolean @default(true)
+}
+
+model PurchaseEvent {
+  id            String        @id @default(uuid())
+  userId        String
+  sku           String
+  purchaseToken String        @unique
+  orderId       String?
+  state         PurchaseState
+  tokens        Int
+  priceMicros   BigInt?
+  currency      String?
+  createdAt     DateTime      @default(now())
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model AdReward {
+  id            String   @id @default(uuid())
+  userId        String
+  transactionId String   @unique // AdMob SSV transaction_id
+  adUnit        String
+  amount        Int
+  createdAt     DateTime @default(now())
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model AiUsage {
+  id           String   @id @default(uuid())
+  userId       String
+  feature      String // chat | image
+  provider     String
+  model        String
+  inputTokens  Int      @default(0)
+  outputTokens Int      @default(0)
+  costMicros   Int      @default(0)
+  latencyMs    Int      @default(0)
+  success      Boolean
+  errorCode    String?
+  createdAt    DateTime @default(now())
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  body      String
+  readAt    DateTime?
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+model AdminUser {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  role         String   @default("OWNER")
+  createdAt    DateTime @default(now())
+  auditLogs    AuditLog[]
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  adminId   String
+  action    String
+  target    String?
+  meta      Json?
+  createdAt DateTime @default(now())
+  admin     AdminUser @relation(fields: [adminId], references: [id])
+
+  @@index([adminId, createdAt])
+}
+
+// Admin-editable runtime settings: feature costs, ad limits, AI config.
+model Setting {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt
+}
