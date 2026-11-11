@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -187,6 +188,54 @@ private fun LoginScreen(model: NovaViewModel) {
             ) { Text("Создать аккаунт") }
         }
         StatusMessage(model)
+        GuestCastPreview()
+    }
+}
+
+private val showcaseNames = listOf(
+    "Аврора Вейл", "Лея Винтер", "Мира Соль", "Ника Блэйз",
+    "София Рейн", "Элина Фрост", "Кай Номад", "Леон Арден",
+    "Арсен Вольт", "Даниэль Рэй", "Рэн Блэквуд", "Тео Картер"
+)
+
+@Composable
+private fun GuestCastPreview() {
+    val context = LocalContext.current
+    Text("Знакомься с персонажами", fontSize = 22.sp, fontWeight = FontWeight.Bold)
+    Text(
+        "Бесплатный просмотр героев. Для настоящего AI-чата потребуется подключённый сервер.",
+        color = Color.LightGray, style = MaterialTheme.typography.bodySmall
+    )
+    Row(
+        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        showcaseNames.forEachIndexed { index, name ->
+            val id = "00000000-0000-4000-8000-" +
+                (index + 101).toString().padStart(12, '0')
+            val image = remember(index, context) { NovaCastPortraits.find(context, id) }
+            Card(
+                modifier = Modifier.width(128.dp),
+                colors = CardDefaults.cardColors(containerColor = CardSurface),
+                shape = RoundedCornerShape(16.dp)
+            ) {
+                Column(modifier = Modifier.padding(9.dp)) {
+                    if (image != null) {
+                        Image(
+                            bitmap = image,
+                            contentDescription = "Портрет персонажа " + name,
+                            contentScale = ContentScale.Crop,
+                            modifier = Modifier.size(110.dp).clip(RoundedCornerShape(12.dp))
+                        )
+                    }
+                    Text(
+                        name, maxLines = 2,
+                        fontWeight = FontWeight.SemiBold,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+            }
+        }
     }
 }
 
