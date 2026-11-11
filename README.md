@@ -48,3 +48,13 @@ The Android app bundles a compressed, original photorealistic contact sheet and 
 ## AI provider foundation (not yet connected)
 
 Backend code supports configurable, server-only OpenAI-compatible adapters for OpenRouter, Groq and Gemini. This is **not** evidence of live chat: API keys, backend chat routes, UI conversation flow and provider integration tests are still missing. The app must not show canned AI responses when no provider is configured.
+
+## Free and Premium AI character chat (developer implementation)
+
+NOVA AI now implements two **different chat tiers** through the same authenticated, server-owned provider gateway:
+
+- **Free**: no NOVA Token charges and no fixed daily message cap in NOVA AI. Subject to per-minute abuse protection, service uptime, free upstream provider usage quotas, capacity and fair-use protections. Never advertise an upstream AI provider as unlimited.
+- **Premium**: uses a separately configured, stronger model and longer output/context. The configured price (default `5 NOVA Tokens`) is displayed before sending. On success, spending and saving the reply commit together in PostgreSQL; failed upstream responses do not debit NOVA Tokens.
+- **Safety**: no API keys in Android, per-user chat ownership checks, attempts reserved by UUID to avoid repeat requests, server-side wallet and model selection. Neither tier offers explicit/adult chat.
+
+Configure in backend environment (never commit real keys): `AI_PROVIDER`, `AI_MODEL`, provider key, `NOVA_PREMIUM_PROVIDER`, `NOVA_PREMIUM_MODEL`, `NOVA_PREMIUM_TOKENS_PER_MESSAGE`. Premium remains disabled until a **different** model/provider is configured. Upstream costs and actual production provider limits are not represented by the token price and require a budget strategy before public launch. Real provider streaming, Android billing, hosted HTTPS backend and production security/E2E testing remain release blockers.
