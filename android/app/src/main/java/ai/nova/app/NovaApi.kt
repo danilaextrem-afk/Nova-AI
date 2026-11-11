@@ -184,6 +184,15 @@ interface NovaApi {
         @Path("id") id: String, @Query("before") before: Int? = null
     ): NovaChatMessagesResponse
 
+    /** Server-Sent Events: "delta" events, then one "done" or "error". Read off the main thread. */
+    @retrofit2.http.Streaming
+    @POST("v1/chats/{id}/messages/stream")
+    suspend fun sendChatMessageStream(
+        @Header("Authorization") bearer: String,
+        @Path("id") id: String,
+        @Body body: NovaChatSendBody
+    ): okhttp3.ResponseBody
+
     @POST("v1/chats/{id}/messages")
     suspend fun sendChatMessage(
         @Header("Authorization") bearer: String,

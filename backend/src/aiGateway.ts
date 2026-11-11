@@ -104,7 +104,8 @@ const micros = (m:ModelConfig, input:number, output:number) => Math.ceil(input*m
 
 // Shared database reservations enforce provider quotas/budgets across server replicas.
 // Token estimation uses UTF-8 bytes as a conservative upper bound; includes output reservation.
-export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', db?:PrismaClient, requestId?:string):Promise<AiCompletion> {
+export type AiStreamOptions = { onDelta?: (text:string)=>void; signal?: AbortSignal };
+export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', db?:PrismaClient, requestId?:string, opts:AiStreamOptions={}):Promise<AiCompletion> {
   const models = modelPool(tier).filter(m => tier !== 'premium' || !modelPool('free').some(f=>m.model===f.model&&m.provider===f.provider));
   if (!models.length) throw new AiProviderError('AI_NOT_CONFIGURED',503);
   if (!db) throw new AiProviderError('AI_COORDINATOR_REQUIRED',503);
@@ -142,15 +143,18 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
       });
       if (!attempt) continue;
       const started=Date.now();
-      let retry=0; let code='AI_UPSTREAM_ERROR'; let status=502; let certainNoCharge=false;
+      let retry=0; let code='AI_UPSTREAM_ERROR'; let status=502; let certainNoCharge=false; let emitted=false;
+      const streaming=!!opts.onDelta;
       try {
         const p=providers[m.provider];
         const response=await fetch(p.base+'/chat/completions',{
           method:'POST',headers:{Authorization:'Bearer '+process.env[p.keyEnv],'Content-Type':'application/json',
             ...(m.provider==='openrouter'?{'X-Title':'NOVA AI'}:{})},
-          body:JSON.stringify({model:m.model,messages,stream:false,temperature:0.8,max_tokens:maxOutput,
+          body:JSON.stringify({model:m.model,messages,stream:streaming,temperature:0.8,max_tokens:maxOutput,
+            ...(streaming?{stream_options:{include_usage:true}}:{}),
             ...(m.provider==='openrouter'?{provider:{data_collection:'deny'}}:{})}),
-          signal:AbortSignal.timeout(Math.min(30000,Math.max(1000,deadline-Date.now()))),
+          signal:AbortSignal.any([AbortSignal.timeout(Math.min(streaming?60000:30000,Math.max(1000,deadline-Date.now()))),
+            ...(opts.signal?[opts.signal]:[])]),
         });
         if(!response.ok){
           retry=retryAfterMs(response.headers?.get('retry-after'));
@@ -159,11 +163,48 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
           if([401,403,404].includes(response.status)) retry=Math.max(retry,300000);
           throw new Error(code);
         }
-        const obj=await response.json() as {choices?:{message?:{content?:unknown}}[];usage?:{prompt_tokens?:number;completion_tokens?:number}};
-        const text=obj?.choices?.[0]?.message?.content;
+        type Usage={prompt_tokens?:number;completion_tokens?:number};
+        let text:unknown; let usage:Usage|undefined;
+        if(streaming){
+          // OpenAI-compatible SSE: "data: {choices:[{delta:{content}}]}" lines, optional usage chunk, "data: [DONE]".
+          if(!response.body){code='AI_EMPTY_RESPONSE';throw new Error(code);}
+          const reader=response.body.getReader();const decoder=new TextDecoder();let buffer='';let out='';let completed=false;
+          const limit=tier==='premium'?12000:4000;
+          for(;;){
+            // Do not rely on the fetch implementation to abort the body: stop reading as soon as the user cancels.
+            if(opts.signal?.aborted){reader.cancel().catch(()=>{});throw new Error('AI_CANCELLED');}
+            const {done,value}=await reader.read();
+            buffer+=decoder.decode(value,{stream:!done});
+            if(buffer.length>1048576)throw new Error('AI_INVALID_STREAM');
+            if(done&&buffer&&!buffer.endsWith('\n'))buffer+='\n';
+            let nl:number;
+            while((nl=buffer.indexOf('\n'))>=0){
+              const line=buffer.slice(0,nl).trim();buffer=buffer.slice(nl+1);
+              if(!line.startsWith('data:'))continue;
+              const data=line.slice(5).trim();if(data==='[DONE]'){completed=true;continue;}if(!data)continue;
+              let chunk:any;try{chunk=JSON.parse(data);}catch{continue;}
+              if(chunk?.error){code='AI_UPSTREAM_ERROR';throw new Error(code);}
+              if(chunk?.usage)usage=chunk.usage;
+              const finish=chunk?.choices?.[0]?.finish_reason;
+              if(finish==='stop'||finish==='length')completed=true;
+              if(finish==='content_filter'){code='AI_CONTENT_FILTERED';throw new Error(code);}
+              const delta=chunk?.choices?.[0]?.delta?.content;
+              if(typeof delta==='string'&&delta&&out.length<limit){
+                const piece=delta.slice(0,limit-out.length);out+=piece;emitted=true;opts.onDelta!(piece);
+              }
+            }
+            if(done)break;
+          }
+          if(!completed){code='AI_STREAM_INTERRUPTED';throw new Error(code);}
+          text=out;
+        }else{
+          const obj=await response.json() as {choices?:{message?:{content?:unknown}}[];usage?:Usage};
+          text=obj?.choices?.[0]?.message?.content;usage=obj?.usage;
+        }
+        if(opts.signal?.aborted)throw new Error('AI_CANCELLED');
         if(typeof text!=='string'||!text.trim()){code='AI_EMPTY_RESPONSE';throw new Error(code);}
         const num=(x:unknown,fallback:number)=>typeof x==='number'&&Number.isSafeInteger(x)&&x>=0?x:fallback;
-        const inputTokens=num(obj.usage?.prompt_tokens,inputEstimate), outputTokens=num(obj.usage?.completion_tokens,maxOutput);
+        const inputTokens=num(usage?.prompt_tokens,inputEstimate), outputTokens=num(usage?.completion_tokens,maxOutput);
         const cost=micros(m,inputTokens,outputTokens);
         // Reservations are kept on ambiguous failures/timeouts. Successful usage can release overestimates.
         await db.$transaction(async tx=>{
@@ -176,9 +217,14 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
         });
         return {text:text.trim().slice(0,tier==='premium'?12000:4000),provider:m.provider,model:m.model,inputTokens,outputTokens,costMicros:cost};
       }catch(error){
+        const cancelled=!!opts.signal?.aborted;if(cancelled)code='AI_CANCELLED';
         await db.$transaction(async tx=>{
           await tx.$queryRaw`SELECT key FROM "AiProviderState" WHERE key = ${key} FOR UPDATE`;
           const state=(await tx.aiProviderState.findUnique({where:{key}}))!;
+          if(cancelled){ // A user pressing Stop is not a provider fault: no breaker trip, reservation kept.
+            await tx.aiAttempt.update({where:{id:attempt.id},data:{status:'FAILED',errorCode:code,latencyMs:Date.now()-started}});
+            return;
+          }
           const failures=state.failures+1;
           const backoff=Math.min(60000,1000*2**Math.min(failures,6))+Math.floor(Math.random()*500);
           const until=new Date(Date.now()+Math.max(retry,backoff,failures>=3?30000:0));
@@ -187,6 +233,9 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
           await tx.aiAttempt.update({where:{id:attempt.id},data:{status:'FAILED',errorCode:code,latencyMs:Date.now()-started}});
         });
         lastError=new AiProviderError(code,status,Math.max(1,Math.ceil(retry/1000)||30));
+        // A cancelled request, or a stream that already showed text, is never silently continued elsewhere.
+        if(opts.signal?.aborted)throw new AiProviderError('AI_CANCELLED',499,1);
+        if(emitted)throw new AiProviderError('AI_STREAM_INTERRUPTED',502,5);
       }
     }
     throw lastError;

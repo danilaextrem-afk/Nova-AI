@@ -149,3 +149,59 @@ describe('Regenerate latest reply (HTTP fixtures, not live AI)',()=>{
   expect((await balance(db,userId)).total).toBe(before.total-5);
  });
 });
+
+describe('Streaming replies over SSE (HTTP fixtures, not live AI)',()=>{
+ const enc=new TextEncoder();
+ const chunk=(content:string)=>`data: ${JSON.stringify({choices:[{delta:{content}}]})}\n\n`;
+ const usage=`data: ${JSON.stringify({choices:[],usage:{prompt_tokens:40,completion_tokens:6}})}\n\ndata: [DONE]\n\n`;
+ const streamResponse=(parts:string[],mode:{fail?:boolean,signal?:AbortSignal}={})=>{let i=0;return new Response(new ReadableStream({async pull(c){
+  if(i<parts.length){c.enqueue(enc.encode(parts[i++]));return;}
+  if(mode.fail)throw new Error('socket hang up');
+  if(mode.signal)await new Promise((_,reject)=>{if(mode.signal!.aborted)return reject(new Error('aborted'));mode.signal!.addEventListener('abort',()=>reject(new Error('aborted')));});
+  c.close();}}),{status:200,headers:{'content-type':'text/event-stream'}});};
+ const stream=(payload:any)=>app.inject({method:'POST',url:`/v1/chats/${chatId}/messages/stream`,headers:auth(),payload});
+ const events=(body:string)=>body.split('\n\n').filter(b=>b.startsWith('event:')).map(b=>({name:b.split('\n')[0].slice(7),data:JSON.parse(b.split('\n')[1].slice(6))}));
+ it('forwards deltas in order and saves exactly the streamed text',async()=>{
+  const mock=vi.fn(async(_u:any,_i:any)=>streamResponse([chunk('Привет, '),chunk('путник!'),usage]));vi.stubGlobal('fetch',mock);
+  const r=await stream({content:'Здравствуй',requestId:randomUUID()});
+  expect(r.headers['content-type']).toContain('text/event-stream');
+  const ev=events(r.body);
+  expect(ev.filter(e=>e.name==='delta').map(e=>e.data.text)).toEqual(['Привет, ','путник!']);
+  const done=ev.at(-1)!;expect(done.name).toBe('done');expect(done.data.assistantMessage.content).toBe('Привет, путник!');expect(done.data.tokensCharged).toBe(0);
+  expect(JSON.parse(mock.mock.calls[0][1].body).stream).toBe(true);
+  expect((await db.message.findMany({where:{chatId},orderBy:{sequence:'asc'}})).map(m=>m.content)).toEqual(['Здравствуй','Привет, путник!']);
+ });
+ it('an interrupted Premium stream is not failed over, not saved and not charged',async()=>{
+  await credit(db,{userId,bucket:'BONUS',amount:20,source:'test',idempotencyKey:randomUUID()});const before=await balance(db,userId);
+  const mock=vi.fn(async()=>streamResponse([chunk('Начало')],{fail:true}));vi.stubGlobal('fetch',mock);
+  const free=await stream({content:'Сцена',requestId:randomUUID()});
+  expect(events(free.body).at(-1)!.data.error).toBe('AI_STREAM_INTERRUPTED');
+  expect(mock).toHaveBeenCalledTimes(1); // OpenRouter is configured too, but shown text is never continued by another model.
+  await db.aiProviderState.updateMany({data:{retryAt:null}});
+  const r=await stream({content:'Сцена',requestId:randomUUID(),tier:'premium',expectedPriceTokens:5});
+  const last=events(r.body).at(-1)!;expect(last.name).toBe('error');expect(last.data.error).toBe('AI_STREAM_INTERRUPTED');
+  expect(mock).toHaveBeenCalledTimes(2);expect(await db.message.count({where:{chatId}})).toBe(0);
+  expect(await balance(db,userId)).toEqual(before);
+ });
+ it('user cancel stops the upstream call without tripping the provider circuit breaker',async()=>{
+  const ac=new AbortController();
+  vi.stubGlobal('fetch',vi.fn(async(_u:any,init:any)=>streamResponse([chunk('Пишу...')],{signal:init.signal})));
+  const seen:string[]=[];
+  await expect(completeAiChat([{role:'system',content:'s'},{role:'user',content:'u'}],'free',db,randomUUID(),
+   {onDelta:t=>{seen.push(t);ac.abort();},signal:ac.signal})).rejects.toMatchObject({code:'AI_CANCELLED'});
+  expect(seen).toEqual(['Пишу...']);
+  const state=await db.aiProviderState.findUnique({where:{key:quotaKey({provider:'groq',model:'test-free'})}});
+  expect(state!.failures).toBe(0);expect(state!.retryAt).toBeNull();
+  expect((await db.aiAttempt.findFirst({orderBy:{createdAt:'desc'}}))!.errorCode).toBe('AI_CANCELLED');
+ });
+});
+
+describe('Truncated SSE protection (HTTP fixture)',()=>{
+ it('does not save or debit Premium on a clean EOF without a completion marker',async()=>{
+  await credit(db,{userId,bucket:'BONUS',amount:20,source:'test',idempotencyKey:randomUUID()});const before=await balance(db,userId);
+  const mock=vi.fn(async()=>new Response('data: '+JSON.stringify({choices:[{delta:{content:'Незаконченный ответ'}}]})+'\n\n',{headers:{'content-type':'text/event-stream'}}));vi.stubGlobal('fetch',mock);
+  const r=await app.inject({method:'POST',url:`/v1/chats/${chatId}/messages/stream`,headers:auth(),payload:{content:'Сцена',requestId:randomUUID(),tier:'premium',expectedPriceTokens:5}});
+  expect(r.body).toContain('AI_STREAM_INTERRUPTED');expect(r.body).not.toContain('event: done');
+  expect(await balance(db,userId)).toEqual(before);expect(await db.message.count({where:{chatId}})).toBe(0);expect(mock).toHaveBeenCalledTimes(1);
+ });
+});
