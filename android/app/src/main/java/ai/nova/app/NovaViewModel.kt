@@ -100,7 +100,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     var matureSection by mutableStateOf(false)
     var draftMature by mutableStateOf(false)
     fun selectMatureSection(on: Boolean) { matureSection = on && showMature; refreshCatalog() }
-    fun setShowMature(on: Boolean) {
+    fun updateShowMature(on: Boolean) {
         execute {
             showMature = service().contentSettings(authorization(), ContentSettingsBody(on, if (on) true else null)).showMature
             if (!showMature) matureSection = false

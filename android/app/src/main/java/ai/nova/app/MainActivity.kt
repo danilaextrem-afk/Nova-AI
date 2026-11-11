@@ -781,13 +781,13 @@ private fun MatureSettings(model: NovaViewModel) {
             Text("Выключен по умолчанию. Романтика без откровенного контента.", style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
         }
         Switch(checked = model.showMature, enabled = !model.loading,
-            onCheckedChange = { if (it) confirm = true else model.setShowMature(false) })
+            onCheckedChange = { if (it) confirm = true else model.updateShowMature(false) })
     }
     if (confirm) AlertDialog(
         onDismissRequest = { confirm = false },
         title = { Text("Только для взрослых") },
         text = { Text("Раздел содержит романтические и взрослые сюжеты с вымышленными совершеннолетними персонажами. Откровенный сексуальный контент запрещён. Подтверди, что тебе исполнилось 18 лет.") },
-        confirmButton = { TextButton(onClick = { confirm = false; model.setShowMature(true) }) { Text("Мне есть 18") } },
+        confirmButton = { TextButton(onClick = { confirm = false; model.updateShowMature(true) }) { Text("Мне есть 18") } },
         dismissButton = { TextButton(onClick = { confirm = false }) { Text("Отмена") } }
     )
 }
