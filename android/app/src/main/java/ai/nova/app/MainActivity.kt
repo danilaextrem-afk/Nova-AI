@@ -361,6 +361,8 @@ private fun CatalogScreen(model: NovaViewModel) {
     Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
         OutlinedButton(onClick={model.loadFavorites()},enabled=!model.loading){Text("Моё избранное")}
         OutlinedButton(onClick={model.refreshCatalog()},enabled=!model.loading){Text("Все персонажи")}
+        OutlinedButton(onClick={model.loadFollowing()},enabled=!model.loading){Text("Мои подписки")}
+        OutlinedButton(onClick={model.catalogSort="popular";model.refreshCatalog()},enabled=!model.loading){Text("Популярные")}
     }
     Text("Для группового сюжета выбери до 4 дополнительных участников, затем начни чат с главным героем.",style=MaterialTheme.typography.bodySmall)
     if (model.catalog.isEmpty()) {
@@ -396,6 +398,18 @@ private fun CatalogScreen(model: NovaViewModel) {
             }
             Text(character.name, color = Purple, fontSize = 21.sp, fontWeight = FontWeight.Bold)
             Text(character.category.uppercase(), color = Cyan, fontSize = 12.sp)
+            character.ownerId?.let {creator->Row(Modifier.horizontalScroll(rememberScrollState())) {
+                TextButton(onClick={model.follow(creator,true)},enabled=!model.loading){Text("Подписаться на автора")}
+                TextButton(onClick={model.follow(creator,false)},enabled=!model.loading){Text("Отписаться")}
+            }}
+            character.publication?.let {publication->
+                Row {TextButton(onClick={model.like(publication.id)},enabled=!model.loading){Text("Нравится · ${publication.likesCount}")};TextButton(onClick={model.openComments(publication.id)},enabled=!model.loading){Text("Обсуждение")}}
+                if(model.selectedPublication==publication.id){
+                    model.comments.forEach {c->Text(c.content+(if(c.status=="PENDING_REVIEW") " · На модерации" else ""))}
+                    OutlinedTextField(value=model.commentInput,onValueChange={model.commentInput=it},label={Text("Комментарий")},modifier=Modifier.fillMaxWidth())
+                    Button(onClick={model.sendComment()},enabled=!model.loading&&model.commentInput.isNotBlank()){Text("Отправить комментарий")}
+                }
+            }
             character.biography?.takeIf { it.isNotBlank() }?.let { bio ->
                 Text(bio, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
             }

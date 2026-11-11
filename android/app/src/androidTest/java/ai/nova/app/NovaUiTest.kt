@@ -16,13 +16,14 @@ class NovaUiTest {
  private val server=MockWebServer()
  private val character="00000000-0000-4000-8000-000000000101"
  private val chat="10000000-0000-4000-8000-000000000001"
- private var sent=false
+ @Volatile private var sent=false
+ @Volatile private var commentSent=false
  @Volatile private var regenerated=false
  @Before fun setUp(){
   server.dispatcher=object:Dispatcher(){override fun dispatch(r:RecordedRequest):MockResponse {
    val json=when {
     r.path=="/v1/auth/login" -> """{"accessToken":"fixture-token","refreshToken":"fixture-refresh-token"}"""
-    r.path?.startsWith("/v1/characters/catalog")==true -> """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет, исследователь!","category":"Приключения","tags":[]}]}"""
+    r.path?.startsWith("/v1/characters/catalog")==true -> """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет, исследователь!","category":"Приключения","tags":[],"ownerId":"fixture-creator","publication":{"id":"fixture-publication","likesCount":0}}]}"""
     r.path=="/v1/chats" && r.method=="POST" -> """{"chat":{"id":"$chat","characterId":"$character","title":"Аврора Вейл"}}"""
     r.path=="/v1/chats" -> """{"items":[{"id":"$chat","characterId":"$character","title":"Аврора Вейл"}]}"""
     r.path=="/v1/ai/status" -> """{"provider":"fixture","model":"fixture-only","configured":true,"premiumConfigured":false,"premiumPriceTokens":5,"tokenBalance":0}"""
@@ -31,6 +32,8 @@ class NovaUiTest {
     r.path=="/v1/chats/$chat/messages" && regenerated -> """{"items":[{"id":"u","role":"user","content":"Привет","sequence":1},{"id":"a","role":"assistant","content":"Новая версия ответа","sequence":2,"alternatives":["Тестовый ответ сервера"]}]}"""
     r.path=="/v1/chats/$chat/messages" -> if(sent) """{"items":[{"id":"u","role":"user","content":"Привет","sequence":1},{"id":"a","role":"assistant","content":"Тестовый ответ сервера","sequence":2}]}""" else """{"items":[]}"""
     r.path=="/v1/chats/$chat/memories" -> """{"items":[]}"""
+    r.path=="/v1/publications/fixture-publication/comments" && r.method=="POST" -> {commentSent=true;"{}"}
+    r.path=="/v1/publications/fixture-publication/comments" -> if(commentSent) """{"items":[{"id":"comment","content":"Интересная история","status":"PENDING_REVIEW"}]}""" else """{"items":[]}"""
     r.path=="/v1/auth/logout" -> "{}"
     else -> """{"items":[]}"""
    };return MockResponse().setHeader("Content-Type","application/json").setBody(json)
@@ -80,6 +83,22 @@ class NovaUiTest {
   compose.activityRule.scenario.recreate()
   compose.waitUntil(20000){compose.onAllNodesWithText("Сохранённый черновик").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Сохранённый черновик").performScrollTo().assertExists()
+ }
+ @Test fun communityCommentClearlyShowsPendingModeration(){
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  compose.onNodeWithText("Войти",useUnmergedTree=true).performScrollTo().performClick()
+  compose.waitUntil(20000){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Каталог").performClick()
+  compose.waitUntil(20000){compose.onAllNodes(hasText("Обсуждение") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Обсуждение").performScrollTo().performClick()
+  compose.waitUntil(20000){compose.onAllNodesWithText("Комментарий").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Комментарий").performScrollTo().performTextInput("Интересная история")
+  compose.waitUntil(20000){compose.onAllNodes(hasText("Отправить комментарий") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Отправить комментарий").performScrollTo().performClick()
+  compose.waitUntil(20000){compose.onAllNodesWithText("Интересная история · На модерации").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Интересная история · На модерации").performScrollTo().assertExists()
+  screenshot("04-comment-pending")
  }
  @Test fun sessionStoreEncryptsAndReadsAcrossInstances(){
   val a=SessionStore(compose.activity);a.put("secret-test","never-plaintext-123")

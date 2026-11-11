@@ -13,7 +13,7 @@ export async function registerProductRoutes(app:FastifyInstance,db:PrismaClient)
  });
  app.get('/v1/me/export',auth,async(req:any,reply)=>{
   const u=await db.user.findUnique({where:{id:req.user.sub},select:{email:true,createdAt:true,profile:true,
-    characters:true,chats:{include:{messages:{orderBy:{sequence:'asc'}},memories:true}},favorites:true,notifications:true}});
+    characters:true,chats:{include:{messages:{orderBy:{sequence:'asc'}},memories:true}},favorites:true,notifications:true,comments:true,following:true,likes:true}});
   reply.header('Content-Disposition','attachment; filename="NOVA-data.json"');return u;
  });
  app.delete('/v1/me',auth,async(req:any,reply)=>{
@@ -21,6 +21,15 @@ export async function registerProductRoutes(app:FastifyInstance,db:PrismaClient)
   await db.$transaction(async tx=>{
    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${req.user.sub} FOR UPDATE`;
    await tx.chat.deleteMany({where:{userId:req.user.sub}});await tx.character.deleteMany({where:{ownerId:req.user.sub}});
+   await tx.socialComment.deleteMany({where:{userId:req.user.sub}});await tx.creatorFollow.deleteMany({where:{OR:[{followerId:req.user.sub},{creatorId:req.user.sub}]}});
+   await tx.report.deleteMany({where:{reporterId:req.user.sub}});
+   await tx.userBlock.deleteMany({where:{OR:[{blockerId:req.user.sub},{blockedId:req.user.sub}]}});
+   const likes=await tx.like.findMany({where:{userId:req.user.sub},select:{publicationId:true}});
+   for(const like of likes){
+    await tx.$queryRaw`SELECT id FROM "Publication" WHERE id = ${like.publicationId} FOR UPDATE`;
+    await tx.like.deleteMany({where:{userId:req.user.sub,publicationId:like.publicationId}});
+    await tx.publication.update({where:{id:like.publicationId},data:{likesCount:await tx.like.count({where:{publicationId:like.publicationId}})}});
+   }
    await tx.profile.deleteMany({where:{userId:req.user.sub}});await tx.session.deleteMany({where:{userId:req.user.sub}});
    await tx.favorite.deleteMany({where:{userId:req.user.sub}});await tx.notification.deleteMany({where:{userId:req.user.sub}});
    await tx.user.update({where:{id:req.user.sub},data:{status:'DELETED',deletedAt:new Date(),email:req.user.sub+'@deleted.invalid',passwordHash:'DELETED'}});
@@ -41,9 +50,10 @@ export async function registerProductRoutes(app:FastifyInstance,db:PrismaClient)
   await db.userBlock.upsert({where:{blockerId_blockedId:{blockerId:req.user.sub,blockedId:req.params.id}},create:{blockerId:req.user.sub,blockedId:req.params.id},update:{}});return {blocked:true};
  });
  app.put('/v1/publications/:id/like',auth,async(req:any,reply)=>{
-  const p=await db.publication.findFirst({where:{id:req.params.id,status:'PUBLISHED'}});if(!p)return reply.code(404).send({error:'NOT_FOUND'});
-  await db.$transaction(async tx=>{await tx.like.upsert({where:{userId_publicationId:{userId:req.user.sub,publicationId:p.id}},create:{userId:req.user.sub,publicationId:p.id},update:{}});
+  const p=await db.publication.findFirst({where:{id:req.params.id,status:'PUBLISHED',character:{isHidden:false,owner:{blocksGot:{none:{blockerId:req.user.sub}},blocksMade:{none:{blockedId:req.user.sub}}}}}});if(!p)return reply.code(404).send({error:'NOT_FOUND'});
+  await db.$transaction(async tx=>{
    await tx.$queryRaw`SELECT id FROM "Publication" WHERE id = ${p.id} FOR UPDATE`;
+   await tx.like.upsert({where:{userId_publicationId:{userId:req.user.sub,publicationId:p.id}},create:{userId:req.user.sub,publicationId:p.id},update:{}});
    await tx.publication.update({where:{id:p.id},data:{likesCount:await tx.like.count({where:{publicationId:p.id}})}});});return {liked:true};
  });
 }

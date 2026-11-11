@@ -37,6 +37,10 @@ import java.util.Locale
     OutlinedButton(onClick={expanded=!expanded}) {Text(if(expanded) "Скрыть память и настройки" else "Память и настройки истории")}
     if(!expanded)return
     Column(verticalArrangement=Arrangement.spacedBy(10.dp)) {
+        Text("Художественная жизнь персонажа",style=MaterialTheme.typography.titleMedium)
+        Row(Modifier.horizontalScroll(rememberScrollState())) {
+            listOf("дневник" to "Дневник","повседневное событие" to "Событие","внутренний монолог" to "Монолог","вымышленную заметку в телефоне" to "Заметка").forEach {(kind,label)->TextButton(onClick={model.fictionalScene(kind)},enabled=!model.loading){Text(label)}}
+        }
         Text("Твоя роль в истории",style=MaterialTheme.typography.titleMedium)
         OutlinedTextField(value=model.playerPersona,onValueChange={model.playerPersona=it},label={Text("Имя, роль и факты о герое")},modifier=Modifier.fillMaxWidth())
         OutlinedTextField(value=model.storyScenario,onValueChange={model.storyScenario=it},label={Text("Сценарий / мир")},modifier=Modifier.fillMaxWidth())

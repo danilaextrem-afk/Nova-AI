@@ -34,13 +34,13 @@ const pageQuery = z.object({
 const publicSelection = {
   id: true, name: true, appearance: true, biography: true, personality: true,
   greeting: true, category: true, tags: true, language: true, avatarUrl: true,
-  createdAt: true, owner: { select: { profile: { select: { displayName: true } } } },
+  createdAt: true, publication:{select:{id:true,likesCount:true}}, ownerId:true, owner: { select: { profile: { select: { displayName: true } } } },
 } satisfies Prisma.CharacterSelect;
 
 const visibleTo = (userId: string): Prisma.CharacterWhereInput => ({
   OR: [
     { ownerId: userId },
-    { isHidden: false, publication: { is: { status: 'PUBLISHED' } } },
+    { isHidden: false, publication: { is: { status: 'PUBLISHED' } }, owner:{blocksGot:{none:{blockerId:userId}},blocksMade:{none:{blockedId:userId}}} },
   ],
 });
 
@@ -78,12 +78,13 @@ export async function registerCharacterRoutes(app: FastifyInstance, db: PrismaCl
       q: z.string().trim().max(80).optional(),
       category: z.string().trim().max(50).optional(),
       tag: z.string().trim().max(40).optional(),
-      sort: z.enum(['recent', 'name']).default('recent'),
+      sort: z.enum(['recent', 'name', 'popular']).default('recent'),
     }).safeParse(req.query);
     if (!query.success) return reply.code(400).send({ error: 'INVALID_QUERY' });
     const { q, category, tag, sort, cursor, limit } = query.data;
     const where: Prisma.CharacterWhereInput = {
       isHidden: false,
+      owner:{blocksGot:{none:{blockerId:req.user.sub}},blocksMade:{none:{blockedId:req.user.sub}}},
       publication: { is: { status: 'PUBLISHED' } },
       ...(category ? { category: { equals: category, mode: 'insensitive' } } : {}),
       ...(tag ? { tags: { has: tag } } : {}),
@@ -99,7 +100,7 @@ export async function registerCharacterRoutes(app: FastifyInstance, db: PrismaCl
     const characters = await db.character.findMany({
       where,
       select: publicSelection,
-      orderBy: sort === 'name' ? [{ name: 'asc' }, { id: 'asc' }]
+      orderBy: sort === 'popular' ? [{publication:{likesCount:'desc'}},{id:'asc'}] : sort === 'name' ? [{ name: 'asc' }, { id: 'asc' }]
         : [{ createdAt: 'desc' }, { id: 'desc' }],
       take: limit,
       ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
@@ -201,7 +202,7 @@ export async function registerCharacterRoutes(app: FastifyInstance, db: PrismaCl
       select: { id: true, isHidden: true },
     });
     if (!owned) return reply.code(404).send({ error: 'NOT_FOUND' });
-    if (owned.isHidden) return reply.code(409).send({ error: 'CHARACTER_HIDDEN' });
+    await db.character.update({where:{id:owned.id},data:{isHidden:false}});
     await db.publication.upsert({
       where: { characterId: owned.id },
       create: { characterId: owned.id, status: 'PENDING_REVIEW' },

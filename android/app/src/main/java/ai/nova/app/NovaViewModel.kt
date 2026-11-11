@@ -22,6 +22,9 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     private val gson = Gson()
     private val refreshLock = Any()
     var adultConfirmed by mutableStateOf(false)
+    var comments by mutableStateOf<List<SocialComment>>(emptyList())
+    var commentInput by mutableStateOf("")
+    var selectedPublication by mutableStateOf<String?>(null)
     var favorites by mutableStateOf<List<NovaCharacter>>(emptyList())
     var memories by mutableStateOf<List<MemoryItem>>(emptyList())
     var notifications by mutableStateOf<List<NovaNotification>>(emptyList())
@@ -418,5 +421,12 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteAccount() {execute {service().deleteAccount(authorization(),mapOf("confirmation" to "DELETE"));clearAccount()} }
     suspend fun verifyPurchase(sku:String,token:String):Boolean = service().verifyPurchase(authorization(),VerifyPurchaseBody(sku,token)).status=="VERIFIED"
     fun showNotice(text:String) {notification=text}
+
+    fun loadFollowing() {execute {catalog=service().following(authorization()).items} }
+    fun follow(id:String,enabled:Boolean) {execute {if(enabled)service().follow(authorization(),id)else service().unfollow(authorization(),id);notification=if(enabled)"Подписка сохранена" else "Подписка отменена"} }
+    fun like(id:String) {execute {service().like(authorization(),id);notification="Отметка сохранена"} }
+    fun openComments(id:String) {execute {selectedPublication=id;comments=service().comments(authorization(),id).items} }
+    fun sendComment() {val id=selectedPublication?:return;execute {service().comment(authorization(),id,mapOf("content" to commentInput));commentInput="";comments=service().comments(authorization(),id).items;notification="Комментарий отправлен на модерацию"} }
+    fun fictionalScene(kind:String) {updateChatInput("Напиши $kind нашего персонажа. Начни с пометки «Вымышленная сцена». Это художественное произведение, а не реальные мысли или данные человека.");sendChatMessage()}
 
 }

@@ -8,7 +8,7 @@ import { summarizeChat } from './storyRoutes.js';
 import { balance, debitInTransaction, InsufficientTokensError } from './ledger.js';
 
 export const visibleCharacter = (userId:string):Prisma.CharacterWhereInput => ({OR:[
-  {ownerId:userId},{isHidden:false,publication:{is:{status:'PUBLISHED'}}},
+  {ownerId:userId},{isHidden:false,publication:{is:{status:'PUBLISHED'}},owner:{blocksGot:{none:{blockerId:userId}},blocksMade:{none:{blockedId:userId}}}},
 ]});
 export async function premiumPrice(db:PrismaClient) {
   const setting=await db.setting.findUnique({where:{key:'premiumPriceTokens'}});
@@ -96,6 +96,7 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
     const fingerprint=createHash('sha256').update(JSON.stringify(regenerateMessageId?[chat.id,'regenerate',regenerateMessageId,tier]:[chat.id,content,tier])).digest('hex');
     const old=await db.chatRequest.findUnique({where:{id:requestId}});
     if(old&&(old.userId!==userId||old.fingerprint!==fingerprint))return reply.code(409).send({error:'REQUEST_ID_USED'});
+    if(old?.status==='FAILED'&&['CHAT_STORAGE_FAILURE','AI_COORDINATOR_FAILURE'].includes(old.errorCode||''))return reply.code(409).send({error:'REQUEST_REQUIRES_REVIEW'});
     if(old?.status==='SUCCEEDED'&&!regenerateMessageId){
       const [userMessage,assistantMessage]=await Promise.all([db.message.findUnique({where:{requestId}}),db.message.findUnique({where:{replyToRequestId:requestId}})]);
       return {duplicate:true,userMessage,assistantMessage,tier:old.tier,tokensCharged:old.priceTokens};
