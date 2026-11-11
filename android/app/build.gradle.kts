@@ -16,7 +16,17 @@ android {
         versionName = "0.1.0"
     }
 
-    buildFeatures { compose = true }
+    buildFeatures {
+        compose = true
+        buildConfig = true
+    }
+
+    // Non-secret HTTPS endpoint embedded only when the CI/deploy configuration supplies it.
+    val configuredUrl = (System.getenv("NOVA_API_BASE_URL") ?: "").trim()
+    val safeUrl = if (configuredUrl.matches(Regex("^https://[A-Za-z0-9.-]+/?$"))) configuredUrl else ""
+    defaultConfig {
+        buildConfigField("String", "NOVA_API_BASE_URL", "\\\"$safeUrl\\\"")
+    }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
