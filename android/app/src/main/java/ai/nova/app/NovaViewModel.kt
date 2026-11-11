@@ -13,7 +13,7 @@ import retrofit2.converter.gson.GsonConverterFactory
 enum class NovaTab { HOME, CATALOG, CHATS, CREATE, WALLET, ACCOUNT }
 
 class NovaViewModel : ViewModel() {
-    var serverUrl by mutableStateOf("https://api.example.invalid/")
+    var serverUrl by mutableStateOf(BuildConfig.NOVA_API_BASE_URL.ifBlank { "https://api.example.invalid/" })
     var email by mutableStateOf("")
     var password by mutableStateOf("")
     var accessToken by mutableStateOf<String?>(null)
