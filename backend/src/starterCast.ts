@@ -127,10 +127,10 @@ export async function seedStarterCast(db: PrismaClient) {
     update: { status: 'BLOCKED' },
   });
   for (const entry of STARTER_CAST) {
-    const { id, gender, avatarStyle, ...data } = entry;
+    const { id, gender, avatarStyle, tags, ...data } = entry;
     await db.character.upsert({
       where: { id },
-      create: { id, ...data, ownerId: system.id, isLibrary: true, isHidden: false },
+      create: { id, ...data, tags: [...tags], ownerId: system.id, isLibrary: true, isHidden: false },
       update: {},
     });
     await db.publication.upsert({
