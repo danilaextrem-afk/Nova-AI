@@ -246,8 +246,46 @@ private fun HomeScreen(model: NovaViewModel) {
 @Composable
 private fun CatalogScreen(model: NovaViewModel) {
     SectionHeader("Каталог", "Персонажи, прошедшие модерацию")
-    OutlinedButton(onClick = { model.refreshCatalog() }, enabled = !model.loading) {
-        Text("Обновить каталог")
+    NovaCard {
+        OutlinedTextField(
+            value = model.catalogQuery,
+            onValueChange = { model.catalogQuery = it },
+            label = { Text("Имя, биография или характер") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        OutlinedTextField(
+            value = model.catalogCategory,
+            onValueChange = { model.catalogCategory = it },
+            label = { Text("Категория (необязательно)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        OutlinedTextField(
+            value = model.catalogTag,
+            onValueChange = { model.catalogTag = it },
+            label = { Text("Тег (необязательно)") },
+            modifier = Modifier.fillMaxWidth(),
+            singleLine = true
+        )
+        Text("Сортировка", color = Cyan, style = MaterialTheme.typography.labelLarge)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            FilterChip(
+                selected = model.catalogSort == "recent",
+                onClick = { model.catalogSort = "recent" },
+                label = { Text("Новые") }
+            )
+            FilterChip(
+                selected = model.catalogSort == "name",
+                onClick = { model.catalogSort = "name" },
+                label = { Text("По имени") }
+            )
+        }
+        Button(
+            onClick = { model.refreshCatalog() },
+            enabled = !model.loading,
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Найти персонажей") }
     }
     if (model.catalog.isEmpty()) {
         NovaCard { Text("Опубликованных персонажей пока нет.") }
