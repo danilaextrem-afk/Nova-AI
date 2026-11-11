@@ -462,3 +462,10 @@ ALTER TABLE "Notification" ADD CONSTRAINT "Notification_userId_fkey" FOREIGN KEY
 -- AddForeignKey
 ALTER TABLE "AuditLog" ADD CONSTRAINT "AuditLog_adminId_fkey" FOREIGN KEY ("adminId") REFERENCES "AdminUser"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
 
+
+-- Finance safeguards in addition to Prisma schema (which does not express CHECK constraints).
+ALTER TABLE "WalletAccount" ADD CONSTRAINT "wallet_account_nonnegative"
+  CHECK ("purchased" >= 0 AND "adReward" >= 0 AND "bonus" >= 0);
+ALTER TABLE "WalletTransaction" ADD CONSTRAINT "wallet_transaction_positive"
+  CHECK ("amount" > 0);
+ALTER TABLE "AdReward" ADD CONSTRAINT "reward_positive" CHECK ("amount" > 0);
