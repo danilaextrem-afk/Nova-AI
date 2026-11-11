@@ -41,7 +41,7 @@ app.decorate('auth', async (req: any, reply: any) => {
 
 const sha256 = (s: string) => createHash('sha256').update(s).digest('hex');
 
-async function issueTokens(userId: string, familyId = randomUUID()) {
+async function issueTokens(userId: string, familyId: string = randomUUID()) {
   const refresh = randomBytes(48).toString('base64url');
   await db.session.create({
     data: {
