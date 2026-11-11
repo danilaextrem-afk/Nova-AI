@@ -4,6 +4,7 @@ import jwt from '@fastify/jwt';
 import { PrismaClient } from '@prisma/client';
 import { randomUUID } from 'node:crypto';
 import { registerChatRoutes } from '../src/chatRoutes.js';
+import { credit, balance } from '../src/ledger.js';
 
 const db = new PrismaClient();
 const app = Fastify();
@@ -15,6 +16,8 @@ let chatId: string;
 const previousProvider = process.env.AI_PROVIDER;
 const previousKey = process.env.GROQ_API_KEY;
 const previousModel = process.env.AI_MODEL;
+const previousPremiumModel = process.env.NOVA_PREMIUM_MODEL;
+const previousPremiumProvider = process.env.NOVA_PREMIUM_PROVIDER;
 
 async function makeUser() {
   const user = await db.user.create({
@@ -57,6 +60,7 @@ afterAll(async () => {
   vi.unstubAllGlobals();
   for (const [name, value] of [
     ['AI_PROVIDER', previousProvider], ['GROQ_API_KEY', previousKey], ['AI_MODEL', previousModel],
+    ['NOVA_PREMIUM_MODEL', previousPremiumModel], ['NOVA_PREMIUM_PROVIDER', previousPremiumProvider],
   ] as const) {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
@@ -142,6 +146,97 @@ describe('real AI character chat gateway', () => {
     expect(response.statusCode).toBe(429);
     expect(response.json().error).toBe('AI_RATE_LIMITED');
     expect(await db.message.count({ where: { chatId } })).toBe(before);
+  });
+
+  it('does not impose a daily message-count quota on free conversations', async () => {
+    process.env.AI_PROVIDER = 'groq';
+    process.env.GROQ_API_KEY = 'fake-test-key';
+    // Simulate a user who has already sent 80 successful messages today.
+    await db.aiUsage.createMany({
+      data: Array.from({ length: 80 }, () => ({
+        userId: owner, feature: 'chat', provider: 'groq',
+        model: 'free-test-model', success: true,
+      })),
+    });
+    const mock = vi.fn(async () => ({
+      ok: true, status: 200,
+      json: async () => ({
+        choices: [{ message: { content: 'The adventure continues.' } }],
+      }),
+    }));
+    vi.stubGlobal('fetch', mock);
+    const result = await send('Continue our story');
+    expect(result.statusCode).toBe(200);
+    expect(result.json().tokensCharged).toBe(0);
+    expect(mock).toHaveBeenCalledTimes(1);
+    const status = await app.inject({ method: 'GET', url: '/v1/ai/status', headers: auth(owner) });
+    expect(status.json().freeUnlimited).toBe(true);
+  });
+
+  it('requires real balance and a separate configured model for Premium mode', async () => {
+    process.env.NOVA_PREMIUM_MODEL = 'openai/gpt-oss-120b';
+    process.env.NOVA_PREMIUM_PROVIDER = 'groq';
+    const status = await app.inject({ method: 'GET', url: '/v1/ai/status', headers: auth(owner) });
+    expect(status.json()).toMatchObject({
+      premiumConfigured: true, premiumPriceTokens: 5, premiumModel: 'openai/gpt-oss-120b',
+    });
+    const mock = vi.fn();
+    vi.stubGlobal('fetch', mock);
+    const result = await app.inject({
+      method: 'POST', url: '/v1/chats/' + chatId + '/messages',
+      headers: auth(owner), payload: { content: 'Write in detail', requestId: randomUUID(), tier: 'premium' },
+    });
+    expect(result.statusCode).toBe(402);
+    expect(result.json().error).toBe('INSUFFICIENT_TOKENS');
+    expect(mock).not.toHaveBeenCalled();
+  });
+
+  it('charges exactly once for a successful Premium reply and uses a longer answer budget', async () => {
+    await credit(db, {
+      userId: owner, bucket: 'BONUS', amount: 25, source: 'test_bonus',
+      idempotencyKey: 'testbonus:' + randomUUID(),
+    });
+    const mock = vi.fn(async (_url: string, init: any) => {
+      const body = JSON.parse(init.body);
+      expect(body.model).toBe('openai/gpt-oss-120b');
+      expect(body.max_tokens).toBe(1600);
+      expect(body.messages[0].content).toContain('richer continuity');
+      return { ok: true, status: 200, json: async () => ({
+        choices: [{ message: { content: 'A long and coherent story in a new chapter.' } }],
+        usage: { prompt_tokens: 150, completion_tokens: 600 },
+      }) };
+    });
+    vi.stubGlobal('fetch', mock);
+    const requestId = randomUUID();
+    const premiumBody = { content: 'Continue in more detail', requestId, tier: 'premium' };
+    const first = await app.inject({
+      method: 'POST', url: '/v1/chats/' + chatId + '/messages',
+      headers: auth(owner), payload: premiumBody,
+    });
+    expect(first.statusCode).toBe(200);
+    expect(first.json()).toMatchObject({ tokensCharged: 5, tier: 'premium' });
+    expect((await balance(db, owner)).total).toBe(20);
+    const repeated = await app.inject({
+      method: 'POST', url: '/v1/chats/' + chatId + '/messages',
+      headers: auth(owner), payload: premiumBody,
+    });
+    expect(repeated.statusCode).toBe(200);
+    expect(repeated.json().duplicate).toBe(true);
+    expect((await balance(db, owner)).total).toBe(20);
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not spend tokens when the Premium provider reports an error', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 429 })));
+    const previousBalance = (await balance(db, owner)).total;
+    const result = await app.inject({
+      method: 'POST', url: '/v1/chats/' + chatId + '/messages',
+      headers: auth(owner),
+      payload: { content: 'One more detailed reply', requestId: randomUUID(), tier: 'premium' },
+    });
+    expect(result.statusCode).toBe(429);
+    expect(result.json().error).toBe('AI_RATE_LIMITED');
+    expect((await balance(db, owner)).total).toBe(previousBalance);
   });
 
   it('does not permit another user to delete the private chat', async () => {
