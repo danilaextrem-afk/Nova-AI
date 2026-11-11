@@ -10,7 +10,7 @@ import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
-enum class NovaTab { HOME, CATALOG, CREATE, WALLET, ACCOUNT }
+enum class NovaTab { HOME, CATALOG, CHATS, CREATE, WALLET, ACCOUNT }
 
 class NovaViewModel : ViewModel() {
     var serverUrl by mutableStateOf("https://api.example.invalid/")
@@ -27,6 +27,18 @@ class NovaViewModel : ViewModel() {
     var notification by mutableStateOf<String?>(null)
         private set
     var catalog by mutableStateOf<List<NovaCharacter>>(emptyList())
+        private set
+    var chats by mutableStateOf<List<NovaChat>>(emptyList())
+        private set
+    var activeChat by mutableStateOf<NovaChat?>(null)
+        private set
+    var chatMessages by mutableStateOf<List<NovaChatMessage>>(emptyList())
+        private set
+    var chatInput by mutableStateOf("")
+    var premiumChatSelected by mutableStateOf(false)
+    private var pendingChatFingerprint: String? = null
+    private var pendingChatRequestId: String? = null
+    var aiStatus by mutableStateOf<NovaAiStatus?>(null)
         private set
     var owned by mutableStateOf<List<NovaCharacter>>(emptyList())
         private set
@@ -65,7 +77,12 @@ class NovaViewModel : ViewModel() {
             try {
                 block()
             } catch (e: HttpException) {
-                error = "Ошибка сервера: HTTP " + e.code()
+                error = when (e.code()) {
+                    402 -> "Недостаточно NOVA Tokens для Premium-ответа"
+                    429 -> "AI занят или достиг лимита провайдера. Попробуй позже."
+                    503 -> "AI-провайдер ещё не подключён или временно недоступен"
+                    else -> "Ошибка сервера: HTTP " + e.code()
+                }
                 if (e.code() == 401) {
                     accessToken = null
                     error = "Сессия закончилась. Войди заново."
@@ -95,6 +112,7 @@ class NovaViewModel : ViewModel() {
         activeTab = tab
         when (tab) {
             NovaTab.CATALOG -> refreshCatalog()
+            NovaTab.CHATS -> refreshChats()
             NovaTab.CREATE -> refreshOwned()
             NovaTab.WALLET -> refreshWallet()
             else -> Unit
@@ -110,6 +128,101 @@ class NovaViewModel : ViewModel() {
                 tag = catalogTag.trim().takeIf { it.isNotEmpty() },
                 sort = catalogSort
             ).items
+        }
+    }
+
+    fun refreshChats() {
+        execute {
+            val api = service()
+            chats = api.chats(authorization()).items
+            aiStatus = api.aiStatus(authorization())
+        }
+    }
+
+    fun startChat(character: NovaCharacter) {
+        execute {
+            val api = service()
+            val created = api.createChat(authorization(), NovaCreateChatBody(character.id))
+            activeChat = created.chat
+            chatMessages = emptyList()
+            chatInput = ""
+            activeTab = NovaTab.CHATS
+            chats = api.chats(authorization()).items
+            aiStatus = api.aiStatus(authorization())
+        }
+    }
+
+    fun openChat(chat: NovaChat) {
+        execute {
+            activeChat = chat
+            chatMessages = service().chatMessages(authorization(), chat.id).items
+            activeTab = NovaTab.CHATS
+        }
+    }
+
+    fun closeChat() {
+        pendingChatRequestId = null
+        pendingChatFingerprint = null
+        activeChat = null
+        chatMessages = emptyList()
+        refreshChats()
+    }
+
+    fun sendChatMessage() {
+        val current = activeChat ?: return
+        val text = chatInput.trim()
+        if (text.isBlank()) {
+            error = "Напиши сообщение"
+            return
+        }
+        if (text.length > 1000) {
+            error = "Сообщение слишком длинное"
+            return
+        }
+        val tier = if (premiumChatSelected) "premium" else "free"
+        val fingerprint = current.id + ":" + tier + ":" + text
+        if (pendingChatFingerprint != fingerprint || pendingChatRequestId == null) {
+            pendingChatFingerprint = fingerprint
+            pendingChatRequestId = java.util.UUID.randomUUID().toString()
+        }
+        val requestId = checkNotNull(pendingChatRequestId)
+        execute {
+            val api = service()
+            try {
+                val result = api.sendChatMessage(
+                    authorization(), current.id,
+                    NovaChatSendBody(text, requestId, tier)
+                )
+                if (result.assistantMessage != null) {
+                    pendingChatRequestId = null
+                    pendingChatFingerprint = null
+                    chatInput = ""
+                    chatMessages = api.chatMessages(authorization(), current.id).items
+                    chats = api.chats(authorization()).items
+                    aiStatus = api.aiStatus(authorization())
+                } else {
+                    error = "Ответ ещё обрабатывается. Повтори отправку."
+                }
+            } catch (e: HttpException) {
+                // The server explicitly rejected this request. The next attempt gets a fresh ID.
+                pendingChatRequestId = null
+                pendingChatFingerprint = null
+                throw e
+            }
+            // For network timeouts we deliberately retain requestId to avoid double charges
+            // when retrying an earlier Premium request that may have succeeded server-side.
+        }
+    }
+
+    fun deleteActiveChat() {
+        val current = activeChat ?: return
+        execute {
+            val api = service()
+            api.deleteChat(authorization(), current.id)
+            activeChat = null
+            chatMessages = emptyList()
+            chats = api.chats(authorization()).items
+            notification = "Переписка удалена"
         }
     }
 
@@ -154,11 +267,19 @@ class NovaViewModel : ViewModel() {
     }
 
     fun logout() {
+        pendingChatRequestId = null
+        pendingChatFingerprint = null
         accessToken = null
         email = ""
         password = ""
         catalog = emptyList()
         owned = emptyList()
+        chats = emptyList()
+        activeChat = null
+        chatMessages = emptyList()
+        chatInput = ""
+        premiumChatSelected = false
+        aiStatus = null
         wallet = null
         transactions = emptyList()
         activeTab = NovaTab.HOME

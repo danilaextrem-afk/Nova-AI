@@ -11,6 +11,7 @@ import { balance } from './ledger.js';
 import { verifySsv } from './admobSsv.js';
 import { verifyAndCreditPurchase } from './billing.js';
 import { registerCharacterRoutes } from './characters.js';
+import { registerChatRoutes } from './chatRoutes.js';
 import { seedStarterCast } from './starterCast.js';
 
 const db = new PrismaClient();
@@ -204,6 +205,7 @@ app.get('/v1/ads/ssv', async (req, reply) => {
 });
 
 await registerCharacterRoutes(app, db);
+await registerChatRoutes(app, db);
 
 for (const [sku, tokens] of Object.entries(PRODUCT_SEED)) {
   await db.paymentProduct.upsert({ where: { sku }, create: { sku, tokens }, update: {} });

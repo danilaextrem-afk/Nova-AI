@@ -13,6 +13,7 @@ import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.AddCircle
 import androidx.compose.material.icons.filled.Explore
+import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
@@ -77,8 +78,8 @@ private fun NovaApp(model: NovaViewModel) {
             bottomBar = {
                 NavigationBar(containerColor = CardSurface) {
                     val items = listOf(
-                        NovaTab.HOME, NovaTab.CATALOG, NovaTab.CREATE,
-                        NovaTab.WALLET, NovaTab.ACCOUNT
+                        NovaTab.HOME, NovaTab.CATALOG, NovaTab.CHATS,
+                        NovaTab.CREATE, NovaTab.WALLET, NovaTab.ACCOUNT
                     )
                     items.forEach { item ->
                         NavigationBarItem(
@@ -89,6 +90,7 @@ private fun NovaApp(model: NovaViewModel) {
                                     imageVector = when (item) {
                                         NovaTab.HOME -> Icons.Default.Home
                                         NovaTab.CATALOG -> Icons.Default.Explore
+                                        NovaTab.CHATS -> Icons.Default.ChatBubbleOutline
                                         NovaTab.CREATE -> Icons.Default.AddCircle
                                         NovaTab.WALLET -> Icons.Default.AccountBalanceWallet
                                         NovaTab.ACCOUNT -> Icons.Default.AccountCircle
@@ -100,6 +102,7 @@ private fun NovaApp(model: NovaViewModel) {
                                 Text(when (item) {
                                     NovaTab.HOME -> "Главная"
                                     NovaTab.CATALOG -> "Каталог"
+                                    NovaTab.CHATS -> "Чаты"
                                     NovaTab.CREATE -> "Создать"
                                     NovaTab.WALLET -> "Токены"
                                     NovaTab.ACCOUNT -> "Профиль"
@@ -122,6 +125,7 @@ private fun NovaApp(model: NovaViewModel) {
                 when (model.activeTab) {
                     NovaTab.HOME -> HomeScreen(model)
                     NovaTab.CATALOG -> CatalogScreen(model)
+                    NovaTab.CHATS -> ChatsScreen(model)
                     NovaTab.CREATE -> CreateScreen(model)
                     NovaTab.WALLET -> WalletScreen(model)
                     NovaTab.ACCOUNT -> AccountScreen(model)
@@ -287,12 +291,16 @@ private fun HomeScreen(model: NovaViewModel) {
             onClick = { model.changeTab(NovaTab.CREATE) },
             modifier = Modifier.fillMaxWidth()
         ) { Text("Создать персонажа") }
+        OutlinedButton(
+            onClick = { model.changeTab(NovaTab.CHATS) },
+            modifier = Modifier.fillMaxWidth()
+        ) { Text("Мои переписки") }
     }
     NovaCard {
         Text("Что уже доступно", color = Cyan, fontWeight = FontWeight.Bold)
         Text("Регистрация, вход, создание персонажей, каталог и кошелёк через API.")
         Text(
-            "AI-чат, генерация изображений, платежи и награды за рекламу ещё разрабатываются.",
+            "AI-чат через серверный провайдер доступен после настройки API. Генерация изображений и покупки токенов пока разрабатываются.",
             style = MaterialTheme.typography.bodySmall, color = Color.LightGray
         )
     }
@@ -379,9 +387,167 @@ private fun CatalogScreen(model: NovaViewModel) {
                 Text(bio, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
             }
             Text(character.greeting, maxLines = 4, overflow = TextOverflow.Ellipsis)
-            Button(onClick = { model.addFavorite(character.id) }, enabled = !model.loading) {
+            Button(
+                onClick = { model.startChat(character) },
+                enabled = !model.loading,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Начать AI-чат") }
+            OutlinedButton(onClick = { model.addFavorite(character.id) }, enabled = !model.loading) {
                 Text("В избранное")
             }
+        }
+    }
+}
+
+@Composable
+private fun ChatsScreen(model: NovaViewModel) {
+    val active = model.activeChat
+    if (active == null) {
+        SectionHeader("Мои чаты", "Разговоры с AI-персонажами хранятся на сервере")
+        val status = model.aiStatus
+        NovaCard {
+            if (status == null) {
+                Text("Проверь подключение к AI Gateway")
+            } else if (status.configured) {
+                Text(
+                    "AI: " + status.provider + " · " + status.model,
+                    color = Cyan, style = MaterialTheme.typography.bodyMedium
+                )
+                Text(
+                    "Обычный чат: без лимита сообщений в день и без списания NOVA Tokens.",
+                    style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "Premium: " + status.premiumPriceTokens + " NOVA Tokens за ответ · "
+                        + if (status.premiumConfigured) (status.premiumModel ?: "Улучшенная модель")
+                          else "Модель пока не подключена",
+                    style = MaterialTheme.typography.bodySmall, color = Color.LightGray
+                )
+            } else {
+                Text(
+                    "AI-провайдер пока не подключён. Сервер покажет ошибку, а не выдуманный ответ.",
+                    color = Color(0xFFFFB79A),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            OutlinedButton(
+                onClick = { model.refreshChats() },
+                enabled = !model.loading,
+                modifier = Modifier.fillMaxWidth()
+            ) { Text("Обновить чаты") }
+        }
+        if (model.chats.isEmpty()) {
+            NovaCard {
+                Text("Пока нет переписок. Открой каталог и выбери героя.")
+                Button(onClick = { model.changeTab(NovaTab.CATALOG) }) {
+                    Text("Открыть персонажей")
+                }
+            }
+        }
+        model.chats.forEach { chat ->
+            NovaCard {
+                Text(chat.characterName ?: chat.title ?: "AI-персонаж",
+                    fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = Purple)
+                Button(
+                    onClick = { model.openChat(chat) },
+                    enabled = !model.loading,
+                    modifier = Modifier.fillMaxWidth()
+                ) { Text("Продолжить разговор") }
+            }
+        }
+    } else {
+        SectionHeader(active.characterName ?: active.title ?: "AI-чат", "Художественный AI-персонаж NOVA")
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            OutlinedButton(onClick = { model.closeChat() }, enabled = !model.loading) {
+                Text("Назад")
+            }
+            OutlinedButton(onClick = { model.deleteActiveChat() }, enabled = !model.loading) {
+                Text("Удалить чат")
+            }
+        }
+        if (model.chatMessages.isEmpty()) {
+            NovaCard {
+                Text("Напиши первое сообщение — персонаж ответит через настоящий AI-провайдер.")
+                Text(
+                    "Если AI не настроен, переписка останется пустой. Фальшивых ответов нет.",
+                    color = Color.LightGray, style = MaterialTheme.typography.bodySmall
+                )
+            }
+        }
+        model.chatMessages.forEach { message ->
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = if (message.role == "user") Color(0xFF29213C)
+                        else CardSurface
+                ),
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Text(
+                        if (message.role == "user") "Ты" else "AI-персонаж",
+                        color = if (message.role == "user") Purple else Cyan,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    Text(message.content, style = MaterialTheme.typography.bodyLarge)
+                }
+            }
+        }
+        NovaCard {
+            val status = model.aiStatus
+            Text("Режим AI-чата", fontWeight = FontWeight.SemiBold, color = Cyan)
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                FilterChip(
+                    selected = !model.premiumChatSelected,
+                    onClick = { model.premiumChatSelected = false },
+                    label = { Text("Обычный · бесплатно") }
+                )
+                FilterChip(
+                    selected = model.premiumChatSelected,
+                    onClick = { model.premiumChatSelected = true },
+                    enabled = status?.premiumConfigured == true,
+                    label = { Text("Premium · " + (status?.premiumPriceTokens ?: 5) + " ◈") }
+                )
+            }
+            if (model.premiumChatSelected) {
+                Text(
+                    "Более мощная модель, длинные ответы и увеличенный контекст. "
+                        + (status?.premiumPriceTokens ?: 5) + " токенов спишутся только за успешный ответ.",
+                    style = MaterialTheme.typography.bodySmall, color = Color.LightGray
+                )
+                Text(
+                    "Баланс: " + (status?.tokenBalance ?: 0) + " NOVA Tokens",
+                    style = MaterialTheme.typography.labelMedium
+                )
+            } else {
+                Text(
+                    "Без ограничений по числу сообщений и без оплаты. Возможны технические задержки AI-провайдера.",
+                    style = MaterialTheme.typography.bodySmall, color = Color.LightGray
+                )
+            }
+            OutlinedTextField(
+                value = model.chatInput,
+                onValueChange = { model.chatInput = it },
+                label = { Text("Напиши сообщение") },
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 5
+            )
+            Button(
+                onClick = { model.sendChatMessage() },
+                enabled = !model.loading && model.chatInput.isNotBlank(),
+                modifier = Modifier.fillMaxWidth()
+            ) { Text(
+                if (model.loading) "AI отвечает..."
+                else if (model.premiumChatSelected) "Отправить · " + (model.aiStatus?.premiumPriceTokens ?: 5) + " ◈"
+                else "Отправить бесплатно"
+            ) }
+            Text(
+                "Ответ создаёт AI, а не реальный человек. Доступность зависит от лимитов провайдера.",
+                style = MaterialTheme.typography.bodySmall, color = Color.LightGray
+            )
         }
     }
 }

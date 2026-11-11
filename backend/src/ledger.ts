@@ -80,12 +80,11 @@ export async function credit(
  * Atomic debit. Spends BONUS first, then AD_REWARD, then PURCHASED.
  * Throws InsufficientTokensError instead of going negative.
  */
-export async function debit(
-  db: PrismaClient,
+export async function debitInTransaction(
+  tx: Prisma.TransactionClient,
   p: { userId: string; amount: number; source: string; idempotencyKey: string },
 ) {
   if (!Number.isInteger(p.amount) || p.amount <= 0) throw new Error('INVALID_AMOUNT');
-  return db.$transaction(async (tx) => {
     const dup = await tx.walletTransaction.findUnique({ where: { idempotencyKey: p.idempotencyKey } });
     if (dup) return { transactions: [dup], duplicate: true };
     const w = await lockWallet(tx, p.userId);
@@ -126,7 +125,13 @@ export async function debit(
       data: { idempotencyKey: p.idempotencyKey },
     });
     return { transactions, duplicate: false };
-  });
+}
+
+export function debit(
+  db: PrismaClient,
+  p: { userId: string; amount: number; source: string; idempotencyKey: string },
+) {
+  return db.$transaction(async tx => debitInTransaction(tx, p));
 }
 
 /** Refund a spend after a confirmed technical failure. Refunds go to BONUS so they never expire into cash value. */

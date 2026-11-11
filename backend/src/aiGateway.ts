@@ -27,16 +27,18 @@ const providers: Record<AiProviderName, { base: string; keyEnv: string; defaultM
   gemini: {
     base: 'https://generativelanguage.googleapis.com/v1beta/openai',
     keyEnv: 'GEMINI_API_KEY',
-    defaultModel: 'gemini-3.6-flash',
+    defaultModel: 'gemini-2.5-flash',
   },
 };
 
-export function aiSettings() {
-  const raw = process.env.AI_PROVIDER || 'openrouter';
+export type AiTier = 'free' | 'premium';
+
+export function aiSettings(tier: AiTier = 'free') {
+  const raw = (tier === 'premium' ? process.env.NOVA_PREMIUM_PROVIDER : process.env.AI_PROVIDER) || process.env.AI_PROVIDER || 'openrouter';
   const provider = (raw in providers ? raw : 'openrouter') as AiProviderName;
   const p = providers[provider];
   const key = process.env[p.keyEnv] || '';
-  const model = (process.env.AI_MODEL || p.defaultModel).trim();
+  const model = ((tier === 'premium' ? process.env.NOVA_PREMIUM_MODEL : process.env.AI_MODEL) || process.env.AI_MODEL || p.defaultModel).trim();
   return {
     provider, model, configured: Boolean(key),
     base: p.base, key,
@@ -48,8 +50,8 @@ export type AiCompletion = {
   inputTokens: number; outputTokens: number;
 };
 
-export async function completeAiChat(messages: AiMessage[]): Promise<AiCompletion> {
-  const s = aiSettings();
+export async function completeAiChat(messages: AiMessage[], tier: AiTier = 'free'): Promise<AiCompletion> {
+  const s = aiSettings(tier);
   if (!s.configured) throw new AiProviderError('AI_NOT_CONFIGURED', 503);
   if (messages.length < 2 || messages.length > 25 ||
     messages.some(m => m.content.length > 2500)) {
@@ -70,7 +72,7 @@ export async function completeAiChat(messages: AiMessage[]): Promise<AiCompletio
         messages,
         stream: false,
         temperature: 0.8,
-        max_tokens: 450,
+        max_tokens: tier === 'premium' ? 1600 : 360,
       }),
       signal: AbortSignal.timeout(35000),
     });
@@ -91,7 +93,7 @@ export async function completeAiChat(messages: AiMessage[]): Promise<AiCompletio
     throw new AiProviderError('AI_EMPTY_RESPONSE', 502);
   }
   return {
-    text: content.trim().slice(0, 3500),
+    text: content.trim().slice(0, tier === 'premium' ? 8500 : 2600),
     provider: s.provider,
     model: s.model,
     inputTokens: Math.max(0, Math.trunc(obj.usage?.prompt_tokens || 0)),
