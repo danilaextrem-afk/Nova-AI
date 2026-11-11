@@ -13,7 +13,8 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
+        // CI run number keeps every published build installable as an update over the previous one.
+        versionCode = 100 + (System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 0)
         versionName = "0.2.0"
     }
 
@@ -22,13 +23,29 @@ android {
         buildConfig = true
     }
 
-    // Non-secret HTTPS endpoint embedded only when the CI/deploy configuration supplies it.
-    val configuredUrl = (System.getenv("NOVA_API_BASE_URL") ?: "").trim()
+    // Non-secret HTTPS endpoint: CI variable first, then the committed public URL of the deployed backend.
+    val committedUrl = rootProject.file("nova-api-url.txt").takeIf { it.exists() }?.readText()?.trim().orEmpty()
+    val configuredUrl = (System.getenv("NOVA_API_BASE_URL")?.takeIf { it.isNotBlank() } ?: committedUrl).trim()
     val safeUrl = if (configuredUrl.matches(Regex("^https://[A-Za-z0-9.-]+/?$"))) configuredUrl else ""
     defaultConfig {
         buildConfigField("String", "NOVA_API_BASE_URL", "\"$safeUrl\"")
         buildConfigField("boolean", "MONETIZATION_ENABLED", if(System.getenv("NOVA_MONETIZATION_ENABLED")=="true") "true" else "false")
         manifestPlaceholders["admobAppId"] = System.getenv("ADMOB_APP_ID") ?: "ca-app-pub-3940256099942544~3347511713"
+    }
+    // TEST signing key (committed on purpose, password is public): gives every published preview APK the
+    // same signature so it installs as an update. It is NOT a production key and must never be used as a
+    // Google Play upload key. Production builds override it with the KEYSTORE_* repository secrets.
+    signingConfigs {
+        create("novaTest") {
+            storeFile = rootProject.file("keystore/nova-test.jks")
+            storePassword = "nova-test-only"; keyAlias = "nova-test"; keyPassword = "nova-test-only"
+        }
+    }
+    buildTypes {
+        getByName("release") {
+            signingConfig = signingConfigs.getByName("novaTest")
+            isMinifyEnabled = false
+        }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

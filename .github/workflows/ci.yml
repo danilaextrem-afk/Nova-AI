@@ -196,3 +196,55 @@ jobs:
           done
           docker logs nova-api
           exit 1
+
+  # Publishes an installable APK at a permanent link after every fully green push to main:
+  # https://github.com/<owner>/<repo>/releases/download/nova-preview/NOVA-AI-FINAL.apk
+  # Signed with the committed TEST key (android/keystore) so each build installs as an update.
+  publish_preview:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: [backend, android, android_ui, docker_image]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      NOVA_API_BASE_URL: ${{ vars.NOVA_API_BASE_URL }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - name: Install Android SDK 36
+        run: |
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -1)"
+          "$SDKMANAGER" "platforms;android-36" "build-tools;35.0.0"
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Build test-signed release APK
+        run: cd android && gradle :app:assembleRelease --no-daemon --stacktrace
+      - name: Verify signature, package and embedded API URL
+        run: |
+          APK=android/app/build/outputs/apk/release/app-release.apk
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --print-certs "$APK" | tee signing.txt
+          grep -q "NOVA AI Test Build" signing.txt
+          "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" | grep -E "package:|launchable-activity" | tee badging.txt
+          cp "$APK" NOVA-AI-FINAL.apk
+          git archive --format=zip --output=NOVA-AI-FULL-SOURCE.zip HEAD
+      - name: Publish to the nova-preview release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          URL="${NOVA_API_BASE_URL:-$(cat android/nova-api-url.txt 2>/dev/null)}"
+          {
+            echo "**Тестовая сборка NOVA AI** · коммит \`${GITHUB_SHA::7}\` · CI #${GITHUB_RUN_NUMBER}"
+            echo
+            echo "- Подпись: **тестовый ключ** (не production, не для Google Play). Новые сборки ставятся поверх как обновление."
+            if [ -n "$URL" ]; then echo "- Сервер: \`$URL\`"; else echo "- Сервер: **ещё не подключён** — приложение установится, но вход и чат заработают после развёртывания backend."; fi
+            echo "- Все проверки CI (сервер, Android, UI-тесты на эмуляторе, Docker) пройдены перед публикацией."
+            echo
+            echo "Установка: скачай \`NOVA-AI-FINAL.apk\` на телефон и открой. Android попросит разрешить установку из этого источника."
+          } > notes.md
+          gh release delete nova-preview --yes --cleanup-tag || true
+          gh release create nova-preview NOVA-AI-FINAL.apk NOVA-AI-FULL-SOURCE.zip --prerelease \
+            --target "$GITHUB_SHA" --title "NOVA AI — тестовая сборка" --notes-file notes.md

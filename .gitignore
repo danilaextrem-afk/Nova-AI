@@ -10,3 +10,7 @@ local.properties
 build/
 *.apk
 *.aab
+
+# The public TEST signing key for preview APKs is committed on purpose (see android/app/build.gradle.kts).
+# Real/production keystores stay ignored and live only in repository secrets.
+!android/keystore/nova-test.jks
