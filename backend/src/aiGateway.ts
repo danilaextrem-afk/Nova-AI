@@ -27,7 +27,7 @@ const providers: Record<AiProviderName, { base: string; keyEnv: string; defaultM
   gemini: {
     base: 'https://generativelanguage.googleapis.com/v1beta/openai',
     keyEnv: 'GEMINI_API_KEY',
-    defaultModel: 'gemini-3.6-flash',
+    defaultModel: 'gemini-2.5-flash',
   },
 };
 
