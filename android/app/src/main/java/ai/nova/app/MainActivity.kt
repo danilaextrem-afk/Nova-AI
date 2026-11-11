@@ -19,6 +19,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.clip
+import coil.compose.AsyncImage
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
@@ -292,8 +295,26 @@ private fun CatalogScreen(model: NovaViewModel) {
     }
     model.catalog.forEach { character ->
         NovaCard {
+            if (!character.avatarUrl.isNullOrBlank()) {
+                AsyncImage(
+                    model = character.avatarUrl,
+                    contentDescription = "Портрет персонажа " + character.name,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier.fillMaxWidth().height(240.dp)
+                        .clip(RoundedCornerShape(14.dp))
+                )
+            } else {
+                Text(
+                    "NOVA STUDIO · " + character.category.uppercase(),
+                    color = Cyan,
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
             Text(character.name, color = Purple, fontSize = 21.sp, fontWeight = FontWeight.Bold)
             Text(character.category.uppercase(), color = Cyan, fontSize = 12.sp)
+            character.biography?.takeIf { it.isNotBlank() }?.let { bio ->
+                Text(bio, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
+            }
             Text(character.greeting, maxLines = 4, overflow = TextOverflow.Ellipsis)
             Button(onClick = { model.addFavorite(character.id) }, enabled = !model.loading) {
                 Text("В избранное")
