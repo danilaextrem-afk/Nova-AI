@@ -79,8 +79,15 @@ class NovaUiTest {
  }
  // Buttons are disabled while a request is in flight (enabled=!model.loading). Clicking a disabled
  // button is a no-op, so wait for the enabled state exactly as a person would before tapping.
+ /** Named wait: on timeout the failure says which step hung and dumps the visible UI tree. */
+ private fun waitFor(step:String,condition:()->Boolean){
+  try{compose.waitUntil(20000,condition)}catch(e:androidx.compose.ui.test.ComposeTimeoutException){
+   val tree=runCatching{compose.onAllNodes(isRoot()).printToString()}.getOrDefault("<no tree>")
+   throw AssertionError("Timed out at step: $step\n"+tree.take(6000),e)
+  }
+ }
  private fun clickWhenEnabled(text:String){
-  compose.waitUntil(20000){compose.onAllNodes(hasText(text) and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
+  waitFor("enabled button '$text'"){compose.onAllNodes(hasText(text) and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
   compose.onNode(hasText(text) and isEnabled()).performScrollTo().performClick()
  }
  @Test fun loginCatalogChatAndEncryptedDraftSurviveRecreation(){
@@ -103,10 +110,10 @@ class NovaUiTest {
   compose.waitUntil(20000){compose.onAllNodesWithText("Новая версия ответа").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Версия 2 · прежние сохранены").performScrollTo().assertExists();screenshot("04-regenerated")
   clickWhenEnabled("Изменить")
-  compose.waitUntil(20000){compose.onAllNodes(hasText("Привет") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty()}
+  waitFor("edit dialog field"){compose.onAllNodes(hasText("Привет") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty()}
   compose.onNode(hasText("Привет") and hasSetTextAction()).performTextReplacement("Привет, изменено")
   clickWhenEnabled("Сохранить")
-  compose.waitUntil(20000){compose.onAllNodesWithText("Привет, изменено").fetchSemanticsNodes().isNotEmpty()}
+  waitFor("edited text shown"){compose.onAllNodesWithText("Привет, изменено").fetchSemanticsNodes().isNotEmpty()}
   assertEquals("Привет, изменено",userText)
   compose.onNodeWithText("Напиши сообщение").performScrollTo().performTextInput("Сохранённый черновик")
   compose.activityRule.scenario.recreate()
