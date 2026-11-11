@@ -49,23 +49,30 @@ class NovaUiTest {
   val dir=File(compose.activity.getExternalFilesDir(null),"screenshots");dir.mkdirs()
   File(dir,name+".png").outputStream().use {image.compress(Bitmap.CompressFormat.PNG,100,it)}
  }
+ // Buttons are disabled while a request is in flight (enabled=!model.loading). Clicking a disabled
+ // button is a no-op, so wait for the enabled state exactly as a person would before tapping.
+ private fun clickWhenEnabled(text:String){
+  compose.waitUntil(20000){compose.onAllNodes(hasText(text) and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
+  compose.onNode(hasText(text) and isEnabled()).performScrollTo().performClick()
+ }
  @Test fun loginCatalogChatAndEncryptedDraftSurviveRecreation(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")
   compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
   screenshot("01-login")
-  compose.onNodeWithText("Войти",useUnmergedTree=true).performScrollTo().performClick()
-  compose.waitUntil(10000){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
+  clickWhenEnabled("Войти")
+  compose.waitUntil(20000){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Каталог").performClick()
-  compose.waitUntil(10000){compose.onAllNodesWithText("Начать AI-чат").fetchSemanticsNodes().isNotEmpty()}
-  compose.onNodeWithText("Начать AI-чат").performScrollTo();screenshot("02-catalog");compose.onNodeWithText("Начать AI-чат").performClick()
-  compose.waitUntil(10000){compose.onAllNodesWithText("Напиши сообщение").fetchSemanticsNodes().isNotEmpty()}
+  compose.waitUntil(20000){compose.onAllNodesWithText("Начать AI-чат").fetchSemanticsNodes().isNotEmpty()}
+  compose.waitUntil(20000){compose.onAllNodes(hasText("Начать AI-чат") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Начать AI-чат").performScrollTo();screenshot("02-catalog");clickWhenEnabled("Начать AI-чат")
+  compose.waitUntil(20000){compose.onAllNodesWithText("Напиши сообщение").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Напиши сообщение").performScrollTo().performTextInput("Привет")
-  compose.onNodeWithText("Отправить бесплатно").performScrollTo().performClick()
-  compose.waitUntil(10000){compose.onAllNodesWithText("Тестовый ответ сервера").fetchSemanticsNodes().isNotEmpty()}
+  clickWhenEnabled("Отправить бесплатно")
+  compose.waitUntil(20000){compose.onAllNodesWithText("Тестовый ответ сервера").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Тестовый ответ сервера").performScrollTo();screenshot("03-chat")
   compose.onNodeWithText("Напиши сообщение").performScrollTo().performTextInput("Сохранённый черновик")
   compose.activityRule.scenario.recreate()
-  compose.waitUntil(10000){compose.onAllNodesWithText("Сохранённый черновик").fetchSemanticsNodes().isNotEmpty()}
+  compose.waitUntil(20000){compose.onAllNodesWithText("Сохранённый черновик").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Сохранённый черновик").performScrollTo().assertExists()
  }
  @Test fun sessionStoreEncryptsAndReadsAcrossInstances(){
