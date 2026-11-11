@@ -29,10 +29,10 @@ import androidx.lifecycle.viewmodel.compose.viewModel
 private val Purple = Color(0xFFAE87FF)
 private val Cyan = Color(0xFF49E3D1)
 private val Background = Color(0xFF0D1019)
-private val Surface = Color(0xFF1A1E2A)
+private val CardSurface = Color(0xFF1A1E2A)
 private val NovaColors = darkColorScheme(
     primary = Purple, secondary = Cyan, background = Background,
-    surface = Surface, onPrimary = Color(0xFF170C32), onBackground = Color(0xFFF5F1FF),
+    surface = CardSurface, onPrimary = Color(0xFF170C32), onBackground = Color(0xFFF5F1FF),
     onSurface = Color(0xFFF5F1FF)
 )
 
@@ -68,7 +68,7 @@ private fun NovaApp(model: NovaViewModel) {
                 }
             },
             bottomBar = {
-                NavigationBar(containerColor = Surface) {
+                NavigationBar(containerColor = CardSurface) {
                     val items = listOf(
                         NovaTab.HOME, NovaTab.CATALOG, NovaTab.CREATE,
                         NovaTab.WALLET, NovaTab.ACCOUNT
