@@ -24,6 +24,8 @@ services:
     environment:
       DATABASE_URL: postgresql://nova:${POSTGRES_PASSWORD}@postgres:5432/nova
       REDIS_URL: redis://redis:6379
+      # Only for local development until versioned Prisma migrations are committed.
+      NOVA_DEV_SCHEMA_SYNC: "true"
     depends_on:
       postgres:
         condition: service_healthy
