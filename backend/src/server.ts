@@ -7,7 +7,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import argon2 from 'argon2';
 import { z } from 'zod';
 import { config, PRODUCT_SEED } from './config.js';
-import { balance, credit } from './ledger.js';
+import { balance } from './ledger.js';
 import { verifySsv } from './admobSsv.js';
 import { verifyAndCreditPurchase } from './billing.js';
 
@@ -155,18 +155,40 @@ app.get('/v1/ads/ssv', async (req, reply) => {
   // AdReward.transactionId is UNIQUE and the ledger key is derived from it: a replay credits nothing.
   const dup = await db.adReward.findUnique({ where: { transactionId: r.transactionId } });
   if (dup) return { credited: false, reason: 'DUPLICATE' };
-  await db.adReward.create({
-    data: { userId: user.id, transactionId: r.transactionId, adUnit: r.adUnit, amount: r.amount },
-  });
-  await credit(db, {
-    userId: user.id,
-    bucket: 'AD_REWARD',
-    amount: r.amount,
-    source: 'admob_ssv',
-    externalId: r.transactionId,
-    idempotencyKey: `ssv:${r.transactionId}`,
-  });
-  return { credited: true };
+  // Record the verified impression and its wallet credit in ONE database transaction.
+  // If either write fails, neither is committed. A unique transactionId blocks replays.
+  try {
+    const credited = await db.$transaction(async (tx) => {
+      const existing = await tx.adReward.findUnique({ where: { transactionId: r.transactionId } });
+      if (existing) return false;
+      // Serialize rewards for the same user to enforce the daily cap under concurrency.
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${user.id} FOR UPDATE`;
+      const recentCount = await tx.adReward.count({
+        where: { userId: user.id, createdAt: { gte: since } },
+      });
+      if (recentCount >= config.admob.dailyLimit) return false;
+      await tx.walletAccount.upsert({ where: { userId: user.id }, create: { userId: user.id }, update: {} });
+      await tx.adReward.create({
+        data: { userId: user.id, transactionId: r.transactionId, adUnit: r.adUnit, amount: r.amount },
+      });
+      await tx.walletTransaction.create({
+        data: {
+          userId: user.id, type: 'CREDIT_AD_REWARD', bucket: 'AD_REWARD',
+          source: 'admob_ssv', amount: r.amount, externalId: r.transactionId,
+          idempotencyKey: `ssv:${r.transactionId}`,
+        },
+      });
+      await tx.walletAccount.update({
+        where: { userId: user.id }, data: { adReward: { increment: r.amount } },
+      });
+      return true;
+    });
+    return { credited, ...(!credited ? { reason: 'DUPLICATE_OR_LIMIT' } : {}) };
+  } catch (e: any) {
+    if (e?.code === 'P2002') return { credited: false, reason: 'DUPLICATE' };
+    req.log.error({ err: e?.message }, 'ssv transaction failed');
+    return reply.code(503).send({ error: 'REWARD_RETRYABLE' });
+  }
 });
 
 for (const [sku, tokens] of Object.entries(PRODUCT_SEED)) {
