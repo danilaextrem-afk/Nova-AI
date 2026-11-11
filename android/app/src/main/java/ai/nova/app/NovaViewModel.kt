@@ -10,7 +10,7 @@ import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
-enum class NovaTab { HOME, CATALOG, CREATE, WALLET, ACCOUNT }
+enum class NovaTab { HOME, CATALOG, CHATS, CREATE, WALLET, ACCOUNT }
 
 class NovaViewModel : ViewModel() {
     var serverUrl by mutableStateOf("https://api.example.invalid/")
@@ -27,6 +27,15 @@ class NovaViewModel : ViewModel() {
     var notification by mutableStateOf<String?>(null)
         private set
     var catalog by mutableStateOf<List<NovaCharacter>>(emptyList())
+        private set
+    var chats by mutableStateOf<List<NovaChat>>(emptyList())
+        private set
+    var activeChat by mutableStateOf<NovaChat?>(null)
+        private set
+    var chatMessages by mutableStateOf<List<NovaChatMessage>>(emptyList())
+        private set
+    var chatInput by mutableStateOf("")
+    var aiStatus by mutableStateOf<NovaAiStatus?>(null)
         private set
     var owned by mutableStateOf<List<NovaCharacter>>(emptyList())
         private set
@@ -95,6 +104,7 @@ class NovaViewModel : ViewModel() {
         activeTab = tab
         when (tab) {
             NovaTab.CATALOG -> refreshCatalog()
+            NovaTab.CHATS -> refreshChats()
             NovaTab.CREATE -> refreshOwned()
             NovaTab.WALLET -> refreshWallet()
             else -> Unit
@@ -110,6 +120,80 @@ class NovaViewModel : ViewModel() {
                 tag = catalogTag.trim().takeIf { it.isNotEmpty() },
                 sort = catalogSort
             ).items
+        }
+    }
+
+    fun refreshChats() {
+        execute {
+            val api = service()
+            chats = api.chats(authorization()).items
+            aiStatus = api.aiStatus(authorization())
+        }
+    }
+
+    fun startChat(character: NovaCharacter) {
+        execute {
+            val api = service()
+            val created = api.createChat(authorization(), NovaCreateChatBody(character.id))
+            activeChat = created.chat
+            chatMessages = emptyList()
+            chatInput = ""
+            activeTab = NovaTab.CHATS
+            chats = api.chats(authorization()).items
+            aiStatus = api.aiStatus(authorization())
+        }
+    }
+
+    fun openChat(chat: NovaChat) {
+        execute {
+            activeChat = chat
+            chatMessages = service().chatMessages(authorization(), chat.id).items
+            activeTab = NovaTab.CHATS
+        }
+    }
+
+    fun closeChat() {
+        activeChat = null
+        chatMessages = emptyList()
+        refreshChats()
+    }
+
+    fun sendChatMessage() {
+        val current = activeChat ?: return
+        val text = chatInput.trim()
+        if (text.isBlank()) {
+            error = "Напиши сообщение"
+            return
+        }
+        if (text.length > 1000) {
+            error = "Сообщение слишком длинное"
+            return
+        }
+        execute {
+            val api = service()
+            val result = api.sendChatMessage(
+                authorization(), current.id,
+                NovaChatSendBody(text, java.util.UUID.randomUUID().toString())
+            )
+            if (result.assistantMessage != null) {
+                chatInput = ""
+                chatMessages = api.chatMessages(authorization(), current.id).items
+                chats = api.chats(authorization()).items
+            } else {
+                error = "Ответ модели не получен"
+            }
+        }
+    }
+
+    fun deleteActiveChat() {
+        val current = activeChat ?: return
+        execute {
+            val api = service()
+            api.deleteChat(authorization(), current.id)
+            activeChat = null
+            chatMessages = emptyList()
+            chats = api.chats(authorization()).items
+            notification = "Переписка удалена"
         }
     }
 
@@ -159,6 +243,11 @@ class NovaViewModel : ViewModel() {
         password = ""
         catalog = emptyList()
         owned = emptyList()
+        chats = emptyList()
+        activeChat = null
+        chatMessages = emptyList()
+        chatInput = ""
+        aiStatus = null
         wallet = null
         transactions = emptyList()
         activeTab = NovaTab.HOME
