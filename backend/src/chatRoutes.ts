@@ -16,7 +16,8 @@ const queryInput = z.object({
 });
 
 const premiumPriceTokens = Math.max(1, Math.min(100, Math.floor(Number(process.env.NOVA_PREMIUM_TOKENS_PER_MESSAGE || 5)) || 5));
-const premiumReady = () => Boolean(process.env.NOVA_PREMIUM_MODEL?.trim()) && aiSettings('premium').configured;
+const premiumReady = () => Boolean(process.env.NOVA_PREMIUM_MODEL?.trim()) && aiSettings('premium').configured &&
+  (aiSettings('premium').model !== aiSettings('free').model || aiSettings('premium').provider !== aiSettings('free').provider);
 
 function visibleCharacter(userId: string): Prisma.CharacterWhereInput {
   return {
@@ -45,7 +46,7 @@ function promptForCharacter(character: {
     'Writing style: ' + (character.speechStyle || 'Lively and natural'),
     'Story setting: ' + (character.scenario || 'Collaborative creative adventure'),
     'Starting premise: ' + character.greeting,
-  ].join('\n');
+  ].join('\n').slice(0, 2400);
 }
 
 function safeChatRow(chat: { id: string; characterId: string; title: string | null; createdAt: Date; updatedAt: Date; character?: { name: string } }) {
