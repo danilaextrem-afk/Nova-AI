@@ -51,11 +51,12 @@ jobs:
         with:
           distribution: temurin
           java-version: 17
-      - uses: android-actions/setup-android@v3
-        if: steps.android_check.outputs.present == 'true'
       - name: Install Android SDK 36
         if: steps.android_check.outputs.present == 'true'
-        run: sdkmanager "platforms;android-36" "build-tools;35.0.0"
+        run: |
+          SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -1)"
+          test -n "$SDKMANAGER"
+          "$SDKMANAGER" "platforms;android-36" "build-tools;35.0.0"
       - uses: gradle/actions/setup-gradle@v4
         if: steps.android_check.outputs.present == 'true'
         with:
