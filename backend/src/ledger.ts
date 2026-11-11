@@ -27,6 +27,26 @@ async function lockWallet(tx: Tx, userId: string) {
   return rows[0];
 }
 
+export type CreditInput = {
+  userId: string; bucket: TokenBucket; amount: number; source: string;
+  externalId?: string; idempotencyKey: string; type?: TxType;
+};
+/** Idempotent credit inside a caller's transaction (e.g. both sides of a referral at once). */
+export async function creditInTransaction(tx: Tx, p: CreditInput) {
+  if (!Number.isInteger(p.amount) || p.amount <= 0) throw new Error('INVALID_AMOUNT');
+  const dup = await tx.walletTransaction.findUnique({ where: { idempotencyKey: p.idempotencyKey } });
+  if (dup) return { transaction: dup, duplicate: true };
+  await lockWallet(tx, p.userId);
+  const transaction = await tx.walletTransaction.create({
+    data: {
+      userId: p.userId, type: p.type ?? CREDIT_TYPE[p.bucket], bucket: p.bucket, source: p.source,
+      amount: p.amount, externalId: p.externalId, idempotencyKey: p.idempotencyKey,
+    },
+  });
+  await tx.walletAccount.update({ where: { userId: p.userId }, data: { [COLUMN[p.bucket]]: { increment: p.amount } } });
+  return { transaction, duplicate: false };
+}
+
 /**
  * Atomic, idempotent credit. A repeated idempotencyKey returns the original
  * transaction and changes no balance.
@@ -45,27 +65,7 @@ export async function credit(
 ) {
   if (!Number.isInteger(p.amount) || p.amount <= 0) throw new Error('INVALID_AMOUNT');
   try {
-    return await db.$transaction(async (tx) => {
-      const dup = await tx.walletTransaction.findUnique({ where: { idempotencyKey: p.idempotencyKey } });
-      if (dup) return { transaction: dup, duplicate: true };
-      await lockWallet(tx, p.userId);
-      const transaction = await tx.walletTransaction.create({
-        data: {
-          userId: p.userId,
-          type: p.type ?? CREDIT_TYPE[p.bucket],
-          bucket: p.bucket,
-          source: p.source,
-          amount: p.amount,
-          externalId: p.externalId,
-          idempotencyKey: p.idempotencyKey,
-        },
-      });
-      await tx.walletAccount.update({
-        where: { userId: p.userId },
-        data: { [COLUMN[p.bucket]]: { increment: p.amount } },
-      });
-      return { transaction, duplicate: false };
-    });
+    return await db.$transaction((tx) => creditInTransaction(tx, p));
   } catch (e) {
     // Two concurrent requests with the same key: the unique index decides the winner.
     if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {

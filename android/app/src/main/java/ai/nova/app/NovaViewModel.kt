@@ -380,12 +380,54 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    var dailyBonus by mutableStateOf<DailyBonusStatus?>(null)
+        private set
+    var referral by mutableStateOf<ReferralStatus?>(null)
+        private set
+    var referralInput by mutableStateOf("")
+
     fun refreshWallet() {
         execute {
             val api = service()
             wallet = api.wallet(authorization())
             transactions = api.transactions(authorization()).items
             products = api.products(authorization()); ads = api.adStatus(authorization())
+            // Older servers have no reward routes: the wallet must still load.
+            dailyBonus = runCatching { api.dailyBonus(authorization()) }.getOrNull()
+            referral = runCatching { api.referrals(authorization()) }.getOrNull()
+        }
+    }
+    fun claimDailyBonus() {
+        execute {
+            val api = service()
+            val result = api.claimDailyBonus(authorization())
+            notification = if (result.granted) "+" + result.amount + " NOVA Tokens — ежедневный бонус" else "Бонус за сегодня уже получен"
+            dailyBonus = api.dailyBonus(authorization()); wallet = api.wallet(authorization())
+            transactions = api.transactions(authorization()).items
+        }
+    }
+    fun applyReferralCode() {
+        val code = referralInput.trim().uppercase()
+        if (!Regex("^[A-Z0-9]{8}$").matches(code)) { error = "Код приглашения — 8 букв и цифр"; return }
+        execute {
+            val api = service()
+            try {
+                val r = api.applyReferral(authorization(), ApplyReferralBody(code))
+                referralInput = ""
+                notification = if (r.rewarded) "Бонус за приглашение начислен" else "Код принят. Бонус придёт обоим после " + r.requiredTurns + " сообщений в чате"
+            } catch (e: HttpException) {
+                val body = runCatching { e.response()?.errorBody()?.string() }.getOrNull().orEmpty()
+                error = when {
+                    "OWN_CODE" in body -> "Нельзя применить свой собственный код"
+                    "ALREADY_APPLIED" in body -> "Код приглашения уже применён"
+                    "APPLY_WINDOW_CLOSED" in body -> "Код можно применить только в первые 7 дней после регистрации"
+                    "CIRCULAR_REFERRAL" in body -> "Этот друг уже зарегистрировался по твоему коду"
+                    e.code() == 404 -> "Такого кода нет"
+                    else -> "Не удалось применить код: HTTP " + e.code()
+                }
+                return@execute
+            }
+            referral = api.referrals(authorization()); wallet = api.wallet(authorization())
         }
     }
 
