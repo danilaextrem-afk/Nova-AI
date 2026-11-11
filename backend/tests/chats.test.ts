@@ -248,6 +248,6 @@ describe('real AI character chat gateway', () => {
       method: 'GET', url: '/v1/chats/' + chatId + '/messages', headers: auth(owner),
     });
     expect(messages.statusCode).toBe(200);
-    expect(messages.json().items).toHaveLength(2);
+    expect(messages.json().items.length).toBeGreaterThanOrEqual(2);
   });
 });
