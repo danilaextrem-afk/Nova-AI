@@ -414,8 +414,14 @@ private fun ChatsScreen(model: NovaViewModel) {
                     color = Cyan, style = MaterialTheme.typography.bodyMedium
                 )
                 Text(
-                    "Доступно до " + status.dailyFreeLimit + " бесплатных сообщений в сутки.",
+                    "Обычный чат: без лимита сообщений в день и без списания NOVA Tokens.",
                     style = MaterialTheme.typography.bodySmall
+                )
+                Text(
+                    "Premium: " + status.premiumPriceTokens + " NOVA Tokens за ответ · "
+                        + if (status.premiumConfigured) (status.premiumModel ?: "Улучшенная модель")
+                          else "Модель пока не подключена",
+                    style = MaterialTheme.typography.bodySmall, color = Color.LightGray
                 )
             } else {
                 Text(
@@ -491,6 +497,37 @@ private fun ChatsScreen(model: NovaViewModel) {
             }
         }
         NovaCard {
+            val status = model.aiStatus
+            Text("Режим AI-чата", fontWeight = FontWeight.SemiBold, color = Cyan)
+            Row(horizontalArrangement = Arrangement.spacedBy(9.dp)) {
+                FilterChip(
+                    selected = !model.premiumChatSelected,
+                    onClick = { model.premiumChatSelected = false },
+                    label = { Text("Обычный · бесплатно") }
+                )
+                FilterChip(
+                    selected = model.premiumChatSelected,
+                    onClick = { model.premiumChatSelected = true },
+                    enabled = status?.premiumConfigured == true,
+                    label = { Text("Premium · " + (status?.premiumPriceTokens ?: 5) + " ◈") }
+                )
+            }
+            if (model.premiumChatSelected) {
+                Text(
+                    "Более мощная модель, длинные ответы и увеличенный контекст. "
+                        + (status?.premiumPriceTokens ?: 5) + " токенов спишутся только за успешный ответ.",
+                    style = MaterialTheme.typography.bodySmall, color = Color.LightGray
+                )
+                Text(
+                    "Баланс: " + (status?.tokenBalance ?: 0) + " NOVA Tokens",
+                    style = MaterialTheme.typography.labelMedium
+                )
+            } else {
+                Text(
+                    "Без ограничений по числу сообщений и без оплаты. Возможны технические задержки AI-провайдера.",
+                    style = MaterialTheme.typography.bodySmall, color = Color.LightGray
+                )
+            }
             OutlinedTextField(
                 value = model.chatInput,
                 onValueChange = { model.chatInput = it },
@@ -502,7 +539,11 @@ private fun ChatsScreen(model: NovaViewModel) {
                 onClick = { model.sendChatMessage() },
                 enabled = !model.loading && model.chatInput.isNotBlank(),
                 modifier = Modifier.fillMaxWidth()
-            ) { Text(if (model.loading) "AI отвечает..." else "Отправить бесплатно") }
+            ) { Text(
+                if (model.loading) "AI отвечает..."
+                else if (model.premiumChatSelected) "Отправить · " + (model.aiStatus?.premiumPriceTokens ?: 5) + " ◈"
+                else "Отправить бесплатно"
+            ) }
             Text(
                 "Ответ создаёт AI, а не реальный человек. Доступность зависит от лимитов провайдера.",
                 style = MaterialTheme.typography.bodySmall, color = Color.LightGray
