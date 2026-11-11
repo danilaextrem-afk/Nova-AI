@@ -11,31 +11,40 @@ import { balance } from './ledger.js';
 import { verifySsv } from './admobSsv.js';
 import { verifyAndCreditPurchase } from './billing.js';
 import { registerCharacterRoutes } from './characters.js';
+import { registerStoryRoutes } from './storyRoutes.js';
+import { registerProductRoutes } from './productRoutes.js';
+import { registerAdminRoutes } from './adminRoutes.js';
 import { registerChatRoutes } from './chatRoutes.js';
 import { seedStarterCast } from './starterCast.js';
-
-const db = new PrismaClient();
-const app = Fastify({
-  logger: {
-    level: 'info',
-    // Never log bodies or auth headers: chats are private.
-    redact: ['req.headers.authorization', 'req.body', 'res.body'],
-  },
-  trustProxy: true,
-});
-
-await app.register(helmet);
-await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
-await app.register(jwt, { secret: config.jwtSecret, sign: { expiresIn: config.accessTtlSec } });
 
 declare module 'fastify' {
   interface FastifyInstance {
     auth: (req: any, reply: any) => Promise<void>;
   }
 }
+
+export async function buildApp(db:PrismaClient = new PrismaClient()) {
+const app = Fastify({
+  disableRequestLogging: true,
+  bodyLimit: 65536,
+  logger: {
+    level: 'info',
+    // Never log bodies or auth headers: chats are private.
+    redact: ['req.headers.authorization', 'req.body', 'res.body'],
+  },
+  trustProxy: process.env.TRUST_PROXY_CIDR || false,
+});
+
+await app.register(helmet);
+await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
+await app.register(jwt, { secret: config.jwtSecret, sign: { expiresIn: config.accessTtlSec } });
+
 app.decorate('auth', async (req: any, reply: any) => {
   try {
     await req.jwtVerify();
+    if(req.user.scope==='admin')return reply.code(401).send({error:'UNAUTHORIZED'});
+    const u=await db.user.findUnique({where:{id:req.user.sub},select:{status:true}});
+    if(!u||u.status!=='ACTIVE')return reply.code(401).send({error:'UNAUTHORIZED'});
   } catch {
     return reply.code(401).send({ error: 'UNAUTHORIZED' });
   }
@@ -56,13 +65,17 @@ async function issueTokens(userId: string, familyId: string = randomUUID()) {
   return { accessToken: app.jwt.sign({ sub: userId }), refreshToken: refresh };
 }
 
-const creds = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(128) });
+const creds = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(128), adultConfirmed:z.boolean().optional() });
 
 app.get('/health', async () => ({ ok: true }));
+app.get('/ready',async(_req,reply)=>{try{await db.$queryRaw`SELECT 1`;return {ok:true};}catch{return reply.code(503).send({ok:false});}});
+app.setErrorHandler((error,req,reply)=>{req.log.error({code:(error as any).code||'INTERNAL'},'Request failed');return reply.code(500).send({error:'INTERNAL_ERROR'});});
+app.post('/v1/auth/logout',{preHandler:app.auth},async(req:any)=>{await db.session.updateMany({where:{userId:req.user.sub},data:{revokedAt:new Date()}});return {ok:true};});
 
 app.post('/v1/auth/register', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
   const body = creds.safeParse(req.body);
   if (!body.success) return reply.code(400).send({ error: 'INVALID_INPUT' });
+  if(body.data.adultConfirmed!==true)return reply.code(400).send({error:'ADULT_CONFIRMATION_REQUIRED'});
   const email = body.data.email.toLowerCase();
   if (await db.user.findUnique({ where: { email } })) return reply.code(409).send({ error: 'EMAIL_TAKEN' });
   const passwordHash = await argon2.hash(body.data.password, { type: argon2.argon2id });
@@ -86,14 +99,19 @@ app.post('/v1/auth/login', { config: { rateLimit: { max: 10, timeWindow: '1 minu
 app.post('/v1/auth/refresh', async (req, reply) => {
   const body = z.object({ refreshToken: z.string().min(20) }).safeParse(req.body);
   if (!body.success) return reply.code(400).send({ error: 'INVALID_INPUT' });
-  const s = await db.session.findUnique({ where: { refreshTokenHash: sha256(body.data.refreshToken) } });
-  if (!s || s.expiresAt < new Date()) return reply.code(401).send({ error: 'INVALID_REFRESH' });
-  if (s.revokedAt) {
-    await db.session.updateMany({ where: { familyId: s.familyId, revokedAt: null }, data: { revokedAt: new Date() } });
-    return reply.code(401).send({ error: 'REFRESH_REUSED' });
-  }
-  await db.session.update({ where: { id: s.id }, data: { revokedAt: new Date() } });
-  return issueTokens(s.userId, s.familyId);
+  const refresh=randomBytes(48).toString('base64url');
+  const result=await db.$transaction(async tx=>{
+    const hash=sha256(body.data.refreshToken);
+    await tx.$queryRaw`SELECT id FROM "Session" WHERE "refreshTokenHash" = ${hash} FOR UPDATE`;
+    const s=await tx.session.findUnique({where:{refreshTokenHash:hash},include:{user:{select:{status:true}}}});
+    if(!s||s.expiresAt<new Date()||s.user.status!=='ACTIVE')return null;
+    if(s.revokedAt){await tx.session.updateMany({where:{familyId:s.familyId},data:{revokedAt:new Date()}});return null;}
+    await tx.session.update({where:{id:s.id},data:{revokedAt:new Date()}});
+    await tx.session.create({data:{userId:s.userId,familyId:s.familyId,refreshTokenHash:sha256(refresh),expiresAt:new Date(Date.now()+config.refreshTtlSec*1000)}});
+    return s.userId;
+  });
+  if(!result)return reply.code(401).send({error:'INVALID_REFRESH'});
+  return {accessToken:app.jwt.sign({sub:result}),refreshToken:refresh};
 });
 
 app.get('/v1/wallet', { preHandler: app.auth }, async (req: any) => balance(db, req.user.sub));
@@ -110,13 +128,14 @@ app.get('/v1/wallet/transactions', { preHandler: app.auth }, async (req: any) =>
 });
 
 app.post('/v1/billing/verify', { preHandler: app.auth }, async (req: any, reply) => {
+  if(process.env.NOVA_MONETIZATION_ENABLED!=='true')return reply.code(503).send({error:'BILLING_DISABLED'});
   const body = z.object({ sku: z.string(), purchaseToken: z.string().min(10) }).safeParse(req.body);
   if (!body.success) return reply.code(400).send({ error: 'INVALID_INPUT' });
   try {
     return await verifyAndCreditPurchase(db, { userId: req.user.sub, ...body.data });
   } catch (e: any) {
     if (e.message === 'PLAY_BILLING_NOT_CONFIGURED') return reply.code(503).send({ error: e.message });
-    req.log.error({ err: e.message }, 'billing verify failed');
+    req.log.error({ code:'PLAY_VERIFY_FAILED' }, 'billing verify failed');
     return reply.code(502).send({ error: 'PLAY_VERIFY_FAILED' });
   }
 });
@@ -130,6 +149,9 @@ app.get('/v1/ads/status', { preHandler: app.auth }, async (req: any) => {
   ]);
   const nextAt = last ? last.createdAt.getTime() + config.admob.minIntervalSec * 1000 : 0;
   return {
+    configured:process.env.NOVA_MONETIZATION_ENABLED==='true'&&!!config.admob.adUnit,
+    adUnit:process.env.NOVA_MONETIZATION_ENABLED==='true'?config.admob.adUnit:null,
+    userId:req.user.sub,
     rewardAmount: config.admob.rewardAmount,
     remainingToday: Math.max(0, config.admob.dailyLimit - count),
     secondsUntilNext: Math.max(0, Math.ceil((nextAt - Date.now()) / 1000)),
@@ -139,7 +161,7 @@ app.get('/v1/ads/status', { preHandler: app.auth }, async (req: any) => {
 // AdMob SSV callback (called by Google, unauthenticated; the signature is the authentication).
 app.get('/v1/ads/ssv', async (req, reply) => {
   // Fail closed until an app-specific rewarded unit is configured.
-  if (!config.admob.adUnit || !Number.isSafeInteger(config.admob.rewardAmount) || config.admob.rewardAmount <= 0) {
+  if (process.env.NOVA_MONETIZATION_ENABLED!=='true'||!config.admob.adUnit || !Number.isSafeInteger(config.admob.rewardAmount) || config.admob.rewardAmount <= 0) {
     return reply.code(503).send({ error: 'ADMOB_NOT_CONFIGURED' });
   }
   const rawQuery = req.raw.url!.split('?')[1] ?? '';
@@ -199,13 +221,16 @@ app.get('/v1/ads/ssv', async (req, reply) => {
     return { credited, ...(!credited ? { reason: 'DUPLICATE_LIMIT_OR_COOLDOWN' } : {}) };
   } catch (e: any) {
     if (e?.code === 'P2002') return { credited: false, reason: 'DUPLICATE' };
-    req.log.error({ err: e?.message }, 'ssv transaction failed');
+    req.log.error({ code:'REWARD_RETRYABLE' }, 'ssv transaction failed');
     return reply.code(503).send({ error: 'REWARD_RETRYABLE' });
   }
 });
 
 await registerCharacterRoutes(app, db);
 await registerChatRoutes(app, db);
+await registerStoryRoutes(app,db);
+await registerProductRoutes(app,db);
+await registerAdminRoutes(app,db);
 
 for (const [sku, tokens] of Object.entries(PRODUCT_SEED)) {
   await db.paymentProduct.upsert({ where: { sku }, create: { sku, tokens }, update: {} });
@@ -213,4 +238,6 @@ for (const [sku, tokens] of Object.entries(PRODUCT_SEED)) {
 
 await seedStarterCast(db);
 
-await app.listen({ port: config.port, host: '0.0.0.0' });
+app.addHook('onClose',async()=>{await db.$disconnect();});
+return app;
+}

@@ -69,6 +69,7 @@ model User {
   adRewards     AdReward[]
   aiUsage       AiUsage[]
   notifications Notification[]
+  chatRequests  ChatRequest[]
   reportsMade   Report[]        @relation("reporter")
   blocksMade    UserBlock[]     @relation("blocker")
   blocksGot     UserBlock[]     @relation("blocked")
@@ -152,6 +153,14 @@ model Chat {
   character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
   messages    Message[]
   memories    Memory[]
+  requests    ChatRequest[]
+  persona     String @default("") @db.VarChar(1000)
+  scenario    String @default("") @db.VarChar(2000)
+  responseStyle String @default("balanced")
+  tone        String @default("friendly")
+  participantIds String[] @default([])
+  parentChatId String?
+  summaryThrough Int @default(0)
 
   @@index([userId, updatedAt])
 }
@@ -164,6 +173,8 @@ model Message {
   pinned    Boolean  @default(false)
   createdAt DateTime @default(now())
   editedAt  DateTime?
+  sequence  Int @unique @default(autoincrement())
+  replyToRequestId String? @unique
   requestId String?  @unique // Idempotency key on user message; the assistant response remains separate.
   chat      Chat     @relation(fields: [chatId], references: [id], onDelete: Cascade)
 
@@ -173,6 +184,7 @@ model Message {
 model Memory {
   id        String   @id @default(uuid())
   chatId    String
+  pinned    Boolean @default(false)
   kind      String // SUMMARY | EVENT | FACT
   content   String   @db.VarChar(2000)
   createdAt DateTime @default(now())
@@ -359,4 +371,49 @@ model Setting {
   key       String   @id
   value     Json
   updatedAt DateTime @updatedAt
+}
+
+model ChatRequest {
+  id String @id
+  userId String
+  chatId String
+  content String @db.VarChar(4000)
+  fingerprint String
+  tier String
+  priceTokens Int @default(0)
+  status String @default("PENDING")
+  errorCode String?
+  startedAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chat Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  @@index([userId, status, startedAt])
+}
+model AiProviderState {
+  key String @id
+  minuteAt DateTime
+  dayAt DateTime
+  minuteRequests Int @default(0)
+  dayRequests Int @default(0)
+  minuteTokens Int @default(0)
+  dayTokens Int @default(0)
+  costMicros Int @default(0)
+  failures Int @default(0)
+  retryAt DateTime?
+}
+model AiAttempt {
+  id String @id @default(uuid())
+  requestId String?
+  provider String
+  model String
+  tier String
+  status String
+  errorCode String?
+  estimatedTokens Int
+  costMicros Int
+  latencyMs Int @default(0)
+  createdAt DateTime @default(now())
+  expiresAt DateTime
+  @@index([provider,status,expiresAt])
+  @@index([requestId])
 }

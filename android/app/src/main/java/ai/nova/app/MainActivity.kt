@@ -16,6 +16,8 @@ import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.ChatBubbleOutline
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import android.content.Intent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.foundation.Image
@@ -117,6 +119,7 @@ private fun NovaApp(model: NovaViewModel) {
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
+                    .imePadding()
                     .verticalScroll(rememberScrollState())
                     .padding(18.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
@@ -155,13 +158,13 @@ private fun LoginScreen(model: NovaViewModel) {
         NovaCard {
             Text("Подключение к серверу", color = Cyan, fontWeight = FontWeight.SemiBold)
             Text(
-                "Укажи адрес развёрнутого сервера NOVA AI по HTTPS. Встроенного демо-сервера нет.",
+                "Для входа нужен подключённый сервис NOVA AI.",
                 style = MaterialTheme.typography.bodySmall, color = Color.LightGray
             )
             OutlinedTextField(
                 value = model.serverUrl,
                 onValueChange = { model.serverUrl = it },
-                label = { Text("Backend URL") },
+                label = { Text("Адрес сервиса") },
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
@@ -180,6 +183,11 @@ private fun LoginScreen(model: NovaViewModel) {
                 visualTransformation = PasswordVisualTransformation(),
                 singleLine = true
             )
+            Row(verticalAlignment=Alignment.CenterVertically) {
+                Checkbox(checked=model.adultConfirmed,onCheckedChange={model.adultConfirmed=it})
+                Text("Мне исполнилось 18 лет. Персонажи вымышленные.",style=MaterialTheme.typography.bodySmall)
+            }
+            Text("Сообщения отправляются серверу NOVA и настроенным AI-провайдерам. Не указывай конфиденциальные данные.",style=MaterialTheme.typography.bodySmall)
             Button(
                 onClick = { model.signIn(false) },
                 modifier = Modifier.fillMaxWidth(),
@@ -350,6 +358,11 @@ private fun CatalogScreen(model: NovaViewModel) {
             modifier = Modifier.fillMaxWidth()
         ) { Text("Найти персонажей") }
     }
+    Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)) {
+        OutlinedButton(onClick={model.loadFavorites()},enabled=!model.loading){Text("Моё избранное")}
+        OutlinedButton(onClick={model.refreshCatalog()},enabled=!model.loading){Text("Все персонажи")}
+    }
+    Text("Для группового сюжета выбери до 4 дополнительных участников, затем начни чат с главным героем.",style=MaterialTheme.typography.bodySmall)
     if (model.catalog.isEmpty()) {
         NovaCard { Text("Опубликованных персонажей пока нет.") }
     }
@@ -372,7 +385,7 @@ private fun CatalogScreen(model: NovaViewModel) {
                     bitmap = bundledPortrait,
                     contentDescription = "Портрет персонажа " + character.name,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.size(120.dp).clip(RoundedCornerShape(16.dp))
+                    modifier = Modifier.fillMaxWidth().height(280.dp).clip(RoundedCornerShape(16.dp))
                 )
             } else {
                 Text(
@@ -387,6 +400,14 @@ private fun CatalogScreen(model: NovaViewModel) {
                 Text(bio, style = MaterialTheme.typography.bodyMedium, maxLines = 3)
             }
             Text(character.greeting, maxLines = 4, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment=Alignment.CenterVertically) {
+                Checkbox(checked=character.id in model.groupIds,onCheckedChange={checked->
+                    model.groupIds=if(!checked)model.groupIds-character.id else if(model.groupIds.size<4)model.groupIds+character.id else model.groupIds
+                })
+                Text("Участник групповой истории")
+            }
+            TextButton(onClick={model.cloneCharacter(character.id)},enabled=!model.loading){Text("Создать свою версию")}
+            if(model.favorites.any {it.id==character.id})TextButton(onClick={model.removeFavorite(character.id)},enabled=!model.loading){Text("Убрать из избранного")}
             Button(
                 onClick = { model.startChat(character) },
                 enabled = !model.loading,
@@ -407,7 +428,7 @@ private fun ChatsScreen(model: NovaViewModel) {
         val status = model.aiStatus
         NovaCard {
             if (status == null) {
-                Text("Проверь подключение к AI Gateway")
+                Text("Проверяем доступность общения")
             } else if (status.configured) {
                 Text(
                     "AI: " + status.provider + " · " + status.model,
@@ -425,7 +446,7 @@ private fun ChatsScreen(model: NovaViewModel) {
                 )
             } else {
                 Text(
-                    "AI-провайдер пока не подключён. Сервер покажет ошибку, а не выдуманный ответ.",
+                    "Общение временно недоступно. История сохранена.",
                     color = Color(0xFFFFB79A),
                     style = MaterialTheme.typography.bodySmall
                 )
@@ -469,11 +490,13 @@ private fun ChatsScreen(model: NovaViewModel) {
             NovaCard {
                 Text("Напиши первое сообщение — персонаж ответит через настоящий AI-провайдер.")
                 Text(
-                    "Если AI не настроен, переписка останется пустой. Фальшивых ответов нет.",
+                    "Твои сообщения и воспоминания доступны только в твоём аккаунте.",
                     color = Color.LightGray, style = MaterialTheme.typography.bodySmall
                 )
             }
         }
+        StoryControls(model)
+        if(model.nextBefore!=null)OutlinedButton(onClick={model.loadOlder()},enabled=!model.loading){Text("Более ранние сообщения")}
         model.chatMessages.forEach { message ->
             Card(
                 colors = CardDefaults.cardColors(
@@ -493,6 +516,11 @@ private fun ChatsScreen(model: NovaViewModel) {
                         style = MaterialTheme.typography.labelMedium
                     )
                     Text(message.content, style = MaterialTheme.typography.bodyLarge)
+                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                        SpeakButton(message.content)
+                        TextButton(onClick={model.branch(message)},enabled=!model.loading){Text("Ответвить историю")}
+                        if(message.role=="assistant")TextButton(onClick={model.reportMessage(message.id)},enabled=!model.loading){Text("Пожаловаться")}
+                    }
                 }
             }
         }
@@ -530,11 +558,12 @@ private fun ChatsScreen(model: NovaViewModel) {
             }
             OutlinedTextField(
                 value = model.chatInput,
-                onValueChange = { model.chatInput = it },
+                onValueChange = { model.updateChatInput(it) },
                 label = { Text("Напиши сообщение") },
                 modifier = Modifier.fillMaxWidth(),
                 maxLines = 5
             )
+            DictationButton(model)
             Button(
                 onClick = { model.sendChatMessage() },
                 enabled = !model.loading && model.chatInput.isNotBlank(),
@@ -569,6 +598,7 @@ private fun CreateScreen(model: NovaViewModel) {
             label = { Text("Первое сообщение персонажа") },
             minLines = 3, modifier = Modifier.fillMaxWidth()
         )
+        CreatorFields(model)
         Button(
             onClick = { model.createCharacter() },
             modifier = Modifier.fillMaxWidth(),
@@ -583,6 +613,9 @@ private fun CreateScreen(model: NovaViewModel) {
         NovaCard {
             Text(character.name, fontWeight = FontWeight.Bold, color = Purple)
             Text(character.greeting)
+            Button(onClick={model.startChat(character)},enabled=!model.loading){Text("Общаться")}
+            OutlinedButton(onClick={model.editCharacter(character)},enabled=!model.loading){Text("Редактировать")}
+            OutlinedButton(onClick={model.publishCharacter(character.id)},enabled=!model.loading){Text("Отправить на модерацию")}
         }
     }
 }
@@ -610,8 +643,9 @@ private fun WalletScreen(model: NovaViewModel) {
             Text(tx.type + " · " + tx.amount + " · " + tx.source, fontSize = 12.sp)
         }
     }
+    MonetizationControls(model)
     Text(
-        "Покупка токенов и награды AdMob будут доступны только после подключения и проверки Google Play.",
+        "Токены начисляются после серверной проверки Google Play или AdMob.",
         color = Color.LightGray, style = MaterialTheme.typography.bodySmall
     )
 }
@@ -623,9 +657,19 @@ private fun AccountScreen(model: NovaViewModel) {
         Text(model.email, color = Purple)
         Text("Сервер: " + model.serverUrl, color = Color.LightGray)
         Text(
-            "Доступ действует до истечения серверной сессии. Автопродление входа ещё не подключено.",
+            "Сессия и неотправленный текст зашифрованы на устройстве. Чаты и память хранятся в твоём аккаунте.",
             color = Color.LightGray, style = MaterialTheme.typography.bodySmall
         )
         OutlinedButton(onClick = { model.logout() }) { Text("Выйти из аккаунта") }
+        OutlinedButton(onClick={model.exportAccount()},enabled=!model.loading){Text("Экспортировать мои данные")}
+        val context=LocalContext.current
+        model.exportText?.let { data->TextButton(onClick={context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {type="text/plain";putExtra(Intent.EXTRA_TEXT,data)},"Экспорт NOVA"))}){Text("Поделиться экспортом")} }
+        var deleting by remember {mutableStateOf(false)}
+        OutlinedButton(onClick={deleting=true}){Text("Удалить аккаунт")}
+        if(deleting)AlertDialog(onDismissRequest={deleting=false},title={Text("Удалить аккаунт и истории?")},text={Text("Чаты, память и персонажи будут удалены. Учёт покупок сохраняется для обработки возвратов.")},confirmButton={TextButton(onClick={deleting=false;model.deleteAccount()}){Text("Удалить навсегда")}},dismissButton={TextButton(onClick={deleting=false}){Text("Отмена")}})
+        Text("Уведомления",style=MaterialTheme.typography.titleMedium)
+        model.notifications.forEach {n-> Text(n.title+" · "+n.body);if(n.readAt==null)TextButton(onClick={model.readNotification(n.id)}){Text("Прочитано")} }
+        OutlinedTextField(value=model.supportText,onValueChange={model.supportText=it},label={Text("Обращение в поддержку")},modifier=Modifier.fillMaxWidth())
+        Button(onClick={model.sendSupport()},enabled=!model.loading&&model.supportText.length>=5){Text("Отправить обращение")}
     }
 }

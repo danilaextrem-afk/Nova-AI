@@ -1,7 +1,7 @@
 import { google } from 'googleapis';
 import type { PrismaClient } from '@prisma/client';
 import { config } from './config.js';
-import { credit } from './ledger.js';
+import { createHash } from 'node:crypto';
 
 function publisher() {
   if (!config.playServiceAccountJson || !config.playPackageName) {
@@ -26,59 +26,30 @@ export async function verifyAndCreditPurchase(
   const product = await db.paymentProduct.findUnique({ where: { sku: p.sku } });
   if (!product || !product.active) return { status: 'REJECTED' as const, reason: 'UNKNOWN_SKU' };
 
-  // A purchase token may belong to only one user.
-  const existing = await db.purchaseEvent.findUnique({ where: { purchaseToken: p.purchaseToken } });
-  if (existing && existing.userId !== p.userId) return { status: 'REJECTED' as const, reason: 'TOKEN_OWNED_BY_OTHER' };
-  if (existing?.state === 'VERIFIED') return { status: 'VERIFIED' as const, duplicate: true, tokens: existing.tokens };
-
   const api = publisher();
-  const { data } = await api.purchases.products.get({
-    packageName: config.playPackageName,
-    productId: p.sku,
-    token: p.purchaseToken,
+  const { data } = await api.purchases.products.get({packageName:config.playPackageName,productId:p.sku,token:p.purchaseToken});
+  if(data.purchaseState===2)return {status:'PENDING' as const};
+  if(data.purchaseState!==0)return {status:'CANCELED' as const};
+  // Bind the receipt to the account that launched Play Billing, not the first claimant.
+  const accountHash = createHash('sha256').update(p.userId).digest('hex');
+  if(data.obfuscatedExternalAccountId!==accountHash)return {status:'REJECTED' as const,reason:'ACCOUNT_MISMATCH'};
+  const result=await db.$transaction(async tx=>{
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${p.purchaseToken}, 0))`;
+    const existing=await tx.purchaseEvent.findUnique({where:{purchaseToken:p.purchaseToken}});
+    if(existing&&(existing.userId!==p.userId||existing.sku!==p.sku))return {status:'REJECTED' as const,reason:'TOKEN_OWNED_BY_OTHER'};
+    if(existing?.state==='REFUNDED'||existing?.state==='CANCELED')return {status:'REJECTED' as const,reason:'PURCHASE_REVOKED'};
+    if(existing?.state==='VERIFIED')return {status:'VERIFIED' as const,duplicate:true,tokens:existing.tokens};
+    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${p.userId} FOR UPDATE`;
+    await tx.walletAccount.upsert({where:{userId:p.userId},create:{userId:p.userId},update:{}});
+    await tx.purchaseEvent.create({data:{userId:p.userId,sku:p.sku,purchaseToken:p.purchaseToken,orderId:data.orderId,state:'VERIFIED',tokens:product.tokens}});
+    await tx.walletTransaction.create({data:{userId:p.userId,bucket:'PURCHASED',type:'CREDIT_PURCHASE',amount:product.tokens,
+      source:'play_billing',externalId:p.purchaseToken,idempotencyKey:'play:'+p.purchaseToken}});
+    await tx.walletAccount.update({where:{userId:p.userId},data:{purchased:{increment:product.tokens}}});
+    return {status:'VERIFIED' as const,duplicate:false,tokens:product.tokens};
   });
-
-  if (data.purchaseState === 2) return { status: 'PENDING' as const };
-  if (data.purchaseState !== 0) {
-    await db.purchaseEvent.upsert({
-      where: { purchaseToken: p.purchaseToken },
-      create: { userId: p.userId, sku: p.sku, purchaseToken: p.purchaseToken, state: 'CANCELED', tokens: 0 },
-      update: { state: 'CANCELED' },
-    });
-    return { status: 'CANCELED' as const };
-  }
-
-  await db.purchaseEvent.upsert({
-    where: { purchaseToken: p.purchaseToken },
-    create: {
-      userId: p.userId,
-      sku: p.sku,
-      purchaseToken: p.purchaseToken,
-      orderId: data.orderId ?? null,
-      state: 'VERIFIED',
-      tokens: product.tokens,
-    },
-    update: { state: 'VERIFIED', orderId: data.orderId ?? null, tokens: product.tokens },
-  });
-
-  const { duplicate } = await credit(db, {
-    userId: p.userId,
-    bucket: 'PURCHASED',
-    amount: product.tokens,
-    source: 'play_billing',
-    externalId: p.purchaseToken,
-    idempotencyKey: `play:${p.purchaseToken}`,
-  });
-
-  // Consume only after the credit is committed, so the item can be bought again.
-  if (data.consumptionState !== 1) {
-    await api.purchases.products.consume({
-      packageName: config.playPackageName,
-      productId: p.sku,
-      token: p.purchaseToken,
-    });
-  }
-  return { status: 'VERIFIED' as const, duplicate, tokens: product.tokens };
+  // Retry consumption even after an earlier successful credit. A crash cannot strand a purchase.
+  if(result.status==='VERIFIED'&&data.consumptionState!==1)await api.purchases.products.consume({packageName:config.playPackageName,productId:p.sku,token:p.purchaseToken});
+  return result;
 }
 
 /**
@@ -86,26 +57,21 @@ export async function verifyAndCreditPurchase(
  * Reverses the tokens that are still unspent in the PURCHASED bucket; the shortfall is clamped at zero.
  */
 export async function handleVoidedPurchase(db: PrismaClient, purchaseToken: string) {
-  const ev = await db.purchaseEvent.findUnique({ where: { purchaseToken } });
-  if (!ev || ev.state === 'REFUNDED') return { handled: false };
-  await db.$transaction(async (tx) => {
-    await tx.purchaseEvent.update({ where: { purchaseToken }, data: { state: 'REFUNDED' } });
-    const w = await tx.walletAccount.findUnique({ where: { userId: ev.userId } });
-    const revoke = Math.min(w?.purchased ?? 0, ev.tokens);
-    if (revoke > 0) {
-      await tx.walletAccount.update({ where: { userId: ev.userId }, data: { purchased: { decrement: revoke } } });
-      await tx.walletTransaction.create({
-        data: {
-          userId: ev.userId,
-          type: 'DEBIT_PURCHASE_REVOKE',
-          bucket: 'PURCHASED',
-          source: 'play_refund',
-          amount: revoke,
-          externalId: purchaseToken,
-          idempotencyKey: `play-refund:${purchaseToken}`,
-        },
-      });
+  return db.$transaction(async tx=>{
+    await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${purchaseToken}, 0))`;
+    const ev=await tx.purchaseEvent.findUnique({where:{purchaseToken}});
+    if(!ev||ev.state!=='VERIFIED')return {handled:false};
+    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${ev.userId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT "userId" FROM "WalletAccount" WHERE "userId" = ${ev.userId} FOR UPDATE`;
+    const w=await tx.walletAccount.findUnique({where:{userId:ev.userId}});
+    const revoke=Math.min(w?.purchased??0,ev.tokens);
+    await tx.purchaseEvent.update({where:{purchaseToken},data:{state:'REFUNDED'}});
+    if(revoke>0){
+      await tx.walletAccount.update({where:{userId:ev.userId},data:{purchased:{decrement:revoke}}});
+      await tx.walletTransaction.create({data:{userId:ev.userId,type:'DEBIT_PURCHASE_REVOKE',bucket:'PURCHASED',source:'play_refund',amount:revoke,externalId:purchaseToken,idempotencyKey:'play-refund:'+purchaseToken}});
     }
+    // Spent refunded credit must not become a free repeat-purchase exploit.
+    if(revoke<ev.tokens)await tx.user.update({where:{id:ev.userId},data:{status:'PAYMENT_REVIEW'}});
+    return {handled:true};
   });
-  return { handled: true };
 }

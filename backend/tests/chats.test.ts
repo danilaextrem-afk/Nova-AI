@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
 import jwt from '@fastify/jwt';
 import { PrismaClient } from '@prisma/client';
@@ -35,6 +35,8 @@ async function send(content: string, requestId = randomUUID()) {
     headers: auth(owner), payload: { content, requestId },
   });
 }
+
+beforeEach(async()=>{await db.aiProviderState.deleteMany();process.env.NOVA_AI_DAILY_BUDGET_MICROS='100000';});
 
 beforeAll(async () => {
   await db.$connect();
@@ -184,7 +186,7 @@ describe('real AI character chat gateway', () => {
     vi.stubGlobal('fetch', mock);
     const result = await app.inject({
       method: 'POST', url: '/v1/chats/' + chatId + '/messages',
-      headers: auth(owner), payload: { content: 'Write in detail', requestId: randomUUID(), tier: 'premium' },
+      headers: auth(owner), payload: { content: 'Write in detail', requestId: randomUUID(), tier: 'premium', expectedPriceTokens: 5 },
     });
     expect(result.statusCode).toBe(402);
     expect(result.json().error).toBe('INSUFFICIENT_TOKENS');
@@ -208,7 +210,7 @@ describe('real AI character chat gateway', () => {
     });
     vi.stubGlobal('fetch', mock);
     const requestId = randomUUID();
-    const premiumBody = { content: 'Continue in more detail', requestId, tier: 'premium' };
+    const premiumBody = { content: 'Continue in more detail', requestId, tier: 'premium', expectedPriceTokens: 5 };
     const first = await app.inject({
       method: 'POST', url: '/v1/chats/' + chatId + '/messages',
       headers: auth(owner), payload: premiumBody,
@@ -232,7 +234,7 @@ describe('real AI character chat gateway', () => {
     const result = await app.inject({
       method: 'POST', url: '/v1/chats/' + chatId + '/messages',
       headers: auth(owner),
-      payload: { content: 'One more detailed reply', requestId: randomUUID(), tier: 'premium' },
+      payload: { content: 'One more detailed reply', requestId: randomUUID(), tier: 'premium', expectedPriceTokens: 5 },
     });
     expect(result.statusCode).toBe(429);
     expect(result.json().error).toBe('AI_RATE_LIMITED');

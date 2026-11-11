@@ -7,7 +7,7 @@ let cache: { at: number; keys: Map<string, string> } | null = null;
 
 async function loadKeys(force = false): Promise<Map<string, string>> {
   if (!force && cache && Date.now() - cache.at < KEYS_TTL_MS) return cache.keys;
-  const res = await fetch(KEYS_URL);
+  const res = await fetch(KEYS_URL, { signal: AbortSignal.timeout(5000) });
   if (!res.ok) throw new Error(`SSV_KEYS_FETCH_${res.status}`);
   const json = (await res.json()) as { keys: { keyId: number; base64: string }[] };
   const keys = new Map(json.keys.map((k) => [String(k.keyId), k.base64]));
@@ -35,11 +35,15 @@ export async function verifySsv(
   const sigIdx = rawQuery.indexOf('&signature=');
   if (sigIdx < 0) return { ok: false, reason: 'NO_SIGNATURE' };
   const signed = rawQuery.slice(0, sigIdx);
-  const params = new URLSearchParams(rawQuery);
-  const signature = params.get('signature');
-  const keyId = params.get('key_id');
+  const trailer=new URLSearchParams(rawQuery.slice(sigIdx+1));
+  if([...trailer.keys()].join(',')!=='signature,key_id')return {ok:false,reason:'INVALID_SIGNATURE_TRAILER'};
+  const params = new URLSearchParams(signed);
+  if(new Set(params.keys()).size!==Array.from(params.keys()).length)return {ok:false,reason:'DUPLICATE_PARAMETER'};
+  const signature = trailer.get('signature');
+  const keyId = trailer.get('key_id');
   if (!signature || !keyId) return { ok: false, reason: 'NO_SIGNATURE' };
 
+  try {
   let keys = await loadKeys();
   if (!keys.has(keyId)) keys = await loadKeys(true); // Google may have rotated keys
   const der = keys.get(keyId);
@@ -65,4 +69,5 @@ export async function verifySsv(
   if (amount !== opts.expectedAmount) return { ok: false, reason: 'AMOUNT_MISMATCH' };
 
   return { ok: true, transactionId, userId, amount, adUnit, timestampMs };
+  } catch { return {ok:false,reason:'VERIFICATION_UNAVAILABLE'}; }
 }
