@@ -1,5 +1,6 @@
 function req(name: string): string {
   const v = process.env[name];
+  if (name==='JWT_SECRET'&&v&&v.length<32&&process.env.NODE_ENV==='production')throw new Error('JWT_SECRET must contain at least 32 characters');
   if (!v) throw new Error(`Missing required env var ${name}`);
   return v;
 }

@@ -85,9 +85,12 @@ export async function debitInTransaction(
   p: { userId: string; amount: number; source: string; idempotencyKey: string },
 ) {
   if (!Number.isInteger(p.amount) || p.amount <= 0) throw new Error('INVALID_AMOUNT');
-    const dup = await tx.walletTransaction.findUnique({ where: { idempotencyKey: p.idempotencyKey } });
-    if (dup) return { transactions: [dup], duplicate: true };
     const w = await lockWallet(tx, p.userId);
+    const dup = await tx.walletTransaction.findUnique({ where: { idempotencyKey: p.idempotencyKey } });
+    if (dup) {
+      if(dup.userId!==p.userId||dup.source!==p.source)throw new Error('IDEMPOTENCY_CONFLICT');
+      return { transactions: [dup], duplicate: true };
+    }
     if (w.purchased + w.adReward + w.bonus < p.amount) throw new InsufficientTokensError();
 
     let left = p.amount;

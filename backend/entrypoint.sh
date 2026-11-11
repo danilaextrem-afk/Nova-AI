@@ -13,4 +13,4 @@ else
   npx prisma migrate deploy
 fi
 
-exec node dist/server.js
+exec node dist/main.js
