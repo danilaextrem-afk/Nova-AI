@@ -25,7 +25,7 @@ android {
     val configuredUrl = (System.getenv("NOVA_API_BASE_URL") ?: "").trim()
     val safeUrl = if (configuredUrl.matches(Regex("^https://[A-Za-z0-9.-]+/?$"))) configuredUrl else ""
     defaultConfig {
-        buildConfigField("String", "NOVA_API_BASE_URL", "\\\"$safeUrl\\\"")
+        buildConfigField("String", "NOVA_API_BASE_URL", "\"$safeUrl\"")
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
