@@ -6,6 +6,8 @@ import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Query
+import retrofit2.http.DELETE
+import retrofit2.http.Path
 
 data class Credentials(val email: String, val password: String)
 data class AuthTokens(val accessToken: String, val refreshToken: String)
@@ -43,6 +45,31 @@ data class TokenTransaction(
 data class TransactionPage(val items: List<TokenTransaction> = emptyList())
 data class FavoriteResult(val favorite: Boolean)
 
+data class NovaChat(
+    val id: String,
+    val characterId: String,
+    val title: String? = null,
+    val characterName: String? = null
+)
+data class NovaChatsResponse(val items: List<NovaChat> = emptyList())
+data class NovaCreateChatBody(val characterId: String)
+data class NovaChatResponse(val chat: NovaChat)
+data class NovaChatMessage(
+    val id: String, val role: String, val content: String,
+    val createdAt: String? = null
+)
+data class NovaChatMessagesResponse(val items: List<NovaChatMessage> = emptyList())
+data class NovaChatSendBody(val content: String, val requestId: String)
+data class NovaChatSendResponse(
+    val assistantMessage: NovaChatMessage?,
+    val userMessage: NovaChatMessage?,
+    val duplicate: Boolean = false
+)
+data class NovaAiStatus(
+    val provider: String, val model: String,
+    val configured: Boolean, val dailyFreeLimit: Int
+)
+
 interface NovaApi {
     @POST("v1/auth/login")
     suspend fun login(@Body body: Credentials): AuthTokens
@@ -73,6 +100,37 @@ interface NovaApi {
         @Header("Authorization") bearer: String,
         @retrofit2.http.Path("id") id: String
     ): FavoriteResult
+
+    @GET("v1/ai/status")
+    suspend fun aiStatus(@Header("Authorization") bearer: String): NovaAiStatus
+
+    @GET("v1/chats")
+    suspend fun chats(@Header("Authorization") bearer: String): NovaChatsResponse
+
+    @POST("v1/chats")
+    suspend fun createChat(
+        @Header("Authorization") bearer: String,
+        @Body body: NovaCreateChatBody
+    ): NovaChatResponse
+
+    @GET("v1/chats/{id}/messages")
+    suspend fun chatMessages(
+        @Header("Authorization") bearer: String,
+        @Path("id") id: String
+    ): NovaChatMessagesResponse
+
+    @POST("v1/chats/{id}/messages")
+    suspend fun sendChatMessage(
+        @Header("Authorization") bearer: String,
+        @Path("id") id: String,
+        @Body body: NovaChatSendBody
+    ): NovaChatSendResponse
+
+    @DELETE("v1/chats/{id}")
+    suspend fun deleteChat(
+        @Header("Authorization") bearer: String,
+        @Path("id") id: String
+    )
 
     @GET("v1/wallet")
     suspend fun wallet(@Header("Authorization") bearer: String): TokenWallet
