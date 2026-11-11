@@ -455,6 +455,7 @@ private fun CatalogScreen(model: NovaViewModel) {
 }
 
 @Composable
+@OptIn(ExperimentalLayoutApi::class)
 private fun ChatsScreen(model: NovaViewModel) {
     val active = model.activeChat
     if (active == null) {
@@ -569,7 +570,8 @@ private fun ChatsScreen(model: NovaViewModel) {
                     )
                     Text(message.content, style = MaterialTheme.typography.bodyLarge)
                     if (!message.alternatives.isNullOrEmpty()) Text("Версия " + (message.alternatives.size + 1) + " · прежние сохранены", style = MaterialTheme.typography.labelSmall)
-                    Row(Modifier.horizontalScroll(rememberScrollState())) {
+                    // Wraps onto several lines so every action stays visible on narrow phones.
+                    FlowRow {
                         SpeakButton(message.content)
                         TextButton(onClick={model.branch(message)},enabled=!model.loading){Text("Ответвить историю")}
                         if(message.role=="assistant"&&model.chatMessages.lastOrNull()?.id==message.id)
