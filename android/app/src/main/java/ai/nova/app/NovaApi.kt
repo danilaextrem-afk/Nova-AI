@@ -5,6 +5,7 @@ import retrofit2.http.GET
 import retrofit2.http.Header
 import retrofit2.http.POST
 import retrofit2.http.PUT
+import retrofit2.http.Query
 
 data class Credentials(val email: String, val password: String)
 data class AuthTokens(val accessToken: String, val refreshToken: String)
@@ -50,7 +51,13 @@ interface NovaApi {
     suspend fun register(@Body body: Credentials): AuthTokens
 
     @GET("v1/characters/catalog")
-    suspend fun catalog(@Header("Authorization") bearer: String): CharacterPage
+    suspend fun catalog(
+        @Header("Authorization") bearer: String,
+        @Query("q") query: String? = null,
+        @Query("category") category: String? = null,
+        @Query("tag") tag: String? = null,
+        @Query("sort") sort: String = "recent"
+    ): CharacterPage
 
     @GET("v1/characters/mine")
     suspend fun myCharacters(@Header("Authorization") bearer: String): CharacterPage
