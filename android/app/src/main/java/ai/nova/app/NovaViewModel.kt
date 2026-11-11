@@ -11,6 +11,10 @@ import java.util.concurrent.TimeUnit
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.CancellationException
 import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
@@ -124,23 +128,68 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     }
     private fun authorization(): String = "Bearer " + requireNotNull(store.get("access") ?: accessToken) { "Сначала войди в аккаунт" }
 
-    private fun execute(block: suspend () -> Unit) {
-        if (loading) return
+    /** Text of the reply while it is being streamed; null when nothing is streaming. */
+    var streamingText by mutableStateOf<String?>(null)
+        private set
+    private var streamJob: Job? = null
+    /** Stops the reply being written. Unsaved, uncharged; the draft and request ID stay for a retry. */
+    fun stopReply() { streamJob?.cancel() }
+
+    private class StreamError(val status: Int, val code: String?) : Exception(code)
+    /** Reads SSE from the stream route and returns the final "done" payload. */
+    private suspend fun streamReply(api: NovaApi, chatId: String, body: NovaChatSendBody): NovaChatSendResponse {
+        streamingText = ""
+        val response = api.sendChatMessageStream(authorization(), chatId, body)
+        return withContext(Dispatchers.IO) {
+            response.use { rb ->
+                val source = rb.source(); var event = ""; var result: NovaChatSendResponse? = null
+                while (result == null) {
+                    val line = source.readUtf8Line() ?: break
+                    when {
+                        line.startsWith("event:") -> event = line.substring(6).trim()
+                        line.startsWith("data:") -> {
+                            val data = line.substring(5).trim()
+                            when (event) {
+                                "delta" -> { val piece = gson.fromJson(data, com.google.gson.JsonObject::class.java).get("text")?.asString.orEmpty()
+                                    withContext(Dispatchers.Main) { streamingText = (streamingText ?: "") + piece } }
+                                "done" -> result = gson.fromJson(data, NovaChatSendResponse::class.java)
+                                "error" -> { val o = gson.fromJson(data, com.google.gson.JsonObject::class.java)
+                                    throw StreamError(o.get("status")?.asInt ?: 502, o.get("error")?.asString) }
+                            }
+                        }
+                    }
+                }
+                result ?: throw StreamError(502, "STREAM_ENDED")
+            }
+        }
+    }
+
+    private fun httpErrorText(code: Int, error: String? = null): String = when {
+        error == "AI_STREAM_INTERRUPTED" -> "Связь с AI прервалась во время ответа. Ничего не списано — отправь ещё раз."
+        code == 402 -> "Недостаточно NOVA Tokens для Premium-ответа"
+        code == 409 -> "Запрос ещё обрабатывается или цена изменилась. Обнови чат и повтори."
+        code == 429 -> "AI занят или достиг лимита провайдера. Попробуй позже."
+        code == 503 -> "AI-провайдер ещё не подключён или временно недоступен"
+        else -> "Ошибка сервера: HTTP $code"
+    }
+
+    private fun execute(block: suspend () -> Unit): Job? {
+        if (loading) return null
         loading = true
-        viewModelScope.launch {
+        return viewModelScope.launch {
             loading = true
             error = null
             notification = null
             try {
                 block()
+            } catch (e: CancellationException) {
+                if (streamingText != null) notification = "Ответ остановлен. Токены не списаны, сообщение сохранено в поле ввода."
+                throw e
+            } catch (e: StreamError) {
+                error = httpErrorText(e.status, e.code)
+                if (e.status == 401) { accessToken = null; error = "Сессия закончилась. Войди заново." }
             } catch (e: HttpException) {
-                error = when (e.code()) {
-                    402 -> "Недостаточно NOVA Tokens для Premium-ответа"
-                    409 -> "Запрос ещё обрабатывается или цена изменилась. Обнови чат и повтори."
-                    429 -> "AI занят или достиг лимита провайдера. Попробуй позже."
-                    503 -> "AI-провайдер ещё не подключён или временно недоступен"
-                    else -> "Ошибка сервера: HTTP " + e.code()
-                }
+                error = httpErrorText(e.code())
                 if (e.code() == 401) {
                     accessToken = null
                     error = "Сессия закончилась. Войди заново."
@@ -149,6 +198,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
                 error = e.localizedMessage ?: "Не удалось выполнить запрос"
             } finally {
                 loading = false
+                streamingText = null
             }
         }
     }
@@ -256,13 +306,16 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             store.put("draft", text)
         }
         val requestId = checkNotNull(pendingChatRequestId)
-        execute {
+        streamJob = execute {
             val api = service()
             try {
-                val result = api.sendChatMessage(
-                    authorization(), current.id,
-                    NovaChatSendBody(text, requestId, tier, if (tier == "premium") aiStatus?.premiumPriceTokens else null)
-                )
+                val body = NovaChatSendBody(text, requestId, tier, if (tier == "premium") aiStatus?.premiumPriceTokens else null)
+                // Streaming first; a server without the stream route (404) gets the classic JSON call.
+                val result = try { streamReply(api, current.id, body) } catch (e: HttpException) {
+                    if (e.code() != 404) throw e
+                    streamingText = null
+                    api.sendChatMessage(authorization(), current.id, body)
+                }
                 if (result.assistantMessage != null) {
                     pendingChatRequestId = null
                     pendingChatFingerprint = null
