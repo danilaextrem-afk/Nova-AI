@@ -8,6 +8,7 @@ import okhttp3.mockwebserver.*
 import org.junit.*
 import org.junit.Assert.*
 import java.io.File
+import java.net.InetAddress
 
 /** UI integration against a named HTTP fixture; no claims of live AI/payment validation. */
 class NovaUiTest {
@@ -31,11 +32,15 @@ class NovaUiTest {
     else -> """{"items":[]}"""
    };return MockResponse().setHeader("Content-Type","application/json").setBody(json)
   }}
-  server.start()
+  // MockWebServer.url() resolves canonicalHostName (reverse DNS). Calling it inside runOnIdle ran that
+  // lookup on the main thread and StrictMode threw NetworkOnMainThreadException in @Before for every test.
+  // Bind to the literal loopback address on the instrumentation thread and build the URL without DNS.
+  server.start(InetAddress.getByAddress(byteArrayOf(127,0,0,1)),0)
+  val baseUrl="http://127.0.0.1:"+server.port+"/"
+  SessionStore(compose.activity).clear()
   compose.runOnIdle {
-   SessionStore(compose.activity).clear()
    val vm=ViewModelProvider(compose.activity)[NovaViewModel::class.java]
-   vm.serverUrl=server.url("/").toString()
+   vm.serverUrl=baseUrl
   }
  }
  @After fun finish(){server.shutdown();SessionStore(compose.activity).clear()}
