@@ -80,3 +80,15 @@ jobs:
             -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
             -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
             -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+
+
+  source_archive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Package tracked source files
+        run: git archive --format=zip --output=NOVA-AI-SOURCE.zip HEAD
+      - uses: actions/upload-artifact@v4
+        with:
+          name: NOVA-AI-SOURCE
+          path: NOVA-AI-SOURCE.zip
