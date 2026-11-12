@@ -7,6 +7,10 @@ on:
     branches: [main]
     paths: ['backend/**', 'scripts/live-smoke.mjs', '.github/workflows/live.yml', 'android/nova-api-url.txt']
   workflow_dispatch:
+  # Daily monitoring run (GitHub e-mails the owner when a scheduled run fails). Once a day keeps the
+  # free Render/Neon/AI quotas essentially untouched.
+  schedule:
+    - cron: '17 6 * * *'
 
 permissions:
   contents: read
