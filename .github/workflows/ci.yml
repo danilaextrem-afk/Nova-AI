@@ -141,7 +141,7 @@ jobs:
             cp -R "$GITHUB_WORKSPACE/android/app/build/reports/androidTests" "$GITHUB_WORKSPACE/ui-standard-reports/"
             adb shell wm size 480x800
             adb shell wm density 240
-            cd "$GITHUB_WORKSPACE/android" && gradle :app:connectedDebugAndroidTest --rerun-tasks --no-daemon -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true || { adb pull /sdcard/Android/data/ai.nova.app/files/screenshots "$GITHUB_WORKSPACE/ui-small-screenshots"; exit 1; }
+            cd "$GITHUB_WORKSPACE/android" && gradle :app:connectedDebugAndroidTest --rerun-tasks --no-daemon -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true -Pandroid.testInstrumentationRunnerArguments.novaLiveUrl=$(cat nova-api-url.txt) || { adb pull /sdcard/Android/data/ai.nova.app/files/screenshots "$GITHUB_WORKSPACE/ui-small-screenshots"; exit 1; }
             adb pull /sdcard/Android/data/ai.nova.app/files/screenshots "$GITHUB_WORKSPACE/ui-small-screenshots"
       # Artifacts cannot be downloaded from the development sandbox, so screenshots are also pushed to an
       # orphan 'ui-evidence' branch (images only, no code) for remote visual review.

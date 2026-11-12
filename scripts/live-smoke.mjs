@@ -100,6 +100,42 @@ try {
   } else if (made.status === 429 || made.status === 503) note('AI character card', 'provider busy: HTTP ' + made.status + ' ' + (made.json?.error ?? ''));
   else bad('AI character card', made.status + ' ' + made.text.slice(0, 160));
 
+  // 4d. Editor helper for one field, portrait storage and privacy, streaming, no charges for free chat.
+  const field = await call('POST', '/v1/characters/assist', { mode: 'field', field: 'biography', action: 'variants', current: { name: 'Вера Снегирёва', age: 28, gender: 'female', personality: 'Спокойная, наблюдательная' } }, a);
+  if (field.status === 200 && field.json?.variants?.length === 3) ok('AI helper: three variants for one field', `«${field.json.variants[0].slice(0, 90).replace(/\|/g, '/')}»`);
+  else if (field.status === 429 || field.status === 503) note('AI helper field', 'provider busy: HTTP ' + field.status);
+  else bad('AI helper field', field.status + ' ' + field.text.slice(0, 160));
+  const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(3000, 0x55), Buffer.from([0xff, 0xd9])]);
+  const up = await call('POST', '/v1/media/avatar', { data: jpeg.toString('base64'), source: 'upload', rightsConfirmed: true }, a);
+  if (up.status === 201 && up.json?.url) {
+    const path = new URL(up.json.url).pathname;
+    const withPhoto = await call('POST', '/v1/characters', { name: 'Портрет Тест', greeting: 'Привет', category: 'Повседневное', age: 30, gender: 'other', avatarUrl: up.json.url }, a);
+    // A fresh session (as after restarting the app) still sees the saved portrait.
+    const relog = await call('POST', '/v1/auth/login', { email: emails[0], password: pw });
+    const fresh = relog.json?.accessToken;
+    const again = (await call('GET', '/v1/characters/' + withPhoto.json?.character?.id, undefined, fresh)).json?.character;
+    const own = await fetch(base + path, { headers: { authorization: 'Bearer ' + fresh } });
+    const ownBytes = Buffer.from(await own.arrayBuffer());
+    const other = await fetch(base + path, { headers: { authorization: 'Bearer ' + b } });
+    const anon = await fetch(base + path);
+    again?.avatarUrl === up.json.url && own.status === 200 && ownBytes.equals(jpeg) ? ok('Portrait saved and reloaded in a new session', `${ownBytes.length} bytes`) : bad('Portrait reload', `${again?.avatarUrl} ${own.status} ${ownBytes.length}`);
+    other.status === 404 && anon.status === 404 ? ok('Private portrait hidden from other account and anonymous') : bad('Portrait privacy', `other ${other.status}, anonymous ${anon.status}`);
+  } else bad('Portrait upload', up.status + ' ' + up.text.slice(0, 160));
+  const streamChat = (await call('POST', '/v1/chats', { characterId: items[0].id }, a)).json?.chat;
+  const sres = await fetch(`${base}/v1/chats/${streamChat.id}/messages/stream`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: 'Bearer ' + a },
+    body: JSON.stringify({ content: 'Опиши небо этой ночью в двух предложениях.', requestId: crypto.randomUUID() }), signal: AbortSignal.timeout(120000) });
+  const sse = await sres.text();
+  const deltas = (sse.match(/^event: delta$/gm) || []).length;
+  const done = /^event: done$/m.test(sse);
+  const streamed = (await call('GET', `/v1/chats/${streamChat.id}/messages`, undefined, a)).json?.items ?? [];
+  if (done && deltas >= 2 && streamed.length === 2 && streamed[1].content.length > 10) ok('Streaming reply saved to history', `${deltas} chunks, ${streamed[1].content.length} chars`);
+  else if (/AI_|429|503/.test(sse) && !done) note('Streaming', 'provider busy: ' + sse.slice(0, 120));
+  else bad('Streaming', `deltas ${deltas}, done ${done}, saved ${streamed.length}: ${sse.slice(0, 160)}`);
+  const free = (await call('GET', '/v1/wallet', undefined, a)).json;
+  free?.total === 0 ? ok('Free chat and helper charged nothing', 'balance 0 after all free turns') : bad('Free chat charges', JSON.stringify(free));
+  const ai = (await call('GET', '/v1/ai/status', undefined, a)).json;
+  if (!ai?.premiumConfigured) note('Premium charge', 'Premium route is off on the server; double-charge protection covered by backend tests only');
+
   // 5. Daily bonus (idempotent) and referral.
   const d1 = await call('POST', '/v1/rewards/daily', undefined, a); const d2 = await call('POST', '/v1/rewards/daily', undefined, a);
   const wallet = (await call('GET', '/v1/wallet', undefined, a)).json;
