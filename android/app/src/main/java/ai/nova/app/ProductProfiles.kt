@@ -22,6 +22,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -155,16 +158,23 @@ internal fun CharacterProfileSheet(model: NovaViewModel) {
                                     }
                                 }
                             }
-                            OutlinedTextField(value = model.commentInput, onValueChange = { model.commentInput = it.take(1000) },
-                                label = { Text(if (model.commentReplyTo == null) "Комментарий" else "Ответ на комментарий") },
-                                modifier = Modifier.fillMaxWidth(), maxLines = 4)
                             val focus = LocalFocusManager.current
                             val keyboard = LocalSoftwareKeyboardController.current
-                            Button(onClick = {
-                                keyboard?.hide()
-                                focus.clearFocus()
-                                model.sendComment()
-                            }, enabled = !model.loading && model.commentInput.isNotBlank()) {
+                            val sendComment = {
+                                if (!model.loading && model.commentInput.isNotBlank()) {
+                                    keyboard?.hide()
+                                    focus.clearFocus()
+                                    model.sendComment()
+                                }
+                            }
+                            // On small phones the keyboard covers the button below, so the keyboard's own
+                            // action key sends the comment too.
+                            OutlinedTextField(value = model.commentInput, onValueChange = { model.commentInput = it.take(1000) },
+                                label = { Text(if (model.commentReplyTo == null) "Комментарий" else "Ответ на комментарий") },
+                                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                                keyboardActions = KeyboardActions(onSend = { sendComment() }),
+                                modifier = Modifier.fillMaxWidth(), maxLines = 4)
+                            Button(onClick = { sendComment() }, enabled = !model.loading && model.commentInput.isNotBlank()) {
                                 Text(if (model.commentReplyTo == null) "Отправить комментарий" else "Отправить ответ")
                             }
                         }

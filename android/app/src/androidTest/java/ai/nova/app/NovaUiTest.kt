@@ -256,7 +256,9 @@ class NovaUiTest {
   clickWhenEnabled("Обсуждение")
   clickWhenEnabled("Ответить")
   compose.onNodeWithText("Ответ на комментарий").reveal().performTextInput("Хочу продолжение")
-  clickWhenEnabled("Отправить ответ")
+  compose.onNode(hasText("Отправить ответ") and isEnabled()).assertExists()
+  // The keyboard covers the button on a 480x800 screen, so the reply goes out with the keyboard's send key.
+  compose.onNodeWithText("Ответ на комментарий").performImeAction()
   waitFor("published reply draft"){compose.onAllNodesWithText("Хочу продолжение · На модерации").fetchSemanticsNodes().isNotEmpty()}
   val request=com.google.gson.JsonParser.parseString(replyBody).asJsonObject
   assertEquals(rootComment,request.get("parentId").asString)
@@ -290,7 +292,13 @@ class NovaUiTest {
   compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
   clickWhenEnabled("Войти")
   waitFor("home"){compose.onAllNodesWithText("Открыть AI Арт").fetchSemanticsNodes().isNotEmpty()}
-  clickWhenEnabled("Открыть AI Арт")
+  // Sign-in finishes loading the feed first; a tap during that re-layout can be swallowed, so tap until the tab opens.
+  waitFor("signed in"){!vm().loading && vm().accessToken!=null}
+  for(attempt in 1..3){
+   clickWhenEnabled("Открыть AI Арт")
+   val opened=runCatching{compose.waitUntil(6000){vm().activeTab==NovaTab.ART}}.isSuccess
+   if(opened)break
+  }
   waitFor("art status"){compose.onAllNodesWithText("Бесплатно сегодня: 3 из 3. Картинки сохраняются только на твоём телефоне.").fetchSemanticsNodes().isNotEmpty()}
   // The art screen re-lays out when the day's status arrives; tap again if the first tap landed mid-layout.
   for(attempt in 1..3){
