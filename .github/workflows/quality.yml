@@ -41,7 +41,7 @@ jobs:
           [ "$MODE" = "full" ] && ARGS+=("--full")
           node scripts/dialogue-quality.mjs "$URL" "${ARGS[@]}" > quality.json
           status=$?
-          node -e 'const r=require("./quality.json");console.log("Commit: "+r.commit);for(const x of r.rows)console.log(x.result.padEnd(8)+x.name+(x.detail?" — "+x.detail:""));for(const m of r.metrics)console.log("MODEL "+m.model+" replies="+m.replies+" median="+m.medianMs+"ms repeated="+m.repeatedReplies)'
+          node -e 'const r=require("./quality.json");console.log("Commit: "+r.commit);for(const x of r.rows)console.log(x.result.padEnd(8)+x.name+(x.detail?" — "+x.detail:""));for(const m of r.metrics)console.log("MODEL "+m.model+" replies="+m.replies+" median="+m.medianMs+"ms repeated="+m.repeatedReplies);for(const x of r.samples.filter(x=>!x.checkpoint.startsWith("memory-turn")))console.log("SAMPLE "+x.checkpoint+" ["+(x.inference?x.inference.provider+"/"+x.inference.model:"?")+", "+x.latencyMs+"ms, retries "+x.retries.length+"] "+x.text.replace(/\s+/g," ").slice(0,220)+(x.extra.length?" || "+x.extra.map(e=>e.content.replace(/\s+/g," ").slice(0,120)).join(" || "):""));console.log("RETRIES "+JSON.stringify(r.samples.flatMap(x=>x.retries)))'
           exit $status
       - name: Keep the full report
         if: always()
