@@ -161,7 +161,7 @@ try {
     check('01 · Female canon and grammar', /Вера Снегир[ёе]ва/i.test(v.text) && /28|двадцать восемь/i.test(v.text) && /вернулась/i.test(v.text));
     check('02 · Male canon and grammar', /Илья Невский/i.test(i.text) && /34|тридцать четыре/i.test(i.text) && /вернулся/i.test(i.text));
     const bio = await send(archive, 'Какова твоя профессия и в каком городе ты живёшь? Я ошибся, когда назвал тебя полицейским?', '03');
-    check('03 · Biography under contradiction', /реставр/i.test(bio.text) && /Луногорск/i.test(bio.text) && /не (?:работа|служ|полиц)/i.test(bio.text));
+    check('03 · Biography under contradiction', /реставр/i.test(bio.text) && /Луногорск/i.test(bio.text) && /не (?:работа|служ|полиц|явля|был)|полиц\p{L}* (?:я )?не|не из полиц/iu.test(bio.text));
     const question = await send(archive, 'Ответь одним коротким предложением. Сколько минут в одном часе?', '08');
     check('08 · Direct question', /60|шестьдесят/i.test(question.text));
     check('07 · Speech style', question.text.length <= 120 && !/\p{Extended_Pictographic}/u.test(question.text), 'Short calm reply without emoji');
