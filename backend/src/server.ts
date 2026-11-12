@@ -77,7 +77,16 @@ async function issueTokens(userId: string, familyId: string = randomUUID()) {
   return { accessToken: app.jwt.sign({ sub: userId }), refreshToken: refresh };
 }
 
-const creds = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(128), adultConfirmed:z.boolean().optional() });
+const creds = z.object({ email: z.string().trim().email().max(254), password: z.string().min(10).max(128), adultConfirmed:z.boolean().optional() });
+
+/** Validation stays strict; the error code only says which field to fix so the app can explain it. */
+function credsError(error: z.ZodError): string {
+  const issue = error.issues[0];
+  const field = issue?.path[0];
+  if (field === 'email') return 'EMAIL_INVALID';
+  if (field === 'password') return issue.code === 'too_big' ? 'PASSWORD_TOO_LONG' : issue.code === 'too_small' ? 'PASSWORD_TOO_SHORT' : 'PASSWORD_INVALID';
+  return 'INVALID_INPUT';
+}
 
 // Render sets RENDER_GIT_COMMIT; exposing the short SHA lets the live check confirm which build is serving.
 app.get('/health', async () => ({ ok: true, commit: (process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || null }));
@@ -91,7 +100,7 @@ app.post('/v1/auth/logout',{preHandler:app.auth},async(req:any)=>{await db.sessi
 
 app.post('/v1/auth/register', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
   const body = creds.safeParse(req.body);
-  if (!body.success) return reply.code(400).send({ error: 'INVALID_INPUT' });
+  if (!body.success) return reply.code(400).send({ error: credsError(body.error) });
   if(body.data.adultConfirmed!==true)return reply.code(400).send({error:'ADULT_CONFIRMATION_REQUIRED'});
   const email = body.data.email.toLowerCase();
   if (await db.user.findUnique({ where: { email } })) return reply.code(409).send({ error: 'EMAIL_TAKEN' });
@@ -110,7 +119,7 @@ const LOGIN_WINDOW_MS = 15 * 60_000, LOGIN_MAX_FAILURES = 8;
 const dummyHash = await argon2.hash(randomBytes(16).toString('hex'), { type: argon2.argon2id });
 app.post('/v1/auth/login', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
   const body = creds.safeParse(req.body);
-  if (!body.success) return reply.code(400).send({ error: 'INVALID_INPUT' });
+  if (!body.success) return reply.code(400).send({ error: credsError(body.error) });
   const email = body.data.email.toLowerCase();
   const now = Date.now();
   const entry = failedLogins.get(email);

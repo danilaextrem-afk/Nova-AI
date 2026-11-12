@@ -86,6 +86,18 @@ try {
     unsafe.status === 422 ? ok('AI Art refuses unsafe prompt') : bad('AI Art unsafe prompt', String(unsafe.status));
   } else bad('AI Art', 'not configured on the server');
 
+  // 5c. Sign-in errors are specific (the app turns them into clear messages); validation stays strict.
+  const shortPw = await call('POST', '/v1/auth/login', { email: emails[0], password: 'short' });
+  const badMail = await call('POST', '/v1/auth/register', { email: 'not-an-email', password: pw, adultConfirmed: true });
+  const wrongPw = await call('POST', '/v1/auth/login', { email: emails[0], password: 'wrong-password-123' });
+  const taken = await call('POST', '/v1/auth/register', { email: emails[0], password: pw, adultConfirmed: true });
+  const noAge = await call('POST', '/v1/auth/register', { email: 'x' + emails[0], password: pw });
+  const spaced = await call('POST', '/v1/auth/login', { email: ' ' + emails[0].toUpperCase() + ' ', password: pw });
+  const codes = [shortPw, badMail, wrongPw, taken, noAge, spaced].map(r => r.status + ' ' + (r.json?.error ?? 'ok'));
+  shortPw.status === 400 && shortPw.json?.error === 'PASSWORD_TOO_SHORT' && badMail.json?.error === 'EMAIL_INVALID' &&
+    wrongPw.status === 401 && taken.status === 409 && noAge.json?.error === 'ADULT_CONFIRMATION_REQUIRED' && spaced.status === 200
+    ? ok('Sign-in errors are specific', codes.join(', ')) : bad('Sign-in errors', codes.join(', '));
+
   // 6. Auth and privacy negatives.
   const anon = await call('GET', '/v1/wallet'); anon.status === 401 ? ok('Anonymous access refused') : bad('Anonymous wallet', String(anon.status));
   const foreign = await call('GET', `/v1/chats/${chat.id}/messages`, undefined, b);

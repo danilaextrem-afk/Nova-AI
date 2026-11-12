@@ -195,13 +195,17 @@ private fun LoginScreen(model: NovaViewModel) {
                     label = { Text("Адрес сервиса") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
             }
             OutlinedTextField(
-                value = model.email, onValueChange = { model.email = it.trim() },
+                value = model.email, onValueChange = { model.email = it.trim(); model.emailError = null },
                 label = { Text("Email") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
+                isError = model.emailError != null, supportingText = model.emailError?.let { e -> { Text(e) } },
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Email)
             )
             OutlinedTextField(
-                value = model.password, onValueChange = { model.password = it },
+                value = model.password, onValueChange = { model.password = it; model.passwordError = null },
                 label = { Text("Пароль (от 10 символов)") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
+                isError = model.passwordError != null,
+                supportingText = { Text(model.passwordError ?: "Символов: ${model.password.length} из минимум 10",
+                    color = if (model.passwordError != null) MaterialTheme.colorScheme.error else NovaDesign.Muted) },
                 visualTransformation = if (showPassword) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Password),
                 trailingIcon = {
@@ -212,21 +216,23 @@ private fun LoginScreen(model: NovaViewModel) {
                 }
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = model.adultConfirmed, onCheckedChange = { model.adultConfirmed = it })
+                Checkbox(checked = model.adultConfirmed, onCheckedChange = { model.adultConfirmed = it; model.adultError = null })
                 Text("Мне исполнилось 18 лет. Персонажи вымышленные.", style = MaterialTheme.typography.bodySmall)
             }
+            model.adultError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             Button(onClick = { keyboard?.hide(); model.signIn(false) }, modifier = Modifier.fillMaxWidth().height(52.dp), enabled = !model.loading) {
                 if (model.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("Войти")
             }
             OutlinedButton(onClick = { keyboard?.hide(); model.signIn(true) }, modifier = Modifier.fillMaxWidth().height(52.dp), enabled = !model.loading) {
                 Text("Создать аккаунт")
             }
+            // Errors appear right under the buttons, where the person is looking.
+            StatusMessage(model)
             if (slow && model.loading) Text("Сервер просыпается после простоя — это может занять до минуты. Не закрывай приложение.",
                 style = MaterialTheme.typography.bodySmall, color = NovaDesign.Rose)
             Text("Сообщения обрабатывают сервер NOVA и внешние AI-провайдеры. Не указывай конфиденциальные данные.",
                 style = MaterialTheme.typography.bodySmall, color = NovaDesign.Muted)
         }
-        StatusMessage(model)
         GuestCastPreview()
     }
 }
