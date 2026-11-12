@@ -25,10 +25,28 @@ const rules = [
  * Length that the reader actually gets. Live check: "concise" still produced 600+ characters because a long
  * history pulls the model along, so the shortest mode is also enforced on the saved text.
  */
+// "т.е.", "ул.", "руб." and similar end with a period but do not end a sentence.
+const abbreviation = /(?:^|[\s("«„“*_])(?:т\.\s?[екн]|напр|см|ул|им|проф|стр|рис|руб|тыс)\.$|\d\s?гг?\.$/iu;
+
+/** Splits a reply into sentences. Closing quotes, brackets and the end of an *action* stay with their
+ *  sentence; a decimal ("3.5") or an abbreviation does not end one; a line break ends an unpunctuated line. */
+export function splitSentences(text: string): string[] {
+  const re = /[^]*?(?:[.!?…]+["»”’)\]*_]*(?=\s|$)|(?=\n)|$)\s*/gy;
+  const parts: string[] = [];
+  let carry = '';
+  for (let m = re.exec(text); m && m[0]; m = re.exec(text)) {
+    const piece = carry + m[0];
+    if (abbreviation.test(piece.trimEnd()) && re.lastIndex < text.length) carry = piece;
+    else { parts.push(piece); carry = ''; }
+  }
+  if (carry) parts.push(carry);
+  return parts;
+}
+
 export function shapeReply(text: string, style: string): string {
-  let out = text.replace(/^\s{0,3}#{1,6}\s+/gm, '').trim();
+  let out = text.replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, '').trim();
   if (style === 'concise') {
-    const parts = out.match(/[^.!?…]+(?:[.!?…]+["»)]*|$)\s*/gu) ?? [out];
+    const parts = splitSentences(out);
     if (parts.length > 3) out = parts.slice(0, 3).join('').trim();
   }
   return out;
