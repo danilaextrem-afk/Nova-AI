@@ -487,6 +487,9 @@ private fun CharacterProfileSheet(model: NovaViewModel) {
                         OutlinedTextField(value = model.scenarioText, onValueChange = { model.scenarioText = it.take(2000) }, label = { Text("Мир и завязка сценария") }, minLines = 2, modifier = Modifier.fillMaxWidth())
                         OutlinedButton(onClick = { model.addScenario(c.id) }, enabled = !model.loading) { Text("Добавить сценарий") }
                     }
+                    if (publication != null) owner?.let { creator ->
+                        OutlinedButton(onClick = { model.openAuthor(creator) }, enabled = !model.loading, modifier = Modifier.fillMaxWidth()) { Text("Страница автора") }
+                    }
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         if (publication != null && !c.mature) { val ctx = LocalContext.current
                             TextButton(onClick = { ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"
@@ -494,7 +497,6 @@ private fun CharacterProfileSheet(model: NovaViewModel) {
                         TextButton(onClick = { model.cloneCharacter(c.id) }, enabled = !model.loading) { Text("Создать свою версию") }
                         TextButton(onClick = { model.openArt(listOfNotNull(c.name, c.appearance?.takeIf { it.isNotBlank() } ?: c.biography).joinToString(", ")) }) { Text("Нарисовать арт") }
                         owner?.let { creator ->
-                            TextButton(onClick = { model.openAuthor(creator) }, enabled = !model.loading) { Text("Страница автора") }
                             TextButton(onClick = { model.follow(creator, true) }, enabled = !model.loading) { Text("Подписаться на автора") }
                             TextButton(onClick = { model.follow(creator, false) }, enabled = !model.loading) { Text("Отписаться") }
                         }
