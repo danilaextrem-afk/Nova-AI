@@ -148,6 +148,11 @@ private fun NovaApp(model: NovaViewModel) {
                 NovaTab.ART -> ArtScreen(model)
             }
             Spacer(Modifier.height(8.dp))
+            // Shown from any tab: profile and author pages, shared links (…/c/<id>), the personal feed.
+            CharacterProfileSheet(model)
+            AuthorDialog(model)
+            LaunchedEffect(model.pendingLinkCharacterId, model.accessToken, model.loading) { model.openPendingLink() }
+            LaunchedEffect(model.accessToken) { if (model.accessToken != null) model.refreshDiscover() }
         }
     }
 }
@@ -385,11 +390,6 @@ private fun CatalogScreen(model: NovaViewModel) {
         Text("Опубликованных персонажей пока нет.")
         Text("Попробуй другой запрос или создай своего героя.", color = NovaDesign.Muted, style = MaterialTheme.typography.bodySmall)
     }
-    CharacterProfileSheet(model)
-    AuthorDialog(model)
-    // A shared link (…/c/<id>) opens that character once the user is signed in.
-    LaunchedEffect(model.pendingLinkCharacterId, model.accessToken, model.loading) { model.openPendingLink() }
-    LaunchedEffect(model.accessToken) { if (model.accessToken != null) model.refreshDiscover() }
     model.catalog.forEach { character -> CharacterCard(model, character) }
 }
 
