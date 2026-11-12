@@ -2,6 +2,7 @@ package ai.nova.app
 
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -122,6 +123,9 @@ private fun NovaApp(model: NovaViewModel) {
             }
         }
     ) { innerPadding ->
+        BackHandler(enabled = !inChat && model.activeTab in setOf(NovaTab.WALLET, NovaTab.ART)) {
+            model.changeTab(model.productReturnTab)
+        }
         if (inChat) {
             Column(Modifier.fillMaxSize().padding(innerPadding).imePadding()) {
                 StatusMessage(model)
@@ -310,113 +314,11 @@ fun NovaCard(content: @Composable ColumnScope.() -> Unit) {
 }
 
 @Composable
-private fun SectionHeader(title: String, subtitle: String) {
+internal fun SectionHeader(title: String, subtitle: String) {
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
         NovaEyebrow("NOVA / ТВОЁ ПРОСТРАНСТВО")
         Text(title, style=MaterialTheme.typography.headlineMedium)
         Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = Color.LightGray)
-    }
-}
-
-@Composable
-private fun HomeScreen(model: NovaViewModel) {
-    NovaEditorialHero("Найди свою\nисторию", "Детективы, мечтатели и герои новых миров.", height = 244.dp)
-    Button(onClick = { model.changeTab(NovaTab.CATALOG) }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
-        Text("Исследовать каталог")
-    }
-    RecommendationDeck(model)
-    DiscoverShelves(model)
-    NovaCard {
-        NovaEyebrow("ТВОЯ ВООБРАЖАЕМАЯ ВСЕЛЕННАЯ")
-        Text("Кем будет следующий герой?",style=MaterialTheme.typography.titleLarge)
-        Text("Создай характер, выбери настроение и начни разговор.",color=NovaDesign.Muted)
-        OutlinedButton(onClick={model.changeTab(NovaTab.CREATE)},modifier=Modifier.fillMaxWidth()){Text("Создать персонажа")}
-        TextButton(onClick={model.changeTab(NovaTab.CHATS)}){Text("Мои переписки")}
-    }
-    NovaCard {
-        NovaEyebrow("НОВОЕ · AI АРТ")
-        Text("Нарисуй любимую сцену",style=MaterialTheme.typography.titleLarge)
-        Text("Опиши картинку словами — AI нарисует её за полминуты. Несколько штук в день бесплатно.",color=NovaDesign.Muted)
-        Button(onClick={model.openArt()},modifier=Modifier.fillMaxWidth()){Text("Открыть AI Арт")}
-    }
-    GuestCastPreview()
-
-}
-
-@Composable
-private fun CatalogScreen(model: NovaViewModel) {
-    SectionHeader("Каталог", "Выбери героя и начни свою историю")
-    if (model.showMature) Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(selected = !model.matureSection, onClick = { model.selectMatureSection(false) }, label = { Text("Для всех") })
-        FilterChip(selected = model.matureSection, onClick = { model.selectMatureSection(true) }, label = { Text("18+ Mature") })
-    }
-    if (model.matureSection) Text("Раздел 18+: романтика и взрослые драмы с совершеннолетними вымышленными персонажами. Откровенный контент запрещён.",
-        color = Color(0xFFFFB4A9), style = MaterialTheme.typography.bodySmall)
-    if (model.matureSection && model.showMature) MatureStudioSection(model)
-    OutlinedTextField(
-        value = model.catalogQuery, onValueChange = { model.catalogQuery = it },
-        placeholder = { Text("Имя, характер или история") }, singleLine = true, shape = RoundedCornerShape(20.dp),
-        leadingIcon = { Icon(Icons.Default.Search, contentDescription = null) },
-        trailingIcon = { TextButton(onClick = { model.refreshCatalog() }, enabled = !model.loading) { Text("Найти") } },
-        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(imeAction = androidx.compose.ui.text.input.ImeAction.Search),
-        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onSearch = { model.refreshCatalog() }),
-        modifier = Modifier.fillMaxWidth()
-    )
-    var view by remember { mutableStateOf("all") }
-    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        FilterChip(selected = view == "all", onClick = { view = "all"; model.catalogSort = "recent"; model.refreshCatalog() }, label = { Text("Все") })
-        FilterChip(selected = view == "popular", onClick = { view = "popular"; model.catalogSort = "popular"; model.refreshCatalog() }, label = { Text("Популярные") })
-        FilterChip(selected = view == "fav", onClick = { view = "fav"; model.loadFavorites() }, label = { Text("Моё избранное") })
-        FilterChip(selected = view == "follow", onClick = { view = "follow"; model.loadFollowing() }, label = { Text("Мои подписки") })
-    }
-    var filtersExpanded by remember { mutableStateOf(false) }
-    TextButton(onClick = { filtersExpanded = !filtersExpanded }, contentPadding = PaddingValues(0.dp)) {
-        Text(if (filtersExpanded) "Скрыть фильтры" else "Категория, тег и сортировка", style = MaterialTheme.typography.labelLarge)
-    }
-    if (filtersExpanded) NovaCard {
-        OutlinedTextField(value = model.catalogCategory, onValueChange = { model.catalogCategory = it }, label = { Text("Категория") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-        OutlinedTextField(value = model.catalogTag, onValueChange = { model.catalogTag = it }, label = { Text("Тег") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = model.catalogSort == "recent", onClick = { model.catalogSort = "recent" }, label = { Text("Новые") })
-            FilterChip(selected = model.catalogSort == "name", onClick = { model.catalogSort = "name" }, label = { Text("По имени") })
-        }
-        Button(onClick = { model.refreshCatalog() }, enabled = !model.loading, modifier = Modifier.fillMaxWidth()) { Text("Найти персонажей") }
-    }
-    if (model.groupIds.isNotEmpty()) Surface(color = Color(0xFF2A2236), shape = RoundedCornerShape(16.dp), modifier = Modifier.fillMaxWidth()) {
-        Text("Групповая история: ещё ${model.groupIds.size} участн. Начни чат с главным героем — они присоединятся.",
-            style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(14.dp))
-    }
-    if (model.catalog.isEmpty() && !model.loading) NovaCard {
-        Text("Опубликованных персонажей пока нет.")
-        Text("Попробуй другой запрос или создай своего героя.", color = NovaDesign.Muted, style = MaterialTheme.typography.bodySmall)
-    }
-    model.catalog.forEach { character -> CharacterCard(model, character) }
-}
-
-@Composable
-private fun CharacterCard(model: NovaViewModel, character: NovaCharacter) {
-    Card(onClick = { model.showCharacterProfile(character.id) }, shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, NovaDesign.Border),
-        colors = CardDefaults.cardColors(containerColor = CardSurface), modifier = Modifier.fillMaxWidth()) {
-        Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            NovaPortrait(character.id, character.name, Modifier.width(108.dp).height(178.dp).clip(RoundedCornerShape(18.dp)), character.avatarUrl)
-            Column(Modifier.weight(1f).heightIn(min = 178.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    NovaEyebrow(character.category)
-                    if (character.mature) MatureBadge()
-                }
-                Text(character.name, style = MaterialTheme.typography.titleLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(character.biography?.takeIf { it.isNotBlank() } ?: character.greeting, style = MaterialTheme.typography.bodySmall,
-                    color = NovaDesign.Muted, maxLines = 3, overflow = TextOverflow.Ellipsis)
-                Spacer(Modifier.weight(1f))
-                // Stacked, never side by side: on narrow phones a squeezed button wrapped letter by letter.
-                Button(onClick = { model.startChat(character) }, enabled = !model.loading, modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 12.dp)) {
-                    Text("Начать AI-чат", fontSize = 13.sp, maxLines = 1)
-                }
-                TextButton(onClick = { model.showCharacterProfile(character.id) }, enabled = !model.loading,
-                    modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(0.dp)) { Text("Полный профиль", fontSize = 12.sp, maxLines = 1) }
-            }
-        }
     }
 }
 

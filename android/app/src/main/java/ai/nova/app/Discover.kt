@@ -16,8 +16,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalDensity
 
-private fun reasonLabel(reason: String?) = when (reason) { "TASTE" -> "Похоже на твои истории"; "NEW" -> "Новинка"; else -> "Популярное" }
+private fun reasonLabel(reason: String?) = when (reason) { "TASTE" -> "Похоже на твои истории"; "NEW" -> "Новинка"; "POPULAR" -> "Популярное"; else -> "Из каталога" }
 private fun shelfTitle(key: String, title: String) = when (key) { "new" -> "Новинки"; "popular" -> "Популярные"; else -> title }
 
 /** "For you" deck: swipe right (or tap the heart) to keep a character, left to skip. Buttons mirror the gestures for accessibility. */
@@ -28,12 +29,14 @@ fun RecommendationDeck(model: NovaViewModel) {
     NovaEyebrow("ПОДБОРКА ДЛЯ ТЕБЯ")
     val c = deck.first()
     var drag by remember(c.id) { mutableStateOf(0f) }
+    val swipeThreshold = with(LocalDensity.current) { 72.dp.toPx() }
     Card(shape = RoundedCornerShape(26.dp), border = BorderStroke(1.dp, NovaDesign.Border),
         colors = CardDefaults.cardColors(containerColor = NovaDesign.Surface),
         modifier = Modifier.fillMaxWidth().graphicsLayer { translationX = drag; rotationZ = drag / 60f }
-            .pointerInput(c.id) {
+            .pointerInput(c.id, model.loading, swipeThreshold) {
+                if (model.loading) return@pointerInput
                 detectHorizontalDragGestures(onDragEnd = {
-                    if (drag > 160f) model.swipeRecommendation(c, true) else if (drag < -160f) model.swipeRecommendation(c, false)
+                    if (drag > swipeThreshold) model.swipeRecommendation(c, true) else if (drag < -swipeThreshold) model.swipeRecommendation(c, false)
                     drag = 0f
                 }, onDragCancel = { drag = 0f }) { _, amount -> drag += amount }
             }) {
@@ -46,14 +49,18 @@ fun RecommendationDeck(model: NovaViewModel) {
                 androidx.compose.material3.Text(c.biography?.takeIf { it.isNotBlank() } ?: c.greeting, style = MaterialTheme.typography.bodySmall, maxLines = 4, overflow = TextOverflow.Ellipsis)
             }
         }
-        Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 10.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-            TextButton(onClick = { model.swipeRecommendation(c, false) }) { Text("Пропустить") }
-            Spacer(Modifier.weight(1f))
-            OutlinedButton(onClick = { model.showCharacterProfile(c.id) }, enabled = !model.loading) { Text("О персонаже") }
-            Button(onClick = { model.swipeRecommendation(c, true) }, enabled = !model.loading) { Text("♥ Нравится") }
+        Column(Modifier.fillMaxWidth().padding(horizontal = 14.dp).padding(bottom = 12.dp)) {
+            OutlinedButton(onClick = { model.showCharacterProfile(c.id) }, enabled = !model.loading,
+                modifier = Modifier.fillMaxWidth()) { Text("О персонаже") }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = { model.swipeRecommendation(c, false) }, enabled = !model.loading,
+                    modifier = Modifier.weight(1f)) { Text("Пропустить") }
+                Button(onClick = { model.swipeRecommendation(c, true) }, enabled = !model.loading,
+                    modifier = Modifier.weight(1f)) { Text("♥ Нравится") }
+            }
         }
     }
-    Text("Свайп вправо — в избранное, влево — пропустить. Осталось: ${deck.size}", style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted)
+    Text("Свайп вправо сохраняет персонажа, влево — пропускает.", style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted)
 }
 
 @Composable

@@ -20,6 +20,7 @@ import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
 enum class NovaTab { HOME, CATALOG, CHATS, CREATE, WALLET, ACCOUNT, ART }
+internal enum class CatalogView { PUBLIC, FAVORITES, FOLLOWING }
 
 private val EMAIL_RE = Regex("^(?!\\.)(?!.*\\.\\.)[A-Za-z0-9_'+.-]*[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9-]*\\.)+[A-Za-z]{2,}$")
 
@@ -111,7 +112,10 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     var draftAge by mutableStateOf<Int?>(null)
     var draftGender by mutableStateOf<String?>(null)
     var draftTraits by mutableStateOf<List<String>>(emptyList())
-    fun selectMatureSection(on: Boolean) { matureSection = on && showMature; refreshCatalog() }
+    fun selectMatureSection(on: Boolean) {
+        matureSection = on && showMature
+        selectCatalogView(CatalogView.PUBLIC)
+    }
     fun updateShowMature(on: Boolean) {
         execute {
             showMature = service().contentSettings(authorization(), ContentSettingsBody(on, if (on) true else null)).showMature
@@ -315,7 +319,12 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
 
     /** A tab opened while another request runs is refreshed right after it, never silently skipped. */
     private var pendingTabRefresh: NovaTab? = null
+    var productReturnTab = NovaTab.HOME
+        private set
     fun changeTab(tab: NovaTab) {
+        if (tab in setOf(NovaTab.WALLET, NovaTab.ART) && activeTab !in setOf(NovaTab.WALLET, NovaTab.ART)) {
+            productReturnTab = activeTab
+        }
         activeTab = tab
         if (loading) { pendingTabRefresh = tab; return }
         when (tab) {
@@ -330,16 +339,43 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    internal var catalogView by mutableStateOf(CatalogView.PUBLIC)
+        private set
+    var catalogFailed by mutableStateOf(false)
+        private set
+
+    internal fun selectCatalogView(view: CatalogView) {
+        if (catalogView != view) catalog = emptyList()
+        catalogView = view
+        refreshCatalog()
+    }
+
     fun refreshCatalog() {
         execute {
-            catalog = service().catalog(
-                bearer = authorization(),
-                query = catalogQuery.trim().takeIf { it.isNotEmpty() },
-                category = catalogCategory.trim().takeIf { it.isNotEmpty() },
-                tag = catalogTag.trim().takeIf { it.isNotEmpty() },
-                sort = catalogSort,
-                section = if (matureSection && showMature) "mature" else "general"
-            ).items
+            catalogFailed = false
+            try {
+                val api = service()
+                val bearer = authorization()
+                catalog = when (catalogView) {
+                    CatalogView.PUBLIC -> api.catalog(
+                        bearer = bearer,
+                        query = catalogQuery.trim().ifEmpty { null },
+                        category = catalogCategory.trim().ifEmpty { null },
+                        tag = catalogTag.trim().ifEmpty { null },
+                        sort = catalogSort,
+                        section = if (matureSection && showMature) "mature" else "general"
+                    ).items
+                    CatalogView.FAVORITES -> api.favorites(bearer).items.map { it.character }.also { favorites = it }
+                    CatalogView.FOLLOWING -> api.following(bearer).items
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (e: HttpException) {
+                catalogFailed = true
+                if (e.code() == 401) throw e
+            } catch (_: Exception) {
+                catalogFailed = true
+            }
         }
     }
 
@@ -522,17 +558,58 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     var authorPage by mutableStateOf<AuthorPage?>(null)
     var creatorStats by mutableStateOf<CreatorStats?>(null)
     var pendingLinkCharacterId by mutableStateOf<String?>(null)
+    var recentStories by mutableStateOf<List<NovaChat>>(emptyList())
+        private set
+    var discoverLoading by mutableStateOf(false)
+        private set
+    var discoverFailed by mutableStateOf(false)
+        private set
+    private var discoverJob: Job? = null
+    private val seenRecommendations = mutableSetOf<String>()
+
     fun refreshDiscover() {
-        viewModelScope.launch {
-            runCatching { service().recommended(authorization()).items }.onSuccess { recommended = it }
-            runCatching { service().shelves(authorization()).collections.orEmpty() }.onSuccess { shelves = it }
+        if (accessToken == null || discoverJob?.isActive == true) return
+        discoverJob = viewModelScope.launch {
+            discoverLoading = true
+            discoverFailed = false
+            try {
+                val api = service()
+                val bearer = authorization()
+                loadDiscoverPart { recommended = api.recommended(bearer).items.filterNot { it.id in seenRecommendations } }
+                loadDiscoverPart { shelves = api.shelves(bearer).collections.orEmpty() }
+                loadDiscoverPart { recentStories = api.chats(bearer, null).items }
+            } finally {
+                discoverLoading = false
+            }
         }
     }
-    /** Right swipe keeps the character in favourites; either way the next card comes up. */
-    fun swipeRecommendation(c: NovaCharacter, liked: Boolean) {
-        recommended = recommended.filter { it.id != c.id }
-        if (liked) viewModelScope.launch { runCatching { service().addFavorite(authorization(), c.id) }.onSuccess { notification = "Добавлено в избранное" } }
-        if (recommended.isEmpty()) refreshDiscover()
+
+    private suspend fun loadDiscoverPart(load: suspend () -> Unit) {
+        try {
+            load()
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            discoverFailed = true
+        }
+    }
+
+    fun swipeRecommendation(character: NovaCharacter, liked: Boolean) {
+        if (!liked) {
+            dismissRecommendation(character.id)
+            return
+        }
+        execute {
+            service().addFavorite(authorization(), character.id)
+            favorites = (favorites + character).distinctBy { it.id }
+            dismissRecommendation(character.id)
+            notification = "Добавлено в избранное"
+        }
+    }
+
+    private fun dismissRecommendation(id: String) {
+        seenRecommendations.add(id)
+        recommended = recommended.filterNot { it.id == id }
     }
     fun openAuthor(id: String) { execute { authorPage = service().author(authorization(), id) } }
     fun shareLink(characterId: String): String = serverUrl.trim().trimEnd('/') + "/c/" + characterId
@@ -844,6 +921,18 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun clearAccount() {
         store.clear()
+        discoverJob?.cancel()
+        discoverJob = null
+        seenRecommendations.clear()
+        recommended = emptyList()
+        shelves = emptyList()
+        recentStories = emptyList()
+        discoverFailed = false
+        authorPage = null
+        profileCharacter = null
+        dailyBonus = null
+        referral = null
+        productReturnTab = NovaTab.HOME
         memories=emptyList();favorites=emptyList();notifications=emptyList();products=null;ads=null;exportText=null;groupIds=emptySet()
         pendingChatRequestId = null
         pendingChatFingerprint = null
@@ -851,6 +940,12 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         email = ""
         password = ""
         catalog = emptyList()
+        catalogView = CatalogView.PUBLIC
+        catalogFailed = false
+        catalogQuery = ""
+        catalogCategory = ""
+        catalogTag = ""
+        catalogSort = "recent"
         owned = emptyList()
         chats = emptyList()
         activeChat = null
@@ -875,7 +970,6 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     fun loadOlder() { val chat = activeChat ?: return; val before = nextBefore ?: return; execute {
         val page=service().chatMessages(authorization(),chat.id,before); chatMessages=page.items+chatMessages; nextBefore=page.nextBefore
     } }
-    fun loadFavorites() { execute { favorites=service().favorites(authorization()).items.map { it.character }; catalog=favorites } }
     fun removeFavorite(id: String) { execute { service().removeFavorite(authorization(),id); favorites=favorites.filter { it.id!=id }; catalog=catalog.filter { it.id!=id } } }
     fun editCharacter(character: NovaCharacter) { execute {
         val c=service().character(authorization(),character.id).character
@@ -972,7 +1066,6 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     /** Auto-hide only the notice that was shown, never a newer one. */
     fun dismissNotice(text: String) { if (notification == text) notification = null }
 
-    fun loadFollowing() {execute {catalog=service().following(authorization()).items} }
     fun follow(id:String,enabled:Boolean) {execute {if(enabled)service().follow(authorization(),id)else service().unfollow(authorization(),id);notification=if(enabled)"Подписка сохранена" else "Подписка отменена"} }
     fun like(id:String) {execute {service().like(authorization(),id);notification="Отметка сохранена"} }
     fun openComments(id:String) {execute {selectedPublication=id;comments=service().comments(authorization(),id).items} }

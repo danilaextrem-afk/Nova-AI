@@ -560,7 +560,7 @@ class NovaUiTest {
   waitFor("chat list"){compose.onAllNodesWithText("Мои чаты").fetchSemanticsNodes().isNotEmpty()}
   screenshot("19-chat-list-premium")
   compose.onNodeWithText("Каталог").performClick();clickWhenEnabled("Моё избранное")
-  waitFor("empty favorites"){compose.onAllNodesWithText("Опубликованных персонажей пока нет.").fetchSemanticsNodes().isNotEmpty()}
+  waitFor("empty favorites"){compose.onAllNodesWithText("В избранном пока пусто").fetchSemanticsNodes().isNotEmpty()}
   screenshot("20-favorites")
  }
 
