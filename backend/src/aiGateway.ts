@@ -235,10 +235,10 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
         });
         if(!response.ok){
           httpStatus=response.status;
-          // Keep the provider's own error message (never our prompt) for diagnosis.
-          detail=await response.text().then(t=>{try{const j=JSON.parse(t);return String(j?.error?.message??j?.error??j?.errors?.[0]?.message??t);}catch{return t;}}).catch(()=>'');
           retry=retryAfterMs(response.headers?.get('retry-after'));
           status=response.status===429?429:502; code=response.status===429?'AI_RATE_LIMITED':'AI_UPSTREAM_ERROR';
+          // Keep the provider's own error message (never our prompt) for diagnosis; reading it must never fail the request.
+          detail=await Promise.resolve().then(()=>response.text()).then(t=>{try{const j=JSON.parse(t);return String(j?.error?.message??j?.error??j?.errors?.[0]?.message??t);}catch{return String(t);}}).catch(()=>'');
           certainNoCharge=[400,401,403,404,429].includes(response.status);
           if([401,403,404].includes(response.status)) retry=Math.max(retry,300000);
           throw new Error(code);
