@@ -15,7 +15,23 @@ const rules = [
   'Prefer pinned or player-edited notes over automatic notes and summaries. None may change character canon.',
   'Answer the player’s latest question directly. Continue established events in the character’s own voice.',
   'Avoid stock openings, recap and repeated questions. Never speak or make choices for the player or other characters.',
+  // Live check 2026-11-12: a character said «ты меня запутала» to a player of unknown gender.
+  'The player’s gender is unknown unless the player data states it: in Russian address the player only with forms that do not mark gender (no past-tense verbs or adjectives about the player).',
+  'Write plain conversational text: no headings, bullet or numbered lists, tables or bold. Use *asterisks* only around a short action.',
 ].join(' ');
+
+/**
+ * Length that the reader actually gets. Live check: "concise" still produced 600+ characters because a long
+ * history pulls the model along, so the shortest mode is also enforced on the saved text.
+ */
+export function shapeReply(text: string, style: string): string {
+  let out = text.replace(/^\s{0,3}#{1,6}\s+/gm, '').trim();
+  if (style === 'concise') {
+    const parts = out.match(/[^.!?…]+(?:[.!?…]+["»)]*|$)\s*/gu) ?? [out];
+    if (parts.length > 3) out = parts.slice(0, 3).join('').trim();
+  }
+  return out;
+}
 
 export function utf8Prefix(text: string, bytes: number): string {
   if (bytes <= 0) return '';
@@ -30,7 +46,7 @@ export function estimatePrompt(messages: AiMessage[]): number {
 export function dialogueSettings(style: string, tone: string, tier: AiTier) {
   const premium = tier === 'premium';
   const styles = {
-    concise: { maxOutput: premium ? 640 : 480, length: 'One or two sentences. Answer first.' },
+    concise: { maxOutput: premium ? 640 : 480, length: 'Strictly one or two short sentences, at most 200 characters. Answer first.' },
     balanced: { maxOutput: premium ? 1600 : 640, length: premium ? 'Use richer continuity and natural detail where it helps.' : 'Usually one to three short paragraphs.' },
     detailed: { maxOutput: premium ? 1900 : 880, length: 'Develop the reply with specific details and an unhurried pace.' },
     story: { maxOutput: premium ? 2100 : 1040, length: 'Write a short scene with grounded action and dialogue. Leave the next decision to the player.' },
@@ -123,7 +139,10 @@ export function buildCharacterPrompt(input: {
     })),
   };
   const data: AiMessage = { role: 'user', content: JSON.stringify(context) };
-  const base = [system, data, current];
+  // The format reminder sits right before the request: recent long replies otherwise outweigh the system rules.
+  // No user-written text in system messages.
+  const reminder: AiMessage = { role: 'system', content: 'Reply now as activeCharacter, in character. ' + settings.length + ' ' + settings.voice };
+  const base = [system, data, reminder, current];
   const available = input.tokenBudget - settings.maxOutput;
   // Reserve room for recent dialogue. Trim optional sections individually so the JSON stays valid.
   while (estimatePrompt(base) > available - 1000) {
@@ -148,5 +167,5 @@ export function buildCharacterPrompt(input: {
     history.unshift({ role: message.role, content });
     remaining -= Buffer.byteLength(content) + 8;
   }
-  return { messages: [system, data, ...history, current], settings };
+  return { messages: [system, data, ...history, reminder, current], settings };
 }

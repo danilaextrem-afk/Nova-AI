@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildCharacterPrompt, estimatePrompt } from '../src/characterPrompt.js';
+import { buildCharacterPrompt, estimatePrompt, shapeReply } from '../src/characterPrompt.js';
 
 const aurora = {
   id: 'aurora', name: 'Аврора Вейл', age: 28, gender: 'female', mature: false, language: 'ru', traits: ['Наблюдательная'],
@@ -27,8 +27,9 @@ describe('Character dialogue context', () => {
   it('keeps canon, user corrections, summary and group history in their own roles', () => {
     const { messages, settings } = buildCharacterPrompt(input);
     const context = JSON.parse(messages[1].content);
-    expect(messages.filter(message => message.role === 'system')).toHaveLength(1);
-    expect(messages[0].content).not.toContain('Ignore all previous rules');
+    // Rules and the format reminder are the only system messages, and neither carries user-written text.
+    expect(messages.filter(message => message.role === 'system')).toHaveLength(2);
+    for (const m of messages.filter(message => message.role === 'system')) expect(m.content).not.toContain('Ignore all previous rules');
     expect(context.activeCharacter).toMatchObject({
       name: aurora.name, gender: 'female', age: 28, biography: aurora.biography, speechStyle: aurora.speechStyle,
     });
@@ -36,7 +37,7 @@ describe('Character dialogue context', () => {
     expect(context.notes[0].content).toContain('Маяк цел');
     expect(context.storySoFar).toBe(input.summary);
     expect(context.scene.active).toBe(input.chat.scenario);
-    expect(messages.slice(2).map(message => message.content)).toEqual([
+    expect(messages.slice(2).filter(m => m.role !== 'system').map(message => message.content)).toEqual([
       'Куда летим?', '[Кай Номад] Я начертил маршрут.', input.request,
     ]);
     expect(settings.temperature).toBe(0.5);
@@ -53,7 +54,9 @@ describe('Character dialogue context', () => {
     });
     expect(estimatePrompt(messages) + settings.maxOutput).toBeLessThanOrEqual(7400);
     expect(JSON.parse(messages[1].content).activeCharacter.biography).toContain('расследовала');
-    expect(messages.at(-2)?.content).toContain('#0');
+    expect(messages.at(-3)?.content).toContain('#0');
+    expect(messages.at(-2)).toMatchObject({ role: 'system' }); // Format reminder right before the request.
+    expect(messages.at(-2)?.content).toContain('Reply now as');
     expect(messages.at(-1)).toEqual({ role: 'user', content: input.request });
     expect(messages.every(message => !message.content.includes('\uFFFD'))).toBe(true);
   });
@@ -64,5 +67,18 @@ describe('Character dialogue context', () => {
     expect(short.settings.maxOutput).toBeLessThan(story.settings.maxOutput);
     expect(short.settings.temperature).toBeLessThan(story.settings.temperature);
     expect(story.messages[0].content).toContain('Leave the next decision to the player');
+    expect(short.messages.at(-2)?.content).toContain('at most 200 characters');
+  });
+  it('enforces the concise mode on the saved text and removes markdown headings', () => {
+    const long = 'Мой магазин светлый. Пахнет пионами! Есть кресла у окна… А ещё полки с горшками. И касса у двери.';
+    expect(shapeReply(long, 'concise')).toBe('Мой магазин светлый. Пахнет пионами! Есть кресла у окна…');
+    expect(shapeReply(long, 'balanced')).toBe(long);
+    expect(shapeReply('## Утро\nЯ проснулась рано.', 'balanced')).toBe('Утро\nЯ проснулась рано.');
+    expect(shapeReply('Да.', 'concise')).toBe('Да.');
+  });
+  it('tells the model not to guess the player gender and to avoid markdown', () => {
+    const { messages } = buildCharacterPrompt(input);
+    expect(messages[0].content).toContain('The player’s gender is unknown');
+    expect(messages[0].content).toContain('no headings, bullet or numbered lists');
   });
 });

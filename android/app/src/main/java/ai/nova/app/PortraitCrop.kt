@@ -7,6 +7,8 @@ import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -16,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -102,31 +105,45 @@ internal fun PortraitCropDialog(
                     else -> {
                         val image = remember(photo) { photo.asImageBitmap() }
                         Box(Modifier.fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.Center) {
-                            Canvas(Modifier.width(140.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(16.dp))) {
+                            // Drag to move the frame, pinch to zoom: no separate position sliders on small screens.
+                            Canvas(Modifier.width(if (LocalConfiguration.current.screenHeightDp < 640) 96.dp else 150.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(16.dp))
+                                .pointerInput(photo) {
+                                    detectTransformGestures { _, pan, gesture, _ ->
+                                        zoom = (zoom * gesture).coerceIn(1f, 2.6f)
+                                        val c = portraitCrop(photo.width, photo.height, zoom, horizontal, vertical)
+                                        val freeX = (photo.width - c.width).coerceAtLeast(1)
+                                        val freeY = (photo.height - c.height).coerceAtLeast(1)
+                                        // Image pixels per screen pixel inside the preview.
+                                        val scale = c.width / size.width.toFloat()
+                                        horizontal = (horizontal - pan.x * scale / freeX).coerceIn(0f, 1f)
+                                        vertical = (vertical - pan.y * scale / freeY).coerceIn(0f, 1f)
+                                    }
+                                }) {
                                 drawImage(image, srcOffset = IntOffset(crop.left, crop.top),
                                     srcSize = IntSize(crop.width, crop.height),
                                     dstSize = IntSize(size.width.roundToInt(), size.height.roundToInt()))
                             }
                         }
-                        Text("Масштаб", style = MaterialTheme.typography.labelMedium)
-                        Slider(value = zoom, onValueChange = { zoom = it }, valueRange = 1f..2.6f)
-                        Text("По горизонтали", style = MaterialTheme.typography.labelMedium)
-                        Slider(value = horizontal, onValueChange = { horizontal = it })
-                        Text("По вертикали", style = MaterialTheme.typography.labelMedium)
-                        Slider(value = vertical, onValueChange = { vertical = it })
+                        Text("Двигай фото пальцем, увеличивай щипком или ползунком.", style = MaterialTheme.typography.labelSmall,
+                            color = NovaDesign.Muted)
                         Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
                             Checkbox(checked = rightsConfirmed, onCheckedChange = { rightsConfirmed = it })
                             Text("У меня есть право использовать фото. Все изображённые люди совершеннолетние и дали согласие. Откровенного контента нет.",
                                 style = MaterialTheme.typography.bodySmall)
                         }
+                        Text("Масштаб", style = MaterialTheme.typography.labelMedium)
+                        Slider(value = zoom, onValueChange = { zoom = it }, valueRange = 1f..2.6f)
                     }
                 }
             }
         },
         confirmButton = {
-            Button(enabled = photo != null && crop != null && rightsConfirmed, onClick = {
-                if (photo != null && crop != null) onAccept(photo, crop)
-            }) { Text("Сохранить портрет") }
+            Column(horizontalAlignment = androidx.compose.ui.Alignment.End) {
+                Button(enabled = photo != null && crop != null && rightsConfirmed, onClick = {
+                    if (photo != null && crop != null) onAccept(photo, crop)
+                }) { Text("Сохранить портрет") }
+                if (photo != null && !rightsConfirmed) Text("Сначала отметь согласие выше", style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted)
+            }
         },
         dismissButton = { TextButton(onClick = onDismiss) { Text("Отмена") } }
     )
