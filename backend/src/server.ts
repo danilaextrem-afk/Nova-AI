@@ -57,8 +57,14 @@ app.decorate('auth', async (req: any, reply: any) => {
   try {
     await req.jwtVerify();
     if(req.user.scope==='admin')return reply.code(401).send({error:'UNAUTHORIZED'});
-    const u=await db.user.findUnique({where:{id:req.user.sub},select:{status:true}});
-    if(!u||u.status!=='ACTIVE')return reply.code(401).send({error:'UNAUTHORIZED'});
+    // Access tokens carry their sign-in family: logging out or a detected refresh-token reuse revokes the
+    // family, and the access token stops working at once instead of living on until it expires.
+    // Tokens issued before this change have no family and keep the old check until they expire (15 min).
+    const fam=typeof req.user.fam==='string'?req.user.fam:null;
+    const status=fam
+      ?(await db.session.findFirst({where:{familyId:fam,userId:req.user.sub,revokedAt:null,expiresAt:{gt:new Date()}},select:{user:{select:{status:true}}}}))?.user.status
+      :(await db.user.findUnique({where:{id:req.user.sub},select:{status:true}}))?.status;
+    if(status!=='ACTIVE')return reply.code(401).send({error:'UNAUTHORIZED'});
   } catch {
     return reply.code(401).send({ error: 'UNAUTHORIZED' });
   }
@@ -76,7 +82,7 @@ async function issueTokens(userId: string, familyId: string = randomUUID()) {
       expiresAt: new Date(Date.now() + config.refreshTtlSec * 1000),
     },
   });
-  return { accessToken: app.jwt.sign({ sub: userId }), refreshToken: refresh };
+  return { accessToken: app.jwt.sign({ sub: userId, fam: familyId }), refreshToken: refresh };
 }
 
 const creds = z.object({ email: z.string().trim().email().max(254), password: z.string().min(10).max(128), adultConfirmed:z.boolean().optional() });
@@ -154,10 +160,10 @@ app.post('/v1/auth/refresh', async (req, reply) => {
     if(s.revokedAt){await tx.session.updateMany({where:{familyId:s.familyId},data:{revokedAt:new Date()}});return null;}
     await tx.session.update({where:{id:s.id},data:{revokedAt:new Date()}});
     await tx.session.create({data:{userId:s.userId,familyId:s.familyId,refreshTokenHash:sha256(refresh),expiresAt:new Date(Date.now()+config.refreshTtlSec*1000)}});
-    return s.userId;
+    return {userId:s.userId,familyId:s.familyId};
   });
   if(!result)return reply.code(401).send({error:'INVALID_REFRESH'});
-  return {accessToken:app.jwt.sign({sub:result}),refreshToken:refresh};
+  return {accessToken:app.jwt.sign({sub:result.userId,fam:result.familyId}),refreshToken:refresh};
 });
 
 app.get('/v1/wallet', { preHandler: app.auth }, async (req: any) => balance(db, req.user.sub));

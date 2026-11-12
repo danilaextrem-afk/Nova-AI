@@ -30,6 +30,28 @@ it('rotates a refresh token once and revokes the family on concurrent reuse',asy
  const good=results.find(x=>x.statusCode===200)!.json();
  const reused=await app.inject({method:'POST',url:'/v1/auth/refresh',payload:{refreshToken:good.refreshToken}});expect(reused.statusCode).toBe(401);
 });
+it('revokes the access token of a family as soon as its refresh token is reused',async()=>{
+ // The rotation test above reused a refresh token, which revoked that whole sign-in family.
+ expect((await app.inject({url:'/v1/me',headers:{authorization:'Bearer '+tokens.accessToken}})).statusCode).toBe(401);
+ const email=(await db.user.findUnique({where:{id:userId}}))!.email;
+ const login=await app.inject({method:'POST',url:'/v1/auth/login',payload:{email,password:'safe-test-password-123'}});
+ expect(login.statusCode,login.body).toBe(200);tokens=login.json();
+ expect((await app.inject({url:'/v1/me',headers:{authorization:'Bearer '+tokens.accessToken}})).statusCode).toBe(200);
+});
+it('logout ends every session at once: access tokens and refresh tokens stop working',async()=>{
+ const email=(await db.user.findUnique({where:{id:userId}}))!.email;
+ const login=async()=>(await app.inject({method:'POST',url:'/v1/auth/login',payload:{email,password:'safe-test-password-123'}})).json();
+ const phone=await login(),tablet=await login();
+ const refreshed=(await app.inject({method:'POST',url:'/v1/auth/refresh',payload:{refreshToken:phone.refreshToken}})).json();
+ expect((await app.inject({url:'/v1/me',headers:{authorization:'Bearer '+refreshed.accessToken}})).statusCode).toBe(200);
+ expect((await app.inject({method:'POST',url:'/v1/auth/logout',headers:{authorization:'Bearer '+refreshed.accessToken}})).statusCode).toBe(200);
+ for(const token of [refreshed.accessToken,tablet.accessToken,tokens.accessToken])
+  expect((await app.inject({url:'/v1/wallet',headers:{authorization:'Bearer '+token}})).statusCode).toBe(401);
+ for(const refreshToken of [refreshed.refreshToken,tablet.refreshToken])
+  expect((await app.inject({method:'POST',url:'/v1/auth/refresh',payload:{refreshToken}})).statusCode).toBe(401);
+ tokens=await login();
+ expect((await app.inject({url:'/v1/wallet',headers:{authorization:'Bearer '+tokens.accessToken}})).statusCode).toBe(200);
+});
 it('does not expose secrets in data export and rejects a blocked user access token',async()=>{
  const result=await app.inject({url:'/v1/me/export',headers:{authorization:'Bearer '+tokens.accessToken}});
  expect(result.statusCode).toBe(200);expect(result.body).not.toContain('passwordHash');expect(result.body).not.toContain('refreshToken');

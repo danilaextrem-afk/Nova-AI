@@ -253,3 +253,75 @@ describe('real AI character chat gateway', () => {
     expect(messages.json().items.length).toBeGreaterThanOrEqual(2);
   });
 });
+
+// Mocked provider (no real model): concurrency, idempotency and cross-account access on the send routes.
+describe('send route under concurrent and cross-account requests', () => {
+  const slowReply = (text: string) => vi.fn(async () => {
+    await new Promise(resolve => setTimeout(resolve, 250));
+    return { ok: true, status: 200, json: async () => ({
+      choices: [{ message: { content: text } }], usage: { prompt_tokens: 40, completion_tokens: 10 } }) };
+  });
+
+  it('answers a double-tapped send once: one reply, one model call, the twin is told it is in progress', async () => {
+    process.env.GROQ_API_KEY = 'private-test-key-never-publish';
+    const mock = slowReply('Одна полка, один ответ.');
+    vi.stubGlobal('fetch', mock);
+    const before = await db.message.count({ where: { chatId } });
+    const requestId = randomUUID();
+    const [a, b] = await Promise.all([send('Двойное нажатие', requestId), send('Двойное нажатие', requestId)]);
+    const statuses = [a, b].map(r => r.statusCode).sort();
+    expect(statuses[0]).toBe(200);
+    const twin = [a, b].find(r => r.statusCode !== 200 || r.json().duplicate);
+    if (twin && twin.statusCode !== 200) expect(twin.json().error).toBe('REQUEST_IN_PROGRESS');
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(await db.message.count({ where: { chatId } })).toBe(before + 2);
+    // The same id reused for different text is refused rather than answered.
+    const reused = await send('Совсем другой вопрос', requestId);
+    expect(reused.statusCode).toBe(409);
+    expect(reused.json().error).toBe('REQUEST_ID_USED');
+  });
+
+  it('runs one request per player at a time: a second send while the first is pending is refused, not queued twice', async () => {
+    const mock = slowReply('По очереди.');
+    vi.stubGlobal('fetch', mock);
+    const before = await db.message.count({ where: { chatId } });
+    const [a, b] = await Promise.all([send('Первый вопрос'), send('Второй вопрос')]);
+    const busy = [a, b].filter(r => r.statusCode === 409);
+    expect([a, b].filter(r => r.statusCode === 200)).toHaveLength(1);
+    expect(busy).toHaveLength(1);
+    expect(busy[0].json().error).toBe('CHAT_BUSY');
+    expect(mock).toHaveBeenCalledTimes(1);
+    expect(await db.message.count({ where: { chatId } })).toBe(before + 2);
+  });
+
+  it('charges Premium once when two paid sends race', async () => {
+    await credit(db, { userId: owner, bucket: 'BONUS', amount: 10, source: 'test', idempotencyKey: 'race-' + randomUUID() });
+    const mock = slowReply('Премиальный ответ.');
+    vi.stubGlobal('fetch', mock);
+    const start = (await balance(db, owner)).total;
+    const paid = () => app.inject({ method: 'POST', url: '/v1/chats/' + chatId + '/messages', headers: auth(owner),
+      payload: { content: 'Платный вопрос', requestId: randomUUID(), tier: 'premium', expectedPriceTokens: 5 } });
+    const results = await Promise.all([paid(), paid()]);
+    const ok = results.filter(r => r.statusCode === 200);
+    expect(ok).toHaveLength(1);
+    expect(ok[0].json().tokensCharged).toBe(5);
+    expect((await balance(db, owner)).total).toBe(start - 5);
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+
+  it('never lets another account write into, stream from or edit a private chat', async () => {
+    const mock = slowReply('Чужой ответ');
+    vi.stubGlobal('fetch', mock);
+    const payload = { content: 'Чужой вопрос', requestId: randomUUID() };
+    const json = await app.inject({ method: 'POST', url: '/v1/chats/' + chatId + '/messages', headers: auth(stranger), payload });
+    expect(json.statusCode).toBe(404);
+    const stream = await app.inject({ method: 'POST', url: '/v1/chats/' + chatId + '/messages/stream', headers: auth(stranger), payload });
+    expect(stream.body).toContain('event: error');
+    expect(stream.body).toContain('CHAT_NOT_FOUND');
+    const patch = await app.inject({ method: 'PATCH', url: '/v1/chats/' + chatId, headers: auth(stranger), payload: { scenario: 'Захват' } });
+    expect(patch.statusCode).toBe(404);
+    expect(mock).not.toHaveBeenCalled();
+    expect(await db.chatRequest.count({ where: { userId: stranger } })).toBe(0);
+    expect((await db.chat.findUnique({ where: { id: chatId } }))!.scenario).not.toBe('Захват');
+  });
+});
