@@ -139,6 +139,27 @@ export function stripSpeakerPrefix(text: string, name: string): string {
   return text.replace(new RegExp(`^\\s*(\\*\\*|\\[)?${escaped}(\\*\\*|\\])?\\s*[:：—-]\\s*(\\*\\*)?\\s*`, 'i'), '').trim() || text.trim();
 }
 
+/**
+ * Group scenes: one call writes for one character, but models sometimes continue with lines for the
+ * others ("Илья Невский, я — …" or "Илья: …"), inventing facts about them. Cut the reply where another
+ * cast member starts speaking; mentions of them in narration stay.
+ */
+export function keepOwnVoice(text: string, others: string[]): string {
+  const esc = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const handles = others.flatMap(n => [n, n.split(/\s+/)[0]]).filter(h => h.length >= 3).map(esc);
+  if (!handles.length) return text;
+  const who = `(?:\\*\\*|\\[)?(?:${handles.join('|')})(?:\\*\\*|\\])?`;
+  // At the start of the text, a line or a sentence: another character's name as a speaker label
+  // ("Илья:"), a self-introduction under that name ("Илья Невский, я — смотритель", "Меня зовут Илья").
+  // Addressing someone ("Илья, я думаю…") is not cut.
+  const start = '(?:^|\\n|[.!?…»"]\\s+)';
+  const re = new RegExp(`${start}(?:${who}\\s*[:：]|${who}\\s*,?\\s*(?:я|I am|I'm)\\s*[—–-]|(?:я\\s*[—–-]\\s*|меня зовут\\s+|I'm\\s+|my name is\\s+)${who}(?!\\p{L}))`, 'iu');
+  const m = re.exec(text);
+  if (!m) return text;
+  const cut = text.slice(0, m.index + (m[0].match(/^[.!?…»"]/) ? 1 : 0)).trim();
+  return cut.length >= 2 ? cut : text;
+}
+
 export async function registerMemoryRoutes(app: FastifyInstance, db: PrismaClient,
   visible: (userId: string) => Promise<object>) {
   const auth = { preHandler: app.auth };

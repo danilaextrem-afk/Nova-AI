@@ -5,7 +5,7 @@ import jwt from '@fastify/jwt';
 import {randomUUID} from 'node:crypto';
 import {registerChatRoutes} from '../src/chatRoutes.js';
 import {registerStoryRoutes} from '../src/storyRoutes.js';
-import {extractMemories,pickSpeakers,stripSpeakerPrefix,parseExtraction,EXTRACT_EVERY_MESSAGES} from '../src/memoryEngine.js';
+import {extractMemories,pickSpeakers,stripSpeakerPrefix,keepOwnVoice,parseExtraction,EXTRACT_EVERY_MESSAGES} from '../src/memoryEngine.js';
 const db=new PrismaClient();const app=Fastify();const users:string[]=[];
 const user=async()=>{const u=await db.user.create({data:{email:randomUUID()+'@test.invalid',passwordHash:'test'}});users.push(u.id);return u.id;};
 const auth=(uid:string)=>({authorization:'Bearer '+app.jwt.sign({sub:uid})});
@@ -34,15 +34,26 @@ describe('Group chat orchestration',()=>{
   expect(stripSpeakerPrefix('**Кай Номад:** Пойдём.','Кай Номад')).toBe('Пойдём.');
   expect(stripSpeakerPrefix('Кай улыбнулся.','Кай Номад')).toBe('Кай улыбнулся.');
  });
+ // Regression: live run on 886ad2c — the first speaker also introduced the second one with a made-up job.
+ it('cuts a reply where the model starts speaking for another character, but keeps narration and address',()=>{
+  const others=['Илья Невский'];
+  expect(keepOwnVoice('Меня зовут Вера Снегирёва, я реставратор карт. Илья Невский, я – старший архивист.',others)).toBe('Меня зовут Вера Снегирёва, я реставратор карт.');
+  expect(keepOwnVoice('Я Вера. Илья: Привет всем!',others)).toBe('Я Вера.');
+  expect(keepOwnVoice('Я Вера.\nМеня зовут Илья Невский, смотрю за маяком.',others)).toBe('Я Вера.');
+  expect(keepOwnVoice('Я Вера. Я — Илья, смотритель.',others)).toBe('Я Вера.');
+  for(const keep of ['Илья Невский — смотритель маяка, он мой друг.','Я реставратор. Илья, я думаю, нам пора.','Вера смотрит на Илью. Илья молчит.'])
+   expect(keepOwnVoice(keep,others)).toBe(keep);
+ });
  it('gives every speaker its own model call, sheet and saved reply, and rotates the turn order',async()=>{
   const u=await user();const [a,b,c]=await Promise.all(['Аврора','Борис','Вера'].map(n=>character(u,n)));
   const created=await app.inject({method:'POST',url:'/v1/chats',headers:auth(u),payload:{characterId:a.id,participantIds:[b.id,c.id]}});
   const chatId=created.json().chat.id;
-  const calls=provider((_system, body) => { const name = JSON.parse(body.messages[1].content).activeCharacter.name; return name + ': реплика от ' + name; });
+  // The first speaker also tries to talk for the second one; only its own line may be saved.
+  const calls=provider((_system, body) => { const name = JSON.parse(body.messages[1].content).activeCharacter.name; return name + ': реплика от ' + name + (name === 'Аврора' ? '. Борис: а я вообще пилот.' : ''); });
   const send=(content:string,requestId=randomUUID())=>app.inject({method:'POST',url:`/v1/chats/${chatId}/messages`,headers:auth(u),payload:{content,requestId}});
   const rid=randomUUID();const first=await send('Привет всем',rid);expect(first.statusCode,first.body).toBe(200);
   expect(calls.length).toBe(2); // Free tier: two speakers per turn, not the whole cast.
-  expect(first.json().assistantMessage).toMatchObject({speakerName:'Аврора',content:'реплика от Аврора'});
+  expect(first.json().assistantMessage).toMatchObject({speakerName:'Аврора',content:'реплика от Аврора.'});
   expect(first.json().extraMessages.map((m:any)=>m.speakerName)).toEqual(['Борис']);
   // The second speaker saw the first one's line and only its own character sheet.
   const context = JSON.parse(calls[1].messages[1].content);
