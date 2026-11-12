@@ -74,9 +74,13 @@ describe('PostgreSQL router and persisted chat invariants (HTTP fixtures, not li
   const copied=await db.memory.findMany({where:{chatId:branch.json().chat.id}});expect(copied.map(x=>x.content)).toContain('Маяк на острове');
  });
  it('blocks provider quota oversubscription under concurrency',async()=>{
+  // Pin the clock to the start of a minute: crossing a minute boundary mid-test legitimately resets the rpm window.
+  vi.useFakeTimers({toFake:['Date'],now:Math.floor(Date.now()/60000)*60000+5000});
+  try{
   vi.stubEnv('NOVA_AI_MODELS_JSON',JSON.stringify([model('groq','free',{rpm:2,concurrency:2})]));vi.stubGlobal('fetch',vi.fn(async()=>{await new Promise(r=>setTimeout(r,25));return ok()}));
   const results=await Promise.allSettled(Array.from({length:12},()=>completeAiChat([{role:'system',content:'Fiction'},{role:'user',content:'Hello'}],'free',db)));
   expect(results.filter(x=>x.status==='fulfilled')).toHaveLength(2);expect(await db.aiAttempt.count()).toBe(2);
+  }finally{vi.useRealTimers();}
  });
  it('blocks paid calls above daily provider budget',async()=>{
   vi.stubEnv('NOVA_AI_MODELS_JSON',JSON.stringify([model('groq','premium',{inputUsdPerMillion:20,outputUsdPerMillion:80,dailyBudgetMicros:1})]));
