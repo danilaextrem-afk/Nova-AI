@@ -25,6 +25,14 @@ import androidx.compose.material.icons.filled.Stop
  var settings by remember(chat.id){mutableStateOf(false)}
  var deleting by remember{mutableStateOf(false)}
  val list=rememberLazyListState()
+ val voice=rememberNovaVoice()
+ // Auto-read only replies that arrive while the chat is open, never the history shown on opening.
+ var heardId by remember(chat.id){mutableStateOf(model.chatMessages.lastOrNull()?.id)}
+ LaunchedEffect(model.chatMessages.lastOrNull()?.id){
+  val last=model.chatMessages.lastOrNull()?:return@LaunchedEffect
+  if(last.id!=heardId){val prev=heardId;heardId=last.id;if(prev!=null&&voice.autoRead&&last.role!="user")voice.speak(last.id,last.content,chat.characterId)}
+ }
+ DisposableEffect(chat.id){onDispose{voice.stop()}}
  LaunchedEffect(model.chatMessages.size,model.streamingText?.length){
   if(list.layoutInfo.totalItemsCount>0)list.scrollToItem(list.layoutInfo.totalItemsCount-1)
  }
@@ -62,8 +70,10 @@ import androidx.compose.material.icons.filled.Stop
       if(!message.alternatives.isNullOrEmpty())Text("Версия ${message.alternatives.size+1} · прежние сохранены",style=MaterialTheme.typography.labelSmall,color=NovaDesign.Muted)
      }
     }
-    Row(verticalAlignment=Alignment.CenterVertically){
+    FlowRow(verticalArrangement=Arrangement.Center){
      if(mine)TextButton(onClick={model.startEditMessage(message)},enabled=!model.loading){Text("Изменить",fontSize=11.sp)}
+     if(!mine)TextButton(onClick={if(voice.speakingId==message.id)voice.stop() else voice.speak(message.id,message.content,chat.characterId)},enabled=voice.ready){
+      Text(if(voice.speakingId==message.id)"■ Стоп" else "▶ Слушать",fontSize=11.sp)}
      if(!mine&&model.chatMessages.lastOrNull()?.id==message.id)TextButton(onClick={model.regenerate(message)},enabled=!model.loading){Text(if(model.premiumChatSelected)"Другой ответ · ${model.aiStatus?.premiumPriceTokens?:5} ◈" else "Другой ответ",fontSize=11.sp)}
      Box{
       TextButton(onClick={actions=true}){Text("Действия",fontSize=11.sp)}
@@ -71,7 +81,6 @@ import androidx.compose.material.icons.filled.Stop
        DropdownMenuItem(text={Text("Ответвить историю")},onClick={actions=false;model.branch(message)},enabled=!model.loading)
        DropdownMenuItem(text={Text("Удалить")},onClick={actions=false;remove=true},enabled=!model.loading)
        if(!mine)DropdownMenuItem(text={Text("Пожаловаться")},onClick={actions=false;model.reportMessage(message.id)},enabled=!model.loading)
-       SpeakButton(message.content)
       }
      }
     }
@@ -112,6 +121,7 @@ import androidx.compose.material.icons.filled.Stop
  if(settings)AlertDialog(onDismissRequest={settings=false},title={Text("Твоя история")},text={Column(Modifier.verticalScroll(rememberScrollState())){
   NovaEyebrow("РЕЖИМ ОБЩЕНИЯ")
   Text(if(model.premiumChatSelected) "Premium: более мощная модель, длинные ответы и увеличенный контекст. ${model.aiStatus?.premiumPriceTokens?:5} токенов только за успешный ответ. Баланс: ${model.aiStatus?.tokenBalance?:0} ◈." else "Обычный чат: без дневного лимита NOVA и без списания токенов. Возможны технические задержки провайдера.",style=MaterialTheme.typography.bodyMedium)
+  VoiceSettings(voice,chat.characterId,model.chatMessages.lastOrNull{it.role!="user"}?.content?:"Привет! Так звучит мой голос.")
   StoryControls(model)
   OutlinedTextField(value=model.inChatQuery,onValueChange={model.inChatQuery=it},label={Text("Поиск в этой переписке")})
   TextButton(onClick={model.searchInChat()},enabled=!model.loading){Text("Найти")}

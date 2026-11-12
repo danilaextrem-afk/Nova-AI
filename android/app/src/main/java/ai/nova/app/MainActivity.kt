@@ -138,6 +138,7 @@ private fun NovaApp(model: NovaViewModel) {
                 NovaTab.CREATE -> CreateScreen(model)
                 NovaTab.WALLET -> WalletScreen(model)
                 NovaTab.ACCOUNT -> AccountScreen(model)
+                NovaTab.ART -> ArtScreen(model)
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -293,6 +294,12 @@ private fun HomeScreen(model: NovaViewModel) {
         OutlinedButton(onClick={model.changeTab(NovaTab.CREATE)},modifier=Modifier.fillMaxWidth()){Text("Создать персонажа")}
         TextButton(onClick={model.changeTab(NovaTab.CHATS)}){Text("Мои переписки")}
     }
+    NovaCard {
+        NovaEyebrow("НОВОЕ · AI АРТ")
+        Text("Нарисуй любимую сцену",style=MaterialTheme.typography.titleLarge)
+        Text("Опиши картинку словами — AI нарисует её за полминуты. Несколько штук в день бесплатно.",color=NovaDesign.Muted)
+        Button(onClick={model.openArt()},modifier=Modifier.fillMaxWidth()){Text("Открыть AI Арт")}
+    }
     GuestCastPreview()
 
 }
@@ -425,6 +432,7 @@ private fun CharacterProfileSheet(model: NovaViewModel) {
                     }
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         TextButton(onClick = { model.cloneCharacter(c.id) }, enabled = !model.loading) { Text("Создать свою версию") }
+                        TextButton(onClick = { model.openArt(listOfNotNull(c.name, c.appearance?.takeIf { it.isNotBlank() } ?: c.biography).joinToString(", ")) }) { Text("Нарисовать арт") }
                         owner?.let { creator ->
                             TextButton(onClick = { model.follow(creator, true) }, enabled = !model.loading) { Text("Подписаться на автора") }
                             TextButton(onClick = { model.follow(creator, false) }, enabled = !model.loading) { Text("Отписаться") }

@@ -34,6 +34,9 @@ data class NovaCharacter(
     val scenario: String? = null, val language: String = "ru", val ownerId: String? = null, val publication: PublicationInfo? = null,
     val mature: Boolean = false
 )
+data class ArtStatus(val configured: Boolean = false, val freePerDay: Int = 0, val usedToday: Int = 0, val freeLeft: Int = 0, val priceTokens: Int = 0)
+data class ArtRequest(val prompt: String, val style: String, val requestId: String)
+data class ArtResult(val image: String? = null, val mime: String? = null, val prompt: String? = null, val chargedTokens: Int = 0, val freeLeft: Int = 0)
 data class CharacterPage(val items: List<NovaCharacter> = emptyList(), val nextCursor: String? = null)
 data class CreatedCharacter(val character: NovaCharacter)
 data class TokenWallet(
@@ -221,6 +224,8 @@ interface NovaApi {
 
     @GET("v1/wallet")
     suspend fun wallet(@Header("Authorization") bearer: String): TokenWallet
+    @GET("v1/art/status") suspend fun artStatus(@Header("Authorization") bearer: String): ArtStatus
+    @POST("v1/art") suspend fun createArt(@Header("Authorization") bearer: String, @Body body: ArtRequest): ArtResult
     @GET("v1/rewards/daily") suspend fun dailyBonus(@Header("Authorization") bearer: String): DailyBonusStatus
     @POST("v1/rewards/daily") suspend fun claimDailyBonus(@Header("Authorization") bearer: String): DailyBonusResult
     @GET("v1/referrals") suspend fun referrals(@Header("Authorization") bearer: String): ReferralStatus

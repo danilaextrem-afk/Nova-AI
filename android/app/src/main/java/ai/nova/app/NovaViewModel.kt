@@ -19,7 +19,7 @@ import retrofit2.HttpException
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
 
-enum class NovaTab { HOME, CATALOG, CHATS, CREATE, WALLET, ACCOUNT }
+enum class NovaTab { HOME, CATALOG, CHATS, CREATE, WALLET, ACCOUNT, ART }
 
 class NovaViewModel(application: Application) : AndroidViewModel(application) {
     private val store = SessionStore(application)
@@ -55,6 +55,13 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     var ads by mutableStateOf<AdStatus?>(null)
     var exportText by mutableStateOf<String?>(null)
     var supportText by mutableStateOf("")
+    // AI Art: generated pictures live only on this phone (app storage), never on the server.
+    var artStatus by mutableStateOf<ArtStatus?>(null)
+    var artPrompt by mutableStateOf("")
+    var artStyle by mutableStateOf("anime")
+    var artLatest by mutableStateOf<java.io.File?>(null)
+    var artGallery by mutableStateOf<List<java.io.File>>(emptyList())
+    private val artDir get() = java.io.File(getApplication<Application>().filesDir, "nova-art").apply { mkdirs() }
 
     var serverUrl by mutableStateOf(store.get("server") ?: BuildConfig.NOVA_API_BASE_URL)
     var email by mutableStateOf(store.get("email") ?: "")
@@ -259,6 +266,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             NovaTab.CATALOG -> refreshCatalog()
             NovaTab.CHATS -> refreshChats()
             NovaTab.CREATE -> refreshOwned()
+            NovaTab.ART -> refreshArt()
             NovaTab.WALLET -> refreshWallet()
             NovaTab.ACCOUNT -> refreshNotifications()
             else -> Unit
@@ -480,6 +488,46 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             referral = runCatching { api.referrals(authorization()) }.getOrNull()
         }
     }
+    fun openArt(prompt: String? = null) {
+        prompt?.let { artPrompt = it.take(600) }
+        profileCharacter = null
+        changeTab(NovaTab.ART)
+    }
+    fun refreshArt() {
+        artGallery = artDir.listFiles { f -> f.extension == "jpg" }?.sortedByDescending { it.name }.orEmpty()
+        execute { artStatus = service().artStatus(authorization()) }
+    }
+    fun generateArt() {
+        val prompt = artPrompt.trim()
+        if (prompt.length < 3) { error = "Опиши картинку хотя бы парой слов"; return }
+        execute {
+            val api = service()
+            val result = try { api.createArt(authorization(), ArtRequest(prompt, artStyle, java.util.UUID.randomUUID().toString())) }
+            catch (e: HttpException) {
+                val code = runCatching { gson.fromJson(e.response()?.errorBody()?.string(), Map::class.java)["error"] as? String }.getOrNull()
+                throw IllegalStateException(when (code) {
+                    "ART_PROMPT_REJECTED" -> "Такую картинку нарисовать нельзя: без обнажённой натуры, детей, реальных людей и жестокости. Измени описание."
+                    "INSUFFICIENT_TOKENS" -> "Бесплатные картинки на сегодня закончились, а токенов не хватает. Забери ежедневный бонус или пригласи друга."
+                    "ART_DAILY_LIMIT" -> "Сегодня художник нарисовал слишком много. Попробуй завтра."
+                    else -> if (e.code() == 429) "Слишком часто. Подожди минуту и попробуй снова." else "Рисование временно недоступно. Токены не списаны — попробуй чуть позже."
+                })
+            }
+            val bytes = android.util.Base64.decode(requireNotNull(result.image) { "Пустая картинка" }, android.util.Base64.DEFAULT)
+            val file = withContext(Dispatchers.IO) {
+                java.io.File(artDir, "art-" + System.currentTimeMillis() + ".jpg").also { it.writeBytes(bytes) }
+            }
+            artLatest = file
+            artGallery = (listOf(file) + artGallery).take(40)
+            artDir.listFiles()?.sortedByDescending { it.name }?.drop(40)?.forEach { it.delete() }
+            artStatus = artStatus?.copy(freeLeft = result.freeLeft)
+            notification = if (result.chargedTokens > 0) "Готово · списано ${result.chargedTokens} ◈" else "Готово! Бесплатных на сегодня: ${result.freeLeft}"
+            if (result.chargedTokens > 0) runCatching { wallet = api.wallet(authorization()) }
+        }
+    }
+    fun deleteArt(file: java.io.File) {
+        file.delete(); artGallery = artGallery - file; if (artLatest == file) artLatest = null
+    }
+
     fun claimDailyBonus() {
         execute {
             val api = service()
