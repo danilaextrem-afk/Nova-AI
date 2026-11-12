@@ -48,6 +48,7 @@ it('shows a public author page without private work, and hides it between blocke
  expect(r.body).not.toContain('@test.invalid');
  expect((await app.inject({url:'/v1/creators/'+author,headers:headers(blockedReader)})).statusCode).toBe(404);
  expect((await app.inject({url:'/v1/creators/'+randomUUID(),headers:headers(reader)})).statusCode).toBe(404);
+ expect((await app.inject({url:'/v1/creators/'+reader,headers:headers(author)})).statusCode).toBe(404); // Readers who published nothing have no public page.
 });
 it('gives authors counts for their own characters and nothing about other authors',async()=>{
  await db.chat.create({data:{userId:reader,characterId:pub.id}});

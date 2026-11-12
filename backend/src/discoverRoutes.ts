@@ -71,6 +71,7 @@ export async function registerDiscoverRoutes(app: FastifyInstance, db: PrismaCli
       db.creatorFollow.count({ where: { creatorId: author.id } }),
       db.creatorFollow.count({ where: { creatorId: author.id, followerId: me } }),
     ]);
+    if (!characters.length) return reply.code(404).send({ error: 'CREATOR_NOT_FOUND' }); // Only people who published something have a public page.
     return { id: author.id, displayName: author.profile?.displayName ?? 'Автор', bio: author.profile?.bio ?? null, since: author.createdAt,
       followers, isFollowing: following > 0, likes: characters.reduce((n, c) => n + (c.publication?.likesCount ?? 0), 0), characters };
   });
