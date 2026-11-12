@@ -21,6 +21,9 @@ import android.content.Intent
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -36,10 +39,10 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 
-private val Purple = Color(0xFFAE87FF)
-private val Cyan = Color(0xFF49E3D1)
-private val Background = Color(0xFF0D1019)
-private val CardSurface = Color(0xFF1A1E2A)
+private val Purple = NovaDesign.Lavender
+private val Cyan = NovaDesign.Rose
+private val Background = NovaDesign.Ink
+private val CardSurface = NovaDesign.Surface
 private val NovaColors = darkColorScheme(
     primary = Purple, secondary = Cyan, background = Background,
     surface = CardSurface, onPrimary = Color(0xFF170C32), onBackground = Color(0xFFF5F1FF),
@@ -50,7 +53,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
-            MaterialTheme(colorScheme = NovaColors) {
+            NovaTheme {
                 val model: NovaViewModel = viewModel()
                 NovaApp(model)
             }
@@ -66,19 +69,19 @@ private fun NovaApp(model: NovaViewModel) {
         Scaffold(
             containerColor = Background,
             topBar = {
-                Surface(color = Background) {
+                if (!(model.activeTab==NovaTab.CHATS && model.activeChat!=null)) Surface(color = Background) {
                     Row(
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 16.dp),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween
                     ) {
-                        Text("NOVA", fontSize = 24.sp, fontWeight = FontWeight.Black, color = Purple)
-                        Text("AI", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Cyan)
+                        NovaWordmark(compact=true)
+                        NovaEyebrow("Твоя история")
                     }
                 }
             },
             bottomBar = {
-                NavigationBar(containerColor = CardSurface) {
+                if (!(model.activeTab==NovaTab.CHATS && model.activeChat!=null)) NavigationBar(containerColor = CardSurface, modifier=Modifier.padding(horizontal=10.dp,vertical=6.dp).clip(RoundedCornerShape(24.dp))) {
                     val items = listOf(
                         NovaTab.HOME, NovaTab.CATALOG, NovaTab.CHATS,
                         NovaTab.CREATE, NovaTab.WALLET, NovaTab.ACCOUNT
@@ -108,14 +111,19 @@ private fun NovaApp(model: NovaViewModel) {
                                     NovaTab.CREATE -> "Создать"
                                     NovaTab.WALLET -> "Токены"
                                     NovaTab.ACCOUNT -> "Профиль"
-                                }, maxLines = 1)
+                                }, maxLines = 1, fontSize=10.sp)
                             }
                         )
                     }
                 }
             }
         ) { innerPadding ->
-            Column(
+            if(model.activeTab==NovaTab.CHATS && model.activeChat!=null){
+                Column(Modifier.fillMaxSize().padding(innerPadding).imePadding()){
+                    StatusMessage(model)
+                    NovaConversation(model)
+                }
+            } else Column(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
@@ -144,19 +152,16 @@ private fun LoginScreen(model: NovaViewModel) {
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(horizontal = 26.dp, vertical = 54.dp),
+            .imePadding().statusBarsPadding().navigationBarsPadding().padding(horizontal = 22.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
-        Text("NOVA", fontWeight = FontWeight.Black, fontSize = 46.sp, color = Purple)
-        Text("AI", fontWeight = FontWeight.Bold, fontSize = 34.sp, color = Cyan)
-        Text("Вселенные начинаются с идеи.", fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
-        Text(
-            "Создавай персонажей, публикуй истории и исследуй новые миры.",
-            color = Color.LightGray
-        )
-        Spacer(Modifier.height(8.dp))
+        NovaWordmark()
+        NovaEditorialHero("Ближе, чем\nвоображение.","Персонажи. Разговоры. Твоя история.",eyebrow="ДОБРО ПОЖАЛОВАТЬ")
         NovaCard {
-            Text("Подключение к серверу", color = Cyan, fontWeight = FontWeight.SemiBold)
+            Text("Твоя история начинается здесь",style=MaterialTheme.typography.titleLarge)
+            var connectionExpanded by remember {mutableStateOf(model.serverUrl.isBlank())}
+            TextButton(onClick={connectionExpanded=!connectionExpanded}){Text("Настройки подключения")}
+            if(connectionExpanded){
             Text(
                 "Для входа нужен подключённый сервис NOVA AI.",
                 style = MaterialTheme.typography.bodySmall, color = Color.LightGray
@@ -168,6 +173,7 @@ private fun LoginScreen(model: NovaViewModel) {
                 modifier = Modifier.fillMaxWidth(),
                 singleLine = true
             )
+            }
             OutlinedTextField(
                 value = model.email,
                 onValueChange = { model.email = it },
@@ -212,40 +218,14 @@ private val showcaseNames = listOf(
 
 @Composable
 private fun GuestCastPreview() {
-    val context = LocalContext.current
-    Text("Знакомься с персонажами", fontSize = 22.sp, fontWeight = FontWeight.Bold)
-    Text(
-        "Бесплатный просмотр героев. Для настоящего AI-чата потребуется подключённый сервер.",
-        color = Color.LightGray, style = MaterialTheme.typography.bodySmall
-    )
-    Row(
-        modifier = Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(12.dp)
-    ) {
-        showcaseNames.forEachIndexed { index, name ->
-            val id = "00000000-0000-4000-8000-" +
-                (index + 101).toString().padStart(12, '0')
-            val image = remember(index, context) { NovaCastPortraits.find(context, id) }
-            Card(
-                modifier = Modifier.width(128.dp),
-                colors = CardDefaults.cardColors(containerColor = CardSurface),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(9.dp)) {
-                    if (image != null) {
-                        Image(
-                            bitmap = image,
-                            contentDescription = "Портрет персонажа " + name,
-                            contentScale = ContentScale.Crop,
-                            modifier = Modifier.size(110.dp).clip(RoundedCornerShape(12.dp))
-                        )
-                    }
-                    Text(
-                        name, maxLines = 2,
-                        fontWeight = FontWeight.SemiBold,
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                }
+    NovaEyebrow("NOVA ORIGINALS")
+    Text("Знакомься с персонажами",style=MaterialTheme.typography.headlineMedium)
+    Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(12.dp)) {
+        showcaseNames.forEachIndexed { index,name ->
+            val id="00000000-0000-4000-8000-"+(index+101).toString().padStart(12,'0')
+            Card(Modifier.width(164.dp),shape=RoundedCornerShape(22.dp),border=BorderStroke(1.dp,NovaDesign.Border)) {
+                NovaPortrait(id,name,Modifier.fillMaxWidth().height(218.dp))
+                Text(name,modifier=Modifier.padding(12.dp),maxLines=2,style=MaterialTheme.typography.titleMedium)
             }
         }
     }
@@ -265,12 +245,13 @@ private fun StatusMessage(model: NovaViewModel) {
 @Composable
 private fun NovaCard(content: @Composable ColumnScope.() -> Unit) {
     Card(
-        shape = RoundedCornerShape(22.dp),
+        shape = RoundedCornerShape(26.dp),
+        border = BorderStroke(1.dp,NovaDesign.Border),
         colors = CardDefaults.cardColors(containerColor = CardSurface),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(
-            modifier = Modifier.padding(20.dp),
+            modifier = Modifier.background(NovaDesign.Glow).padding(20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             content = content
         )
@@ -280,38 +261,27 @@ private fun NovaCard(content: @Composable ColumnScope.() -> Unit) {
 @Composable
 private fun SectionHeader(title: String, subtitle: String) {
     Column(verticalArrangement = Arrangement.spacedBy(5.dp)) {
-        Text(title, fontSize = 27.sp, fontWeight = FontWeight.Bold)
+        NovaEyebrow("NOVA / ТВОЁ ПРОСТРАНСТВО")
+        Text(title, style=MaterialTheme.typography.headlineMedium)
         Text(subtitle, style = MaterialTheme.typography.bodyMedium, color = Color.LightGray)
     }
 }
 
 @Composable
 private fun HomeScreen(model: NovaViewModel) {
-    SectionHeader("Твоя вселенная", "AI-персонажи и новые истории в одном месте")
+    NovaEyebrow("ДЛЯ ТЕБЯ")
+    Text("У каждой встречи\nесть продолжение.",style=MaterialTheme.typography.headlineLarge)
+    NovaEditorialHero("Найди свою\nисторию","Детективы, мечтатели и герои новых миров.")
+    Button(onClick={model.changeTab(NovaTab.CATALOG)},modifier=Modifier.fillMaxWidth().height(54.dp)){Text("Исследовать каталог")}
     NovaCard {
-        Text("NOVA AI", fontSize = 28.sp, fontWeight = FontWeight.Black, color = Purple)
-        Text("Открой каталог персонажей или создай своего героя.")
-        Button(
-            onClick = { model.changeTab(NovaTab.CATALOG) },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Исследовать каталог") }
-        OutlinedButton(
-            onClick = { model.changeTab(NovaTab.CREATE) },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Создать персонажа") }
-        OutlinedButton(
-            onClick = { model.changeTab(NovaTab.CHATS) },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("Мои переписки") }
+        NovaEyebrow("ТВОЯ ВООБРАЖАЕМАЯ ВСЕЛЕННАЯ")
+        Text("Кем будет следующий герой?",style=MaterialTheme.typography.titleLarge)
+        Text("Создай характер, выбери настроение и начни разговор.",color=NovaDesign.Muted)
+        OutlinedButton(onClick={model.changeTab(NovaTab.CREATE)},modifier=Modifier.fillMaxWidth()){Text("Создать персонажа")}
+        TextButton(onClick={model.changeTab(NovaTab.CHATS)}){Text("Мои переписки")}
     }
-    NovaCard {
-        Text("Что уже доступно", color = Cyan, fontWeight = FontWeight.Bold)
-        Text("Регистрация, вход, создание персонажей, каталог и кошелёк через API.")
-        Text(
-            "AI-чат через серверный провайдер доступен после настройки API. Генерация изображений и покупки токенов пока разрабатываются.",
-            style = MaterialTheme.typography.bodySmall, color = Color.LightGray
-        )
-    }
+    GuestCastPreview()
+
 }
 
 @Composable
@@ -323,6 +293,7 @@ private fun CatalogScreen(model: NovaViewModel) {
     }
     if (model.matureSection) Text("Раздел 18+: романтика и взрослые драмы с совершеннолетними вымышленными персонажами. Откровенный контент запрещён.",
         color = Color(0xFFFFB4A9), style = MaterialTheme.typography.bodySmall)
+    if(model.matureSection && model.showMature) MatureStudioSection(model)
     NovaCard {
         OutlinedTextField(
             value = model.catalogQuery,
@@ -377,6 +348,7 @@ private fun CatalogScreen(model: NovaViewModel) {
     model.profileCharacter?.let { c ->
         AlertDialog(onDismissRequest={model.profileCharacter=null},title={Text(c.name)},
             text={Column(Modifier.verticalScroll(rememberScrollState()),verticalArrangement=Arrangement.spacedBy(10.dp)){
+                NovaPortrait(c.id,c.name,Modifier.fillMaxWidth().height(260.dp).clip(RoundedCornerShape(20.dp)),c.avatarUrl)
                 Text("Оригинальный вымышленный взрослый персонаж",color=Cyan)
                 listOf("Биография" to c.biography,"Характер" to c.personality,"Внешность" to c.appearance,
                     "Интересы" to c.interests,"Предыстория" to c.backstory,"Манера речи" to c.speechStyle,"Сценарий" to c.scenario)
@@ -384,38 +356,17 @@ private fun CatalogScreen(model: NovaViewModel) {
                 Text(c.greeting)
             }},confirmButton={TextButton(onClick={model.profileCharacter=null}){Text("Закрыть профиль")}})
     }
-    val context = LocalContext.current
     model.catalog.forEach { character ->
-        val bundledPortrait = remember(character.id, context) {
-            NovaCastPortraits.find(context, character.id)
-        }
         NovaCard {
-            if (!character.avatarUrl.isNullOrBlank()) {
-                AsyncImage(
-                    model = character.avatarUrl,
-                    contentDescription = "Портрет персонажа " + character.name,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxWidth().height(240.dp)
-                        .clip(RoundedCornerShape(14.dp))
-                )
-            } else if (bundledPortrait != null) {
-                Image(
-                    bitmap = bundledPortrait,
-                    contentDescription = "Портрет персонажа " + character.name,
-                    contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxWidth().height(280.dp).clip(RoundedCornerShape(16.dp))
-                )
-            } else {
-                Text(
-                    "NOVA STUDIO · " + character.category.uppercase(),
-                    color = Cyan,
-                    style = MaterialTheme.typography.labelLarge
-                )
+            Box(Modifier.fillMaxWidth().height(340.dp).clip(RoundedCornerShape(20.dp))){
+                NovaPortrait(character.id,character.name,Modifier.fillMaxSize(),character.avatarUrl)
+                Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent,Color(0xB3100B18)))))
+                Column(Modifier.align(Alignment.BottomStart).padding(18.dp)){
+                    NovaEyebrow(character.category)
+                    Text(character.name,style=MaterialTheme.typography.headlineMedium,color=Color.White)
+                }
             }
-            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(character.name, color = Purple, fontSize = 21.sp, fontWeight = FontWeight.Bold)
-                if (character.mature) MatureBadge()
-            }
+            if (character.mature) MatureBadge()
             Text(character.category.uppercase(), color = Cyan, fontSize = 12.sp)
             TextButton(onClick={model.showCharacterProfile(character.id)},enabled=!model.loading){Text("Полный профиль")}
             character.ownerId?.let {creator->Row(Modifier.horizontalScroll(rememberScrollState())) {
@@ -694,12 +645,13 @@ private fun CreateScreen(model: NovaViewModel) {
 
 @Composable
 private fun WalletScreen(model: NovaViewModel) {
-    SectionHeader("NOVA Tokens", "Серверный баланс виртуальных токенов")
+    SectionHeader("NOVA Tokens", "Больше возможностей для твоих историй")
     NovaCard {
-        Text("Баланс", color = Color.LightGray)
+        NovaEyebrow("ТВОИ ВОЗМОЖНОСТИ")
+        Text("Баланс", color = NovaDesign.Muted)
         Text(
             (model.wallet?.total ?: 0).toString(),
-            fontSize = 46.sp, fontWeight = FontWeight.Black, color = Cyan
+            fontSize = 54.sp, fontWeight = FontWeight.Light, color = Purple
         )
         Text("Куплено: " + (model.wallet?.purchased ?: 0))
         Text("Реклама: " + (model.wallet?.adReward ?: 0))
@@ -725,7 +677,8 @@ private fun WalletScreen(model: NovaViewModel) {
 
 @Composable
 private fun AccountScreen(model: NovaViewModel) {
-    SectionHeader("Профиль", "Управление подключением и аккаунтом")
+    SectionHeader("Профиль", "Твоё личное пространство")
+    Surface(shape=CircleShape,color=Color(0xFF3C2A50),modifier=Modifier.size(80.dp)){Box(contentAlignment=Alignment.Center){Text(model.email.take(1).uppercase(),style=MaterialTheme.typography.headlineLarge)}}
     NovaCard {
         Text(model.email, color = Purple)
         Text("Сервер: " + model.serverUrl, color = Color.LightGray)
@@ -753,7 +706,8 @@ private fun RewardCards(model: NovaViewModel) {
     val context = androidx.compose.ui.platform.LocalContext.current
     model.dailyBonus?.takeIf { it.enabled }?.let { bonus ->
         NovaCard {
-            Text("Ежедневный бонус", fontWeight = FontWeight.Bold, color = Cyan)
+            NovaEyebrow("МАЛЕНЬКИЙ ПОДАРОК")
+            Text("Ежедневный бонус", style=MaterialTheme.typography.headlineMedium)
             if (bonus.claimedToday) Text("Получено сегодня. Следующий бонус — завтра.", color = Color.LightGray)
             else Button(onClick = { model.claimDailyBonus() }, enabled = !model.loading, modifier = Modifier.fillMaxWidth()) {
                 Text("Забрать +" + bonus.amount + " ◈")
@@ -762,7 +716,8 @@ private fun RewardCards(model: NovaViewModel) {
     }
     model.referral?.let { ref ->
         NovaCard {
-            Text("Пригласи друга", fontWeight = FontWeight.Bold, color = Cyan)
+            NovaEyebrow("ИСТОРИИ ЛУЧШЕ ВМЕСТЕ")
+            Text("Пригласи друга", style=MaterialTheme.typography.headlineMedium)
             if (ref.bonusTokens > 0) Text("Вам обоим по " + ref.bonusTokens + " ◈, когда друг отправит " + ref.requiredTurns + " сообщения в чате.",
                 style = MaterialTheme.typography.bodySmall, color = Color.LightGray)
             ref.code?.let { code ->
@@ -791,7 +746,7 @@ private fun RewardCards(model: NovaViewModel) {
 
 @Composable
 fun MatureBadge() {
-    Surface(color = Color(0xFFB3261E), shape = RoundedCornerShape(6.dp)) {
+    Surface(color = Color(0xFF493043), shape = RoundedCornerShape(8.dp)) {
         Text("18+", color = Color.White, fontSize = 11.sp, fontWeight = FontWeight.Bold,
             modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp))
     }

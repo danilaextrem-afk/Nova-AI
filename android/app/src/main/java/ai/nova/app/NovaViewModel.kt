@@ -309,6 +309,20 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun chatPortraitUrl(characterId:String):String? =
+        catalog.firstOrNull{it.id==characterId}?.avatarUrl ?: owned.firstOrNull{it.id==characterId}?.avatarUrl ?: store.get("portrait-$characterId")
+    fun startStudioChat(hero:StudioHero) {
+        if(!showMature || !matureSection){error="Включи раздел 18+ в настройках профиля";return}
+        execute {
+            val api=service()
+            val character=api.createCharacter(authorization(),hero.draft()).character
+            store.put("portrait-${character.id}",hero.portraitUrl)
+            val created=api.createChat(authorization(),NovaCreateChatBody(character.id))
+            activeChat=created.chat.copy(characterName=hero.name)
+            store.put("chat",gson.toJson(activeChat));chatMessages=emptyList();chatInput="";activeTab=NovaTab.CHATS
+            chats=api.chats(authorization()).items;aiStatus=api.aiStatus(authorization())
+        }
+    }
     fun startChat(character: NovaCharacter) {
         execute {
             val api = service()
