@@ -11,7 +11,7 @@ on:
         required: false
         default: ''
       mode:
-        description: 'quick (identity, memory after 20 messages, group) or full (also 100 messages)'
+        description: 'quick (identity, memory after 20 messages, group), full (also 100 messages) or characters (personalities, settings, grammar)'
         required: false
         default: 'full'
 
@@ -39,6 +39,11 @@ jobs:
           ARGS=()
           [ -n "$EXPECT" ] && ARGS+=("--expect=$EXPECT")
           [ "$MODE" = "full" ] && ARGS+=("--full")
+          if [ "$MODE" = "characters" ]; then
+            node scripts/character-quality.mjs "$URL" "${ARGS[@]}" > quality.json; status=$?
+            node -e 'const r=require("./quality.json");console.log("Commit: "+r.commit+"  client retries: "+r.clientRetries);for(const x of r.rows)console.log(x.result.padEnd(8)+x.name+(x.detail?" — "+x.detail:""));for(const x of r.samples)console.log("SAMPLE ["+x.label+" · "+x.model+"] Q: "+x.user+" || A: "+x.reply.replace(/\s+/g," "))'
+            exit $status
+          fi
           node scripts/dialogue-quality.mjs "$URL" "${ARGS[@]}" > quality.json
           status=$?
           node -e 'const r=require("./quality.json");console.log("Commit: "+r.commit);for(const x of r.rows)console.log(x.result.padEnd(8)+x.name+(x.detail?" — "+x.detail:""));for(const m of r.metrics)console.log("MODEL "+m.model+" replies="+m.replies+" median="+m.medianMs+"ms repeated="+m.repeatedReplies);for(const x of r.samples.filter(x=>!x.checkpoint.startsWith("memory-turn")))console.log("SAMPLE "+x.checkpoint+" ["+(x.inference?x.inference.provider+"/"+x.inference.model:"?")+", "+x.latencyMs+"ms, retries "+x.retries.length+"] "+x.text.replace(/\s+/g," ").slice(0,220)+(x.extra.length?" || "+x.extra.map(e=>e.content.replace(/\s+/g," ").slice(0,120)).join(" || "):""));console.log("RETRIES "+JSON.stringify(r.samples.flatMap(x=>x.retries)))'
