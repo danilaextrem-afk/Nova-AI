@@ -347,7 +347,7 @@ class NovaUiTest {
   compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
   clickWhenEnabled("Войти")
   waitFor("deck"){compose.onAllNodesWithText("Похоже на твои истории").fetchSemanticsNodes().isNotEmpty()}
-  compose.onNodeWithText("Лея Винтер").reveal();screenshot("31-recommendations")
+  compose.onNodeWithText("Похоже на твои истории").reveal();screenshot("31-recommendations")
   compose.onNodeWithText("Новинки").reveal().assertExists()
   clickWhenEnabled("♥ Нравится")
   waitFor("favourite saved"){favoritePut=="/v1/characters/00000000-0000-4000-8000-000000000102/favorite"}
