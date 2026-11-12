@@ -16,6 +16,7 @@ class NovaUiTest {
  private val server=MockWebServer()
  private val character="00000000-0000-4000-8000-000000000101"
  private val chat="10000000-0000-4000-8000-000000000001"
+ @Volatile private var registration:String?=null
  @Volatile private var studioDraft:String?=null
  @Volatile private var sent=false
  @Volatile private var commentSent=false
@@ -28,6 +29,10 @@ class NovaUiTest {
  @Volatile private var userText="Привет"
  @Before fun setUp(){
   server.dispatcher=object:Dispatcher(){override fun dispatch(r:RecordedRequest):MockResponse {
+   if(r.path=="/v1/auth/register"){
+    registration=r.body.readUtf8()
+    return MockResponse().setHeader("Content-Type","application/json").setBody("""{"accessToken":"fixture-token","refreshToken":"fixture-refresh-token"}""").setBodyDelay(1,java.util.concurrent.TimeUnit.SECONDS)
+   }
    if(r.path=="/v1/chats/$chat/messages/stream"){
     streamIds.add(com.google.gson.JsonParser.parseString(r.body.readUtf8()).asJsonObject.get("requestId").asString)
     if(streamFailure)return MockResponse().setResponseCode(503).setHeader("Content-Type","application/json").setBody("{\"error\":\"AI_NOT_CONFIGURED\"}")
@@ -85,8 +90,11 @@ class NovaUiTest {
  /** Named wait: on timeout the failure says which step hung and dumps the visible UI tree. */
  private fun waitFor(step:String,condition:()->Boolean){
   try{compose.waitUntil(20000,condition)}catch(e:androidx.compose.ui.test.ComposeTimeoutException){
-   val tree=runCatching{compose.onAllNodes(isRoot()).printToString()}.getOrDefault("<no tree>")
-   throw AssertionError("Timed out at step: $step\n"+tree.take(6000),e)
+   val tree=runCatching{compose.onAllNodes(isRoot()).printToString(maxDepth=30)}.getOrDefault("<no tree>")
+   screenshot("failure-"+step.replace(Regex("[^a-zA-Z0-9]"),"-"))
+   var state=""
+   compose.runOnIdle { val vm=ViewModelProvider(compose.activity)[NovaViewModel::class.java];state="loading=${vm.loading}; error=${vm.error}; tab=${vm.activeTab}; studioDraft=$studioDraft" }
+   throw AssertionError("Timed out at step: $step; $state\n"+tree.take(20000),e)
   }
  }
  private fun SemanticsNodeInteraction.reveal():SemanticsNodeInteraction {
@@ -96,8 +104,7 @@ class NovaUiTest {
  private fun clickWhenEnabled(text:String){
   waitFor("enabled button '$text'"){compose.onAllNodes(hasText(text) and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
   val node=compose.onNode(hasText(text) and isEnabled())
-  runCatching{node.reveal()} // Dialog buttons have no scrollable parent.
-  node.performClick()
+  node.reveal().assertIsDisplayed().performClick()
  }
  @Test fun loginCatalogChatAndEncryptedDraftSurviveRecreation(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")
@@ -254,6 +261,22 @@ class NovaUiTest {
   compose.onNodeWithText("Каталог").performClick();clickWhenEnabled("Моё избранное")
   waitFor("empty favorites"){compose.onAllNodesWithText("Опубликованных персонажей пока нет.").fetchSemanticsNodes().isNotEmpty()}
   screenshot("20-favorites")
+ }
+
+ @Test fun registrationPreservesAdultConsentAndLoadingState(){
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Создать аккаунт")
+  waitFor("adult confirmation required"){compose.onAllNodesWithText("Подтверди, что тебе исполнилось 18 лет").fetchSemanticsNodes().isNotEmpty()}
+  assertNull(registration)
+  compose.onNode(isToggleable()).reveal().performClick()
+  screenshot("21-registration")
+  clickWhenEnabled("Создать аккаунт")
+  screenshot("22-loading")
+  waitFor("registered home"){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
+  val body=com.google.gson.JsonParser.parseString(registration).asJsonObject
+  assertTrue(body.get("adultConfirmed").asBoolean)
+  assertEquals("adult@example.test",body.get("email").asString)
  }
 
 }

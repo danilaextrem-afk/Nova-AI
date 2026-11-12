@@ -319,7 +319,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             store.put("portrait-${character.id}",hero.portraitUrl)
             val created=api.createChat(authorization(),NovaCreateChatBody(character.id))
             activeChat=created.chat.copy(characterName=hero.name)
-            store.put("chat",gson.toJson(activeChat));chatMessages=emptyList();chatInput="";activeTab=NovaTab.CHATS
+            store.put("chat",gson.toJson(activeChat));chatMessages=emptyList();chatInput="";nextBefore=null;memories=emptyList();inChatResults=null;activeTab=NovaTab.CHATS
             chats=api.chats(authorization()).items;aiStatus=api.aiStatus(authorization())
         }
     }

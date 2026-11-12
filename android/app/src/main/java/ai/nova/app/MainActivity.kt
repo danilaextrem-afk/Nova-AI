@@ -24,6 +24,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -148,6 +149,7 @@ private fun NovaApp(model: NovaViewModel) {
 
 @Composable
 private fun LoginScreen(model: NovaViewModel) {
+    val keyboard=LocalSoftwareKeyboardController.current
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -195,12 +197,12 @@ private fun LoginScreen(model: NovaViewModel) {
             }
             Text("Сообщения отправляются серверу NOVA и настроенным AI-провайдерам. Не указывай конфиденциальные данные.",style=MaterialTheme.typography.bodySmall)
             Button(
-                onClick = { model.signIn(false) },
+                onClick = { keyboard?.hide();model.signIn(false) },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !model.loading
             ) { Text("Войти") }
             OutlinedButton(
-                onClick = { model.signIn(true) },
+                onClick = { keyboard?.hide();model.signIn(true) },
                 modifier = Modifier.fillMaxWidth(),
                 enabled = !model.loading
             ) { Text("Создать аккаунт") }
@@ -302,6 +304,9 @@ private fun CatalogScreen(model: NovaViewModel) {
             modifier = Modifier.fillMaxWidth(),
             singleLine = true
         )
+        var filtersExpanded by remember { mutableStateOf(false) }
+        TextButton(onClick={filtersExpanded=!filtersExpanded}){Text(if(filtersExpanded)"Скрыть фильтры" else "Фильтры и сортировка")}
+        if(filtersExpanded){
         OutlinedTextField(
             value = model.catalogCategory,
             onValueChange = { model.catalogCategory = it },
@@ -328,6 +333,7 @@ private fun CatalogScreen(model: NovaViewModel) {
                 onClick = { model.catalogSort = "name" },
                 label = { Text("По имени") }
             )
+        }
         }
         Button(
             onClick = { model.refreshCatalog() },
