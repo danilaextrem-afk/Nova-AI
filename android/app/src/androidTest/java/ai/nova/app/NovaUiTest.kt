@@ -28,6 +28,7 @@ class NovaUiTest {
  @Volatile private var showMature=false
  @Volatile private var userText="Привет"
  @Volatile private var artBody:String?=null
+ @Volatile private var authRequests=0
  private val artJpeg:String by lazy {
   val b=Bitmap.createBitmap(64,64,Bitmap.Config.ARGB_8888);b.eraseColor(android.graphics.Color.rgb(120,80,200))
   val out=java.io.ByteArrayOutputStream();b.compress(Bitmap.CompressFormat.JPEG,90,out)
@@ -35,6 +36,13 @@ class NovaUiTest {
  }
  @Before fun setUp(){
   server.dispatcher=object:Dispatcher(){override fun dispatch(r:RecordedRequest):MockResponse {
+   if(r.path=="/v1/auth/login"||r.path=="/v1/auth/register")authRequests++
+   // Fixture copies of the server's answers for a wrong password and an already registered email.
+   val authBody=if(r.path?.startsWith("/v1/auth/")==true)r.body.clone().readUtf8() else ""
+   if(r.path=="/v1/auth/login"&&authBody.contains("wrong-password-123"))
+    return MockResponse().setResponseCode(401).setHeader("Content-Type","application/json").setBody("""{"error":"INVALID_CREDENTIALS"}""")
+   if(r.path=="/v1/auth/register"&&authBody.contains("taken@example.test"))
+    return MockResponse().setResponseCode(409).setHeader("Content-Type","application/json").setBody("""{"error":"EMAIL_TAKEN"}""")
    if(r.path=="/v1/auth/register"){
     registration=r.body.readUtf8()
     return MockResponse().setHeader("Content-Type","application/json").setBody("""{"accessToken":"fixture-token","refreshToken":"fixture-refresh-token"}""").setBodyDelay(1,java.util.concurrent.TimeUnit.SECONDS)
@@ -247,6 +255,40 @@ class NovaUiTest {
   compose.onNodeWithText("Русский").reveal().performClick()
   waitFor("russian again"){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
  }
+ @Test fun invalidEmailPasswordAndMissingAgeAreExplainedWithoutARequest(){
+  compose.onNodeWithText("Email").performTextInput("adult@example")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("short")
+  clickWhenEnabled("Войти")
+  waitFor("field errors"){compose.onAllNodesWithText("Проверь email: он должен выглядеть как name@example.com, латиницей и без пробелов").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Пароль слишком короткий: нужно не меньше 10 символов (сейчас 5)").assertExists()
+  screenshot("26-login-validation")
+  compose.onNodeWithText("Email").performTextClearance()
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("-password")
+  clickWhenEnabled("Создать аккаунт")
+  waitFor("age error"){compose.onAllNodesWithText("Отметь, что тебе исполнилось 18 лет — без этого аккаунт создать нельзя").fetchSemanticsNodes().isNotEmpty()}
+  assertEquals("no request may leave the phone with invalid input",0,authRequests)
+  assertTrue(compose.onAllNodes(hasText("HTTP",substring=true)).fetchSemanticsNodes().isEmpty())
+ }
+ @Test fun wrongPasswordAndTakenEmailGetClearSeparateMessages(){
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("wrong-password-123")
+  clickWhenEnabled("Войти")
+  waitFor("login error"){compose.onAllNodesWithText("Неверный email или пароль. Если аккаунта ещё нет — нажми «Создать аккаунт».").fetchSemanticsNodes().isNotEmpty()}
+  waitFor("error scrolled into view"){runCatching{compose.onNodeWithText("Неверный email или пароль. Если аккаунта ещё нет — нажми «Создать аккаунт».").assertIsDisplayed()}.isSuccess}
+  screenshot("27-login-wrong-password")
+  compose.onNodeWithText("Email").performTextClearance();compose.onNodeWithText("Email").performTextInput("taken@example.test")
+  compose.onNode(isToggleable()).reveal().performClick()
+  clickWhenEnabled("Создать аккаунт")
+  waitFor("register error"){compose.onAllNodesWithText("Этот email уже зарегистрирован — нажми «Войти».").fetchSemanticsNodes().isNotEmpty()}
+  assertTrue(compose.onAllNodes(hasText("HTTP",substring=true)).fetchSemanticsNodes().isEmpty())
+  assertEquals(2,authRequests)
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextClearance()
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  compose.onNodeWithText("Email").performTextClearance();compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  clickWhenEnabled("Войти")
+  waitFor("signed in"){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
+ }
  @Test fun matureSectionNeedsExplicitAdultConfirmation(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")
   compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
@@ -318,7 +360,7 @@ class NovaUiTest {
   compose.onNodeWithText("Email").performTextInput("adult@example.test")
   compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
   clickWhenEnabled("Создать аккаунт")
-  waitFor("adult confirmation required"){compose.onAllNodesWithText("Подтверди, что тебе исполнилось 18 лет").fetchSemanticsNodes().isNotEmpty()}
+  waitFor("adult confirmation required"){compose.onAllNodesWithText("Отметь, что тебе исполнилось 18 лет — без этого аккаунт создать нельзя").fetchSemanticsNodes().isNotEmpty()}
   assertNull(registration)
   compose.onNode(isToggleable()).reveal().performClick()
   screenshot("21-registration")

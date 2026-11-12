@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.ScrollState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -170,6 +171,7 @@ private fun LanguageSwitch() {
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun LoginScreen(model: NovaViewModel) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -180,8 +182,10 @@ private fun LoginScreen(model: NovaViewModel) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            // System bars and keyboard are outside the scroll viewport, so nothing scrolls under them.
+            .imePadding().statusBarsPadding().navigationBarsPadding()
             .verticalScroll(rememberScrollState())
-            .imePadding().statusBarsPadding().navigationBarsPadding().padding(horizontal = 22.dp, vertical = 24.dp),
+            .padding(horizontal = 22.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         LanguageSwitch()
@@ -195,13 +199,17 @@ private fun LoginScreen(model: NovaViewModel) {
                     label = { Text("Адрес сервиса") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
             }
             OutlinedTextField(
-                value = model.email, onValueChange = { model.email = it.trim() },
+                value = model.email, onValueChange = { model.email = it.trim(); model.emailError = null },
                 label = { Text("Email") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
+                isError = model.emailError != null, supportingText = model.emailError?.let { e -> { Text(e) } },
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Email)
             )
             OutlinedTextField(
-                value = model.password, onValueChange = { model.password = it },
+                value = model.password, onValueChange = { model.password = it; model.passwordError = null },
                 label = { Text("Пароль (от 10 символов)") }, modifier = Modifier.fillMaxWidth(), singleLine = true,
+                isError = model.passwordError != null,
+                supportingText = { Text(model.passwordError ?: "Символов: ${model.password.length} из минимум 10",
+                    color = if (model.passwordError != null) MaterialTheme.colorScheme.error else NovaDesign.Muted) },
                 visualTransformation = if (showPassword) androidx.compose.ui.text.input.VisualTransformation.None else PasswordVisualTransformation(),
                 keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(keyboardType = androidx.compose.ui.text.input.KeyboardType.Password),
                 trailingIcon = {
@@ -212,21 +220,27 @@ private fun LoginScreen(model: NovaViewModel) {
                 }
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Checkbox(checked = model.adultConfirmed, onCheckedChange = { model.adultConfirmed = it })
+                Checkbox(checked = model.adultConfirmed, onCheckedChange = { model.adultConfirmed = it; model.adultError = null })
                 Text("Мне исполнилось 18 лет. Персонажи вымышленные.", style = MaterialTheme.typography.bodySmall)
             }
+            model.adultError?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
             Button(onClick = { keyboard?.hide(); model.signIn(false) }, modifier = Modifier.fillMaxWidth().height(52.dp), enabled = !model.loading) {
                 if (model.loading) CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp) else Text("Войти")
             }
             OutlinedButton(onClick = { keyboard?.hide(); model.signIn(true) }, modifier = Modifier.fillMaxWidth().height(52.dp), enabled = !model.loading) {
                 Text("Создать аккаунт")
             }
+            // Errors appear right under the buttons and are scrolled into view, so they are never off-screen.
+            val errorSpot = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+            LaunchedEffect(model.error, model.emailError, model.passwordError, model.adultError) {
+                if (model.error != null || model.adultError != null) { kotlinx.coroutines.delay(150); errorSpot.bringIntoView() }
+            }
+            Column(Modifier.bringIntoViewRequester(errorSpot), verticalArrangement = Arrangement.spacedBy(8.dp)) { StatusMessage(model) }
             if (slow && model.loading) Text("Сервер просыпается после простоя — это может занять до минуты. Не закрывай приложение.",
                 style = MaterialTheme.typography.bodySmall, color = NovaDesign.Rose)
             Text("Сообщения обрабатывают сервер NOVA и внешние AI-провайдеры. Не указывай конфиденциальные данные.",
                 style = MaterialTheme.typography.bodySmall, color = NovaDesign.Muted)
         }
-        StatusMessage(model)
         GuestCastPreview()
     }
 }
@@ -600,7 +614,7 @@ private fun AccountScreen(model: NovaViewModel) {
         model.exportText?.let { data->TextButton(onClick={context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {type="text/plain";putExtra(Intent.EXTRA_TEXT,data)},"Экспорт NOVA"))}){Text("Поделиться экспортом")} }
         var deleting by remember {mutableStateOf(false)}
         OutlinedButton(onClick={deleting=true}){Text("Удалить аккаунт")}
-        if(deleting)AlertDialog(onDismissRequest={deleting=false},title={Text("Удалить аккаунт и истории?")},text={Text("Чаты, память и персонажи будут удалены. Учёт покупок сохраняется для обработки возвратов.")},confirmButton={TextButton(onClick={deleting=false;model.deleteAccount()}){Text("Удалить навсегда")}},dismissButton={TextButton(onClick={deleting=false}){Text("Отмена")}})
+        if(deleting)AlertDialog(onDismissRequest={deleting=false},title={Text("Удалить аккаунт и истории?")},text={Text("Чаты, память и персонажи будут удалены. Учёт покупок сохраняется для обработки возвратов.")},confirmButton={TextButton(onClick={deleting=false;model.deleteAccount()},enabled=!model.loading){Text("Удалить навсегда")}},dismissButton={TextButton(onClick={deleting=false}){Text("Отмена")}})
         Text("Уведомления",style=MaterialTheme.typography.titleMedium)
         model.notifications.forEach {n-> Text(n.title+" · "+n.body);if(n.readAt==null)TextButton(onClick={model.readNotification(n.id)}){Text("Прочитано")} }
         OutlinedTextField(value=model.supportText,onValueChange={model.supportText=it},label={Text("Обращение в поддержку")},modifier=Modifier.fillMaxWidth())

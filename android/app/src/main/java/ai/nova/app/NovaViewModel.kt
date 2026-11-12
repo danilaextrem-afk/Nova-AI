@@ -21,6 +21,8 @@ import retrofit2.converter.gson.GsonConverterFactory
 
 enum class NovaTab { HOME, CATALOG, CHATS, CREATE, WALLET, ACCOUNT, ART }
 
+private val EMAIL_RE = Regex("^(?!\\.)(?!.*\\.\\.)[A-Za-z0-9_'+.-]*[A-Za-z0-9_+-]@([A-Za-z0-9][A-Za-z0-9-]*\\.)+[A-Za-z]{2,}$")
+
 class NovaViewModel(application: Application) : AndroidViewModel(application) {
     private val store = SessionStore(application)
     private val gson = Gson()
@@ -234,26 +236,70 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    // Field errors shown under the login form fields; cleared as soon as the person edits the field.
+    var emailError by mutableStateOf<String?>(null)
+    var passwordError by mutableStateOf<String?>(null)
+    var adultError by mutableStateOf<String?>(null)
+
+    /** Same rules as the server (it still validates): checked here so mistakes are explained before any request. */
+    fun validateCredentials(createAccount: Boolean): Boolean {
+        val mail = email.trim()
+        emailError = when {
+            mail.isEmpty() -> "Введи email"
+            mail.length > 254 || !EMAIL_RE.matches(mail) -> "Проверь email: он должен выглядеть как name@example.com, латиницей и без пробелов"
+            else -> null
+        }
+        passwordError = when {
+            password.isEmpty() -> "Введи пароль"
+            password.length < 10 -> "Пароль слишком короткий: нужно не меньше 10 символов (сейчас ${password.length})"
+            password.length > 128 -> "Пароль слишком длинный: максимум 128 символов"
+            else -> null
+        }
+        adultError = if (createAccount && !adultConfirmed) "Отметь, что тебе исполнилось 18 лет — без этого аккаунт создать нельзя" else null
+        return emailError == null && passwordError == null && adultError == null
+    }
+
+    private fun serverErrorCode(e: HttpException): String? = runCatching {
+        gson.fromJson(e.response()?.errorBody()?.string(), Map::class.java)["error"] as? String
+    }.getOrNull()
+
+    private fun authErrorText(createAccount: Boolean, status: Int, code: String?): String = when {
+        code == "EMAIL_INVALID" -> "Сервер не принял email. Проверь адрес: name@example.com, латиницей и без пробелов."
+        code == "PASSWORD_TOO_SHORT" -> if (createAccount) "Пароль слишком короткий: нужно не меньше 10 символов."
+            else "Пароль слишком короткий: в NOVA пароли не короче 10 символов. Проверь, тот ли пароль ты вводишь."
+        code == "PASSWORD_TOO_LONG" -> "Пароль слишком длинный: максимум 128 символов."
+        code == "ADULT_CONFIRMATION_REQUIRED" -> "Отметь, что тебе исполнилось 18 лет — без этого аккаунт создать нельзя."
+        status == 400 -> if (createAccount) "Не получилось создать аккаунт: проверь email и пароль." else "Не получилось войти: проверь email и пароль."
+        status == 401 -> "Неверный email или пароль. Если аккаунта ещё нет — нажми «Создать аккаунт»."
+        status == 409 -> "Этот email уже зарегистрирован — нажми «Войти»."
+        code == "TOO_MANY_LOGIN_ATTEMPTS" -> "Слишком много неудачных попыток входа. Подожди 15 минут и попробуй снова."
+        status == 429 -> "Слишком много попыток подряд. Подожди минуту и попробуй снова."
+        status == 403 -> "Этот аккаунт заблокирован. Напиши в поддержку."
+        status >= 500 -> "Сервер NOVA временно не отвечает. Попробуй ещё раз через минуту."
+        else -> (if (createAccount) "Не удалось создать аккаунт" else "Не удалось войти") + " (код $status). Попробуй ещё раз."
+    }
+
     fun signIn(createAccount: Boolean) {
+        if (loading) return
+        error = null
+        if (!validateCredentials(createAccount)) return // Explained under the fields themselves.
         execute {
             val api = service()
-            if (createAccount && !adultConfirmed) throw IllegalArgumentException("Подтверди, что тебе исполнилось 18 лет")
-            val credentials = Credentials(email.trim(), password, adultConfirmed)
+            val credentials = Credentials(email.trim(), password, adultConfirmed && createAccount)
             val result = try { if (createAccount) api.register(credentials) else api.login(credentials) } catch (e: HttpException) {
-                throw IllegalStateException(when (e.code()) {
-                    401 -> "Неверный email или пароль"
-                    409 -> "Этот email уже зарегистрирован — войди в аккаунт"
-                    429 -> "Слишком много попыток входа. Подожди 15 минут и попробуй снова."
-                    else -> "Не удалось войти: HTTP " + e.code()
-                })
+                val code = serverErrorCode(e)
+                when (code) { "EMAIL_INVALID" -> emailError = "Проверь email"; "PASSWORD_TOO_SHORT", "PASSWORD_TOO_LONG" -> passwordError = "Проверь пароль" }
+                throw IllegalStateException(authErrorText(createAccount, e.code(), code))
+            } catch (e: java.io.IOException) {
+                throw IllegalStateException("Нет связи с сервером NOVA. Проверь интернет и попробуй снова — первый вход после перерыва может занять до минуты.")
             }
             accessToken = result.accessToken
             store.put("access", result.accessToken); store.put("refresh", result.refreshToken)
-            store.put("server", serverUrl); store.put("email", email)
+            store.put("server", serverUrl); store.put("email", email.trim())
             password = ""
             activeTab = NovaTab.HOME
             catalog = api.catalog(authorization()).items
-            notification = "Подключено к NOVA AI"
+            notification = if (createAccount) "Аккаунт создан. Добро пожаловать в NOVA AI!" else "Вход выполнен"
         }
     }
 
@@ -584,7 +630,14 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         notification = null
         error = null
     }
-    fun logout() { execute { runCatching { service().logout(authorization()) }; clearAccount() } }
+    /** Sign-out never waits for (or is blocked by) another request: the phone forgets the session at once,
+     *  and the server session is revoked in the background. */
+    fun logout() {
+        val bearer = runCatching { authorization() }.getOrNull()
+        val api = runCatching { service() }.getOrNull()
+        clearAccount(); loading = false
+        if (bearer != null && api != null) viewModelScope.launch { runCatching { api.logout(bearer) } }
+    }
     fun loadOlder() { val chat = activeChat ?: return; val before = nextBefore ?: return; execute {
         val page=service().chatMessages(authorization(),chat.id,before); chatMessages=page.items+chatMessages; nextBefore=page.nextBefore
     } }

@@ -11,6 +11,19 @@ afterAll(async()=>{await db.user.deleteMany({where:{id:userId}});await app.close
 it('rejects registration without explicit adult confirmation',async()=>{
  const result=await app.inject({method:'POST',url:'/v1/auth/register',payload:{email:randomUUID()+'@test.invalid',password:'safe-test-password-123'}});expect(result.statusCode).toBe(400);
 });
+it('explains which credential field is invalid without relaxing validation',async()=>{
+ const post=(url:string,payload:any)=>app.inject({method:'POST',url,payload});
+ for(const url of ['/v1/auth/login','/v1/auth/register']){
+  const short=await post(url,{email:'adult@test.invalid',password:'short',adultConfirmed:true});expect(short.statusCode).toBe(400);expect(short.json().error).toBe('PASSWORD_TOO_SHORT');
+  const long=await post(url,{email:'adult@test.invalid',password:'x'.repeat(129),adultConfirmed:true});expect(long.json().error).toBe('PASSWORD_TOO_LONG');
+  const email=await post(url,{email:'not-an-email',password:'safe-test-password-123',adultConfirmed:true});expect(email.statusCode).toBe(400);expect(email.json().error).toBe('EMAIL_INVALID');
+ }
+ const noAdult=await post('/v1/auth/register',{email:randomUUID()+'@test.invalid',password:'safe-test-password-123'});expect(noAdult.json().error).toBe('ADULT_CONFIRMATION_REQUIRED');
+ const email=(await db.user.findUnique({where:{id:userId}}))!.email;
+ const spaced=await post('/v1/auth/login',{email:'  '+email.toUpperCase()+' ',password:'safe-test-password-123'});expect(spaced.statusCode,spaced.body).toBe(200);
+ const wrong=await post('/v1/auth/login',{email,password:'wrong-password-123'});expect(wrong.statusCode).toBe(401);expect(wrong.json().error).toBe('INVALID_CREDENTIALS');
+ const taken=await post('/v1/auth/register',{email,password:'safe-test-password-123',adultConfirmed:true});expect(taken.statusCode).toBe(409);expect(taken.json().error).toBe('EMAIL_TAKEN');
+});
 it('rotates a refresh token once and revokes the family on concurrent reuse',async()=>{
  const results=await Promise.all(Array.from({length:2},()=>app.inject({method:'POST',url:'/v1/auth/refresh',payload:{refreshToken:tokens.refreshToken}})));
  expect(results.map(x=>x.statusCode).sort()).toEqual([200,401]);

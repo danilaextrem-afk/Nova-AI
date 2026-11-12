@@ -135,7 +135,7 @@ jobs:
           profile: pixel_2
           disable-animations: true
           script: |
-            cd android && gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true || { adb pull /sdcard/Android/data/ai.nova.app/files/screenshots "$GITHUB_WORKSPACE/ui-screenshots"; exit 1; }
+            cd android && gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true -Pandroid.testInstrumentationRunnerArguments.novaLiveUrl=$(cat nova-api-url.txt) || { adb pull /sdcard/Android/data/ai.nova.app/files/screenshots "$GITHUB_WORKSPACE/ui-screenshots"; exit 1; }
             adb pull /sdcard/Android/data/ai.nova.app/files/screenshots "$GITHUB_WORKSPACE/ui-screenshots"
             mkdir -p "$GITHUB_WORKSPACE/ui-standard-reports"
             cp -R "$GITHUB_WORKSPACE/android/app/build/reports/androidTests" "$GITHUB_WORKSPACE/ui-standard-reports/"
