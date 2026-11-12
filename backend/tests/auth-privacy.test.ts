@@ -1,7 +1,7 @@
 import {beforeAll,afterAll,it,expect} from 'vitest';
 import {PrismaClient} from '@prisma/client';
 import {randomUUID} from 'node:crypto';
-import {buildApp} from '../src/server.js';
+import {buildApp,clientIpHeaderName} from '../src/server.js';
 const db=new PrismaClient();let app:Awaited<ReturnType<typeof buildApp>>;let userId:string;let tokens:any;
 beforeAll(async()=>{app=await buildApp(db);await app.ready();
  const email=randomUUID()+'@test.invalid';const response=await app.inject({method:'POST',url:'/v1/auth/register',payload:{email,password:'safe-test-password-123',adultConfirmed:true}});
@@ -87,4 +87,11 @@ it('locks one account after repeated wrong passwords without affecting the corre
  const locked=await app.inject({method:'POST',url:'/v1/auth/login',payload:{email,password:'right-password-123'},remoteAddress:'203.0.113.9'});
  expect(locked.statusCode).toBe(429);expect(locked.json().error).toBe('TOO_MANY_LOGIN_ATTEMPTS');
  await db.user.delete({where:{id:created}});
+});
+
+it('keys rate limits on the edge client IP on Render even when the variable is not set',()=>{
+ expect(clientIpHeaderName({RENDER:'true'})).toBe('true-client-ip');
+ expect(clientIpHeaderName({})).toBe('');
+ expect(clientIpHeaderName({RENDER:'true',NOVA_CLIENT_IP_HEADER:'none'})).toBe('');
+ expect(clientIpHeaderName({NOVA_CLIENT_IP_HEADER:' CF-Connecting-IP '})).toBe('cf-connecting-ip');
 });
