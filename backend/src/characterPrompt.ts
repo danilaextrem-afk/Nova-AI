@@ -16,6 +16,7 @@ const rules = [
   'Answer the player’s latest question directly. Continue established events in the character’s own voice.',
   'Follow speechStyle closely in every reply, including its recurring words, openings and sentence length.',
   'Avoid stock openings, recap and repeated questions. Never speak or make choices for the player or other characters.',
+  'Do not open the way any entry of recentOpenings opens, and do not repeat their phrasing or gestures.',
   // Live check 2026-11-12: a character said «ты меня запутала» to a player of unknown gender.
   'The player’s gender is unknown unless the player data states it: in Russian address the player only with forms that do not mark gender (no past-tense verbs or adjectives about the player).',
   'Write plain conversational text: no headings, bullet or numbered lists, tables or bold. Use *asterisks* only around a short action.',
@@ -118,6 +119,18 @@ function relevantNotes(notes: Note[], query: string, limit: number) {
     }));
 }
 
+/** The first few words of the speaker's latest replies (newest first), for the anti-repetition rule. */
+export function recentOpenings(historyNewestFirst: HistoryLine[], speakerId: string, limit = 3): string[] {
+  const out: string[] = [];
+  for (const message of historyNewestFirst) {
+    if (out.length >= limit) break;
+    if (message.role !== 'assistant' || (message.speakerId && message.speakerId !== speakerId)) continue;
+    const words = message.content.trim().split(/\s+/u).slice(0, 6).join(' ');
+    if (words) out.push(utf8Prefix(words, 80));
+  }
+  return out;
+}
+
 export function buildCharacterPrompt(input: {
   speaker: CharacterSheet;
   cast: CharacterSheet[];
@@ -153,6 +166,8 @@ export function buildCharacterPrompt(input: {
     notes: relevantNotes(input.notes, request, compact ? 4 : 12),
     memoriesAcrossStories: relevantNotes(input.characterNotes, request, compact ? 2 : 6),
     storySoFar: utf8Prefix(input.summary ?? '', compact ? 740 : 2200),
+    // How this character's last replies began: models otherwise settle into one opening (*улыбается* …).
+    recentOpenings: recentOpenings(input.historyNewestFirst, speaker.id),
     earlierReplies: input.earlierReplies?.map(reply => ({
       name: reply.name, text: utf8Prefix(reply.text, compact ? 380 : 850),
     })),

@@ -161,7 +161,7 @@ try {
     check('01 · Female canon and grammar', /Вера Снегир[ёе]ва/i.test(v.text) && /28|двадцать восемь/i.test(v.text) && /вернулась/i.test(v.text));
     check('02 · Male canon and grammar', /Илья Невский/i.test(i.text) && /34|тридцать четыре/i.test(i.text) && /вернулся/i.test(i.text));
     const bio = await send(archive, 'Какова твоя профессия и в каком городе ты живёшь? Я ошибся, когда назвал тебя полицейским?', '03');
-    check('03 · Biography under contradiction', /реставр/i.test(bio.text) && /Луногорск/i.test(bio.text) && /не (?:работа|служ|полиц)/i.test(bio.text));
+    check('03 · Biography under contradiction', /реставр/i.test(bio.text) && /Луногорск/i.test(bio.text) && /не (?:работа|служ|полиц|явля|был)|полиц\p{L}* (?:я )?не|не из полиц/iu.test(bio.text));
     const question = await send(archive, 'Ответь одним коротким предложением. Сколько минут в одном часе?', '08');
     check('08 · Direct question', /60|шестьдесят/i.test(question.text));
     check('07 · Speech style', question.text.length <= 120 && !/\p{Extended_Pictographic}/u.test(question.text), 'Short calm reply without emoji');
@@ -209,8 +209,20 @@ try {
       const history = requireOk(await call('GET', '/v1/chats/' + memoryChat + '/messages?limit=100'), 'Reload history').items;
       const after100 = await send(memoryChat, 'Где мы нашли самый первый старый ключ и что на нём было написано?', '05');
       check('05 · Recall after 100 messages', history.length === 100 && /ваз/i.test(after100.text) && /янтарный берег/i.test(after100.text));
+      // Real-model repetition over the long run: how often a reply opens with the same three words as an
+      // earlier reply in this chat, and the most frequent opening.
+      const openings = samples.filter(sample => /^memory-turn-/.test(sample.checkpoint))
+        .map(sample => sample.text.toLocaleLowerCase('ru').replace(/[^\p{L}\p{N}\s*]/gu, '').split(/\s+/u).slice(0, 3).join(' '));
+      const seen = new Map();
+      let repeated = 0;
+      for (const opening of openings) { if (seen.has(opening)) repeated++; seen.set(opening, (seen.get(opening) ?? 0) + 1); }
+      const top = [...seen.entries()].sort((a, b) => b[1] - a[1])[0] ?? ['', 0];
+      const share = openings.length ? repeated / openings.length : 0;
+      check('13 · Varied openings over 100 messages', openings.length >= 40 && share <= 0.25,
+        `${repeated}/${openings.length} replies reuse an earlier opening; most frequent «${top[0]}» ×${top[1]}`);
     } else {
       check('05 · Recall after 100 messages', null, 'Run with --full');
+      check('13 · Varied openings over 100 messages', null, 'Run with --full');
     }
   }
 } catch (error) {
