@@ -98,13 +98,17 @@ class NovaUiTest {
   }
  }
  private fun SemanticsNodeInteraction.reveal():SemanticsNodeInteraction {
-  try { performScrollTo() } catch (e:AssertionError) { assertIsDisplayed() }
+  try { performScrollTo() } catch (e:AssertionError) {
+   try { assertIsDisplayed() } catch (e2:AssertionError) { screenshot("failure-not-displayed"); throw AssertionError("Not displayed: "+runCatching{fetchSemanticsNode().config.toString()}.getOrDefault("?"),e2) }
+  }
   return this
  }
  private fun clickWhenEnabled(text:String){
   waitFor("enabled button '$text'"){compose.onAllNodes(hasText(text) and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
   val node=compose.onNode(hasText(text) and isEnabled())
-  node.reveal().assertIsDisplayed().performClick()
+  try { node.reveal().assertIsDisplayed().performClick() } catch (e:AssertionError) {
+   screenshot("failure-click-"+text.replace(Regex("[^a-zA-Zа-яА-Я0-9]"),"-")); throw AssertionError("Could not tap '$text'",e)
+  }
  }
  @Test fun loginCatalogChatAndEncryptedDraftSurviveRecreation(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")

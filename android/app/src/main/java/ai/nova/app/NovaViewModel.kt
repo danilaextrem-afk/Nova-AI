@@ -221,6 +221,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
                 error = e.localizedMessage ?: "Не удалось выполнить запрос"
             } finally {
                 loading = false
+                pendingTabRefresh?.let { tab -> pendingTabRefresh = null; if (activeTab == tab) viewModelScope.launch { changeTab(tab) } }
                 streamingText = null
             }
         }
@@ -249,8 +250,11 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** A tab opened while another request runs is refreshed right after it, never silently skipped. */
+    private var pendingTabRefresh: NovaTab? = null
     fun changeTab(tab: NovaTab) {
         activeTab = tab
+        if (loading) { pendingTabRefresh = tab; return }
         when (tab) {
             NovaTab.CATALOG -> refreshCatalog()
             NovaTab.CHATS -> refreshChats()
