@@ -69,6 +69,24 @@ describe('Creator assistant',()=>{
   provider(JSON.stringify({...card,backstory:'Работала няней для kids в детском лагере.'}));
   expect((await assist(u,{mode:'full',idea:'Вожатая'})).json().error).toBe('CREATOR_RESULT_REJECTED');
  });
+ it('retries once when the answer mentions childhood, instead of refusing a harmless request',async()=>{
+  const u=await user();
+  const calls=provider('{"variants":["Ещё ребёнком Вера рисовала карты.","Реставратор из Луногорска.","Хранительница архива."]}',
+   '{"variants":["Реставратор старых карт.","Хранительница архива Луногорска.","Картограф, вернувшаяся домой."]}');
+  const r=await assist(u,{mode:'field',field:'biography',action:'variants',current:{name:'Вера',age:28,gender:'female'}});
+  expect(r.statusCode,r.body).toBe(200);expect(r.json().variants).toEqual(['Реставратор старых карт.','Хранительница архива Луногорска.','Картограф, вернувшаяся домой.']);
+  expect(calls).toHaveLength(2);expect(calls[0].messages[0].content).toContain('Do not mention children, childhood');
+  // Two answers that both contain a refused variant: the clean ones are kept, the refused one never reaches the user.
+  provider('{"variants":["Ещё ребёнком она пела.","Певица из порта.","Капитан."]}','{"variants":["Дети её любили.","Певица.","Рыбачка."]}');
+  const partial=await assist(u,{mode:'field',field:'biography',action:'variants',current:{name:'Вера',age:28}});
+  expect(partial.statusCode,partial.body).toBe(200);expect(partial.json().variants).toEqual(['Певица из порта.','Капитан.']);
+  provider('{"variants":["Дети.","Ребёнком.","Детская мечта."]}','{"variants":["Дети.","Пианистка.","Ребёнок."]}');
+  expect((await assist(u,{mode:'field',field:'biography',action:'variants',current:{name:'Вера',age:28}})).json().variants).toEqual(['Пианистка.']);
+  provider('{"variants":["Дети.","Ребёнком.","Детская мечта."]}');
+  expect((await assist(u,{mode:'field',field:'biography',action:'variants',current:{name:'Вера',age:28}})).json().error).toBe('CREATOR_RESULT_REJECTED');
+  provider(JSON.stringify({...card,backstory:'Ещё ребёнком мечтала о море.'}),JSON.stringify(card));
+  const full=await assist(u,{mode:'full',idea:'Морячка'});expect(full.statusCode,full.body).toBe(200);expect(full.json().card.backstory).toBe(card.backstory);
+ });
  it('limits calls per day and per minute, and needs an active account',async()=>{
   const u=await user();provider(JSON.stringify(card));process.env.NOVA_CREATOR_DAILY_LIMIT='2';
   expect((await assist(u,{mode:'full',idea:'Пират'})).statusCode).toBe(200);expect((await assist(u,{mode:'full',idea:'Пират'})).statusCode).toBe(200);
