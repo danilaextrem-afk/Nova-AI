@@ -21,7 +21,9 @@ beforeEach(async()=>{await db.aiProviderState.deleteMany();process.env.AI_PROVID
 afterEach(()=>{vi.unstubAllGlobals();});
 afterAll(async()=>{for(const k of ['AI_PROVIDER','GROQ_API_KEY','AI_MODEL','NOVA_AI_DAILY_BUDGET_MICROS','NOVA_GROQ_FREE_MODELS','NOVA_CREATOR_DAILY_LIMIT'])if(env[k]===undefined)delete process.env[k];else process.env[k]=env[k];
  await db.user.deleteMany({where:{id:{in:users}}});await app.close();await db.$disconnect();});
-const assist=(uid:string,payload:any)=>app.inject({method:'POST',url:'/v1/characters/assist',headers:headers(uid),payload});
+// Each test user gets its own client address, so the per-minute limit applies per person as in real use.
+const ip=new Map<string,string>();const addr=(uid:string)=>{if(!ip.has(uid))ip.set(uid,'10.9.'+ip.size+'.1');return ip.get(uid)!;};
+const assist=(uid:string,payload:any)=>app.inject({method:'POST',url:'/v1/characters/assist',headers:headers(uid),payload,remoteAddress:addr(uid)});
 
 describe('Creator assistant',()=>{
  it('accepts fenced or slightly long JSON and rejects malformed cards',()=>{
@@ -76,7 +78,10 @@ describe('Creator assistant',()=>{
   const busy=await assist(v,{mode:'full',idea:'Пират'});expect([429,503]).toContain(busy.statusCode);expect(busy.json().error).toBe('AI_UNAVAILABLE');
   const blocked=await user();await db.user.update({where:{id:blocked},data:{status:'BLOCKED'}});
   expect((await assist(blocked,{mode:'full',idea:'Пират'})).statusCode).toBe(401);
-  expect((await app.inject({method:'POST',url:'/v1/characters/assist',payload:{mode:'full',idea:'Пират'}})).statusCode).toBe(401);
+  expect((await app.inject({method:'POST',url:'/v1/characters/assist',payload:{mode:'full',idea:'Пират'},remoteAddress:'10.8.0.1'})).statusCode).toBe(401);
+  // Per-minute limit: the 13th call within a minute from one person is refused before any AI call.
+  const w=await user();const codes=[];for(let i=0;i<13;i++)codes.push((await assist(w,{mode:'full',idea:'школьница'})).statusCode);
+  expect(codes.slice(0,12).every(c=>c===422)).toBe(true);expect(codes[12]).toBe(429);
  });
 });
 

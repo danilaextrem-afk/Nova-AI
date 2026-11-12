@@ -83,6 +83,23 @@ try {
   const memOther = (await call('GET', `/v1/characters/${items[0].id}/memories`, undefined, b)).json?.items ?? [];
   mem.status === 201 && memList.length === 1 && memOther.length === 0 ? ok('Character memory is private to its user') : bad('Character memory', mem.status + ' ' + memList.length + '/' + memOther.length);
 
+  // 4c. Smart creator with a real model: one sentence -> full card; the saved character knows its own sheet.
+  const made = await call('POST', '/v1/characters/assist', { mode: 'full', idea: 'Весёлая рыжеволосая путешественница, которая любит приключения', current: { age: 27, gender: 'female' } }, a);
+  if (made.status === 200 && made.json?.card?.name && made.json.card.greeting) {
+    const c = made.json.card;
+    ok('AI character card from one sentence', `${c.name} · ${c.category} · ${(c.tags || []).join(', ')}: «${c.greeting.slice(0, 80).replace(/\|/g, '/')}»`);
+    const saved = await call('POST', '/v1/characters', { name: c.name, greeting: c.greeting, category: c.category, tags: c.tags, biography: c.biography,
+      personality: c.personality, interests: c.interests, appearance: c.appearance, speechStyle: c.speechStyle, backstory: c.backstory, scenario: c.scenario,
+      age: 27, gender: 'female', traits: c.traits }, a);
+    const own = (await call('POST', '/v1/chats', { characterId: saved.json?.character?.id }, a)).json?.chat;
+    const ask = own ? await call('POST', `/v1/chats/${own.id}/messages`, { content: 'Как тебя зовут и сколько тебе лет? Ответь одной фразой.', requestId: crypto.randomUUID() }, a) : null;
+    const reply = ask?.json?.assistantMessage?.content ?? '';
+    const first = c.name.split(/\s+/)[0];
+    reply.includes(first) && /27|двадцать сем/i.test(reply) ? ok('Created character knows its name and age', `«${reply.slice(0, 120).replace(/\|/g, '/')}»`)
+      : note('Created character self-knowledge', (ask?.status ?? 'no chat') + ` «${reply.slice(0, 120).replace(/\|/g, '/')}»`);
+  } else if (made.status === 429 || made.status === 503) note('AI character card', 'provider busy: HTTP ' + made.status + ' ' + (made.json?.error ?? ''));
+  else bad('AI character card', made.status + ' ' + made.text.slice(0, 160));
+
   // 5. Daily bonus (idempotent) and referral.
   const d1 = await call('POST', '/v1/rewards/daily', undefined, a); const d2 = await call('POST', '/v1/rewards/daily', undefined, a);
   const wallet = (await call('GET', '/v1/wallet', undefined, a)).json;
