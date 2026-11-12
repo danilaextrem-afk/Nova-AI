@@ -273,7 +273,7 @@ app.get('/v1/ads/ssv', async (req, reply) => {
 });
 
 await registerCharacterRoutes(app, db);
-await registerChatRoutes(app, db);
+const drainChatJobs = await registerChatRoutes(app, db);
 await registerStoryRoutes(app,db);
 await registerSocialRoutes(app,db);
 await registerProductRoutes(app,db);
@@ -289,6 +289,6 @@ for (const [sku, tokens] of Object.entries(PRODUCT_SEED)) {
 
 await seedStarterCast(db);
 
-app.addHook('onClose',async()=>{await db.$disconnect();});
+app.addHook('onClose', async () => { await drainChatJobs(); await db.$disconnect(); });
 return app;
 }

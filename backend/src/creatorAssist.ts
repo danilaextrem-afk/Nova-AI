@@ -143,6 +143,7 @@ export async function runAssist(db: PrismaClient, input: AssistInput): Promise<{
 
 const MEDIA_MAX_BYTES = 200_000;
 const MEDIA_PER_USER = 40;
+class MediaLimitReached extends Error {}
 
 export async function registerCreatorRoutes(app: FastifyInstance, db: PrismaClient, assist: typeof runAssist = runAssist) {
   const auth = { preHandler: app.auth };
@@ -158,19 +159,26 @@ export async function registerCreatorRoutes(app: FastifyInstance, db: PrismaClie
     if (CREATOR_BLOCKED.test(userText)) return reply.code(422).send({ error: 'CREATOR_REQUEST_REJECTED' });
     // Cost control: a daily number of helper calls per person (the AI gateway also keeps provider quotas).
     const since = new Date(rewardDay().nextAt.getTime() - 86400000);
-    if (await db.aiUsage.count({ where: { userId, feature: 'creator', createdAt: { gte: since } } }) >= dailyLimit())
-      return reply.code(429).send({ error: 'CREATOR_DAILY_LIMIT' });
+    const attempt = await db.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+      if (await tx.aiUsage.count({ where: { userId, feature: 'creator', createdAt: { gte: since } } }) >= dailyLimit()) return null;
+      return tx.aiUsage.create({ data: {
+        userId, feature: 'creator', provider: 'gateway', model: p.data.mode, success: false, errorCode: 'IN_PROGRESS',
+      } });
+    });
+    if (!attempt) return reply.code(429).send({ error: 'CREATOR_DAILY_LIMIT' });
     const started = Date.now();
     try {
       const result = await assist(db, p.data);
       const produced = JSON.stringify(result);
-      await db.aiUsage.create({ data: { userId, feature: 'creator', provider: 'gateway', model: p.data.mode, success: true, latencyMs: Date.now() - started } });
+      await db.aiUsage.update({ where: { id: attempt.id }, data: { success: true, errorCode: null, latencyMs: Date.now() - started } });
       if (CREATOR_BLOCKED.test(produced)) return reply.code(422).send({ error: 'CREATOR_RESULT_REJECTED' });
       return { ...result, needs: p.data.mode === 'full' ? (['age', 'gender'] as const).filter(k => p.data.current[k] === undefined) : [] };
     } catch (e) {
       const err = e instanceof AiProviderError ? e : null;
-      await db.aiUsage.create({ data: { userId, feature: 'creator', provider: 'gateway', model: p.data.mode, success: false,
-        errorCode: (err?.code ?? 'CREATOR_FAILURE').slice(0, 60), latencyMs: Date.now() - started } }).catch(() => {});
+      await db.aiUsage.update({ where: { id: attempt.id }, data: {
+        errorCode: (err?.code ?? 'CREATOR_FAILURE').slice(0, 60), latencyMs: Date.now() - started,
+      } }).catch(() => {});
       if (err?.code === 'FIELD_EMPTY') return reply.code(400).send({ error: 'FIELD_EMPTY' });
       if (err) { reply.header('Retry-After', err.retryAfter); return reply.code(err.httpStatus === 429 ? 429 : 503).send({ error: err.code === 'AI_BAD_FORMAT' ? 'AI_BAD_FORMAT' : 'AI_UNAVAILABLE' }); }
       req.log.warn({ code: 'CREATOR_FAILURE' }, 'Creator assist failed');
@@ -192,18 +200,43 @@ export async function registerCreatorRoutes(app: FastifyInstance, db: PrismaClie
       const old = await tx.media.findMany({ where: { ownerId: userId }, orderBy: { createdAt: 'desc' }, skip: MEDIA_PER_USER - 1, select: { id: true } });
       // Keep the newest uploads; older ones that no character uses are removed.
       for (const o of old) if (!await tx.character.count({ where: { avatarUrl: { endsWith: `/media/${o.id}.jpg` } } })) await tx.media.delete({ where: { id: o.id } });
+      if (await tx.media.count({ where: { ownerId: userId } }) >= MEDIA_PER_USER) throw new MediaLimitReached();
       return tx.media.create({ data: { ownerId: userId, mime: 'image/jpeg', data: bytes, bytes: bytes.length, source: p.data.source }, select: { id: true } });
+    }).catch(error => {
+      if (error instanceof MediaLimitReached) return null;
+      throw error;
     });
+    if (!media) return reply.code(409).send({ error: 'MEDIA_LIMIT' });
     const base = (process.env.NOVA_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || `https://${req.headers.host}`).replace(/\/$/, '');
     return reply.code(201).send({ id: media.id, url: `${base}/media/${media.id}.jpg` });
   });
 
   app.get('/media/:file', { config: { rateLimit: { max: 240, timeWindow: '1 minute' } } }, async (req: any, reply) => {
     const id = /^([0-9a-f-]{36})\.jpg$/.exec(req.params.file)?.[1];
-    const m = id ? await db.media.findUnique({ where: { id }, select: { data: true, mime: true } }) : null;
-    if (!m) return reply.code(404).send({ error: 'NOT_FOUND' });
-    reply.header('Content-Type', m.mime).header('Cache-Control', 'public, max-age=604800, immutable')
+    const media = id ? await db.media.findUnique({ where: { id }, select: { ownerId: true, data: true, mime: true } }) : null;
+    if (!media) return reply.code(404).send({ error: 'NOT_FOUND' });
+
+    const published = await db.character.findFirst({
+      where: { ownerId: media.ownerId, avatarUrl: { endsWith: `/media/${id}.jpg` },
+        isHidden: false, publication: { is: { status: 'PUBLISHED' } } },
+      orderBy: { mature: 'asc' },
+      select: { mature: true },
+    });
+    if (!published || published.mature) {
+      if (!req.headers.authorization) return reply.code(404).send({ error: 'NOT_FOUND' });
+      await app.auth(req, reply);
+      if (reply.sent) return;
+      if (media.ownerId !== req.user.sub) {
+        const adultAccess = published && await db.profile.findUnique({
+          where: { userId: req.user.sub }, select: { showMature: true },
+        });
+        if (!adultAccess?.showMature) return reply.code(404).send({ error: 'NOT_FOUND' });
+      }
+    }
+
+    reply.header('Content-Type', media.mime).header('Vary', 'Authorization')
+      .header('Cache-Control', published && !published.mature ? 'public, max-age=300' : 'private, no-store')
       .header('X-Content-Type-Options', 'nosniff').header('Content-Security-Policy', "default-src 'none'");
-    return reply.send(Buffer.from(m.data));
+    return reply.send(Buffer.from(media.data));
   });
 }

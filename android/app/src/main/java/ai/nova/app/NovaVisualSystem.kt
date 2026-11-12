@@ -50,6 +50,8 @@ object NovaDesign {
  }
 }
 @Composable fun NovaEyebrow(text:String){Text(text.uppercase(),color=NovaDesign.Rose,fontSize=10.sp,letterSpacing=2.sp,fontWeight=FontWeight.SemiBold)}
+internal val LocalPortraitAccount = staticCompositionLocalOf<NovaViewModel?> { null }
+
 @Composable fun NovaPortrait(id:String?,name:String,modifier:Modifier=Modifier,url:String?=null){
  val asset=when {
   id?.matches(Regex("00000000-0000-4000-8000-000000000[12](0[1-9]|1[0-2])"))==true -> "file:///android_asset/portraits/${id.takeLast(3)}.webp"
@@ -57,8 +59,20 @@ object NovaDesign {
   url?.startsWith(StudioCast.assetBase+"/")==true && url.substringAfterLast("/").removeSuffix(".webp").toIntOrNull()?.let { it in 101..112 || it in 201..212 } == true -> "file:///android_asset/portraits/${url.substringAfterLast("/")}"
   else->null
  }
+ val account = LocalPortraitAccount.current
+ val context = androidx.compose.ui.platform.LocalContext.current
+ val source = asset ?: url?.takeIf { it.isNotBlank() }
+ val request = remember(source, account?.accessToken, account?.serverUrl, context) {
+  val authorization = if (asset == null && source != null) account?.portraitAuthorization(source) else null
+  if (authorization == null) source else coil.request.ImageRequest.Builder(context)
+   .data(source)
+   .addHeader("Authorization", authorization)
+   .diskCachePolicy(coil.request.CachePolicy.DISABLED)
+   .memoryCachePolicy(coil.request.CachePolicy.DISABLED)
+   .build()
+ }
  Box(modifier.background(Color(0xFF2C2339)),contentAlignment=Alignment.Center){
-  if(asset!=null||!url.isNullOrBlank())AsyncImage(model=asset?:url?.takeIf{it.isNotBlank()},contentDescription="Портрет персонажа $name",contentScale=ContentScale.Crop,alignment=Alignment.TopCenter,modifier=Modifier.fillMaxSize())
+  if(asset!=null||!url.isNullOrBlank())AsyncImage(model=request,contentDescription="Портрет персонажа $name",contentScale=ContentScale.Crop,alignment=Alignment.TopCenter,modifier=Modifier.fillMaxSize())
   else Text(name.take(1),style=MaterialTheme.typography.headlineLarge,color=NovaDesign.Lavender)
  }
 }

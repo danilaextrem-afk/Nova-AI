@@ -384,13 +384,39 @@ class NovaUiTest {
   waitFor("accepted"){vm().draftBiography=="Путешественница на старом фургоне."}
   clickWhenEnabled("↶ Вернуть прежний текст")
   waitFor("undone"){vm().draftBiography==before}
-  // Ready-made avatar, then an uploaded photo (the system photo picker itself can't be driven from a test).
   clickWhenEnabled("Готовые")
   compose.onNodeWithContentDescription("Портрет персонажа Аватар 1").performClick()
   waitFor("ready avatar"){vm().draftAvatar.endsWith("/101.webp")}
-  val photo=android.graphics.Bitmap.createBitmap(1600,1200,android.graphics.Bitmap.Config.ARGB_8888).apply{eraseColor(android.graphics.Color.rgb(200,120,60))}
-  kotlinx.coroutines.runBlocking{vm().uploadAvatarBitmap(photo,"upload")}
-  assertTrue(avatarBody!!.contains("\"rightsConfirmed\":true")&&avatarBody!!.contains("\"data\":\"/9j/"))
+  val photo = Bitmap.createBitmap(960, 640, Bitmap.Config.ARGB_8888)
+  photo.eraseColor(android.graphics.Color.rgb(200, 120, 60))
+  val file = File(File(compose.activity.cacheDir, "portrait-camera").apply { mkdirs() }, "fixture.jpg")
+  file.outputStream().use { photo.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+  photo.recycle()
+  val uri = androidx.core.content.FileProvider.getUriForFile(compose.activity, compose.activity.packageName + ".portraits", file)
+  val picker = androidx.test.espresso.intent.matcher.IntentMatchers.hasAction(android.provider.MediaStore.ACTION_PICK_IMAGES)
+  androidx.test.espresso.intent.Intents.init()
+  try {
+   androidx.test.espresso.intent.Intents.intending(picker).respondWith(
+    androidx.test.Instrumentation.ActivityResult(android.app.Activity.RESULT_OK, android.content.Intent().setData(uri)))
+   clickWhenEnabled("Из галереи")
+   androidx.test.espresso.intent.Intents.intended(picker)
+   waitFor("crop controls"){compose.onAllNodesWithText("Масштаб").fetchSemanticsNodes().isNotEmpty()}
+   screenshot("38-portrait-crop")
+   compose.onNode(isToggleable() and hasAnyAncestor(isDialog())).reveal().performClick()
+   clickWhenEnabled("Сохранить портрет")
+   waitFor("cropped JPEG uploaded"){avatarBody != null && !vm().avatarBusy}
+  } finally {
+   androidx.test.espresso.intent.Intents.release()
+   file.delete()
+  }
+  val upload = com.google.gson.JsonParser.parseString(avatarBody).asJsonObject
+  assertTrue(upload.get("rightsConfirmed").asBoolean)
+  val jpeg = android.util.Base64.decode(upload.get("data").asString, android.util.Base64.DEFAULT)
+  val uploaded = android.graphics.BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size)
+  assertEquals(512, uploaded.height)
+  assertEquals(2f / 3f, uploaded.width.toFloat() / uploaded.height, 0.01f)
+  uploaded.recycle()
+  assertTrue(SessionStore(compose.activity).get("characterDraft")!!.contains("media/m1.jpg"))
   assertEquals("https://example.test/media/m1.jpg",vm().draftAvatar)
   hideKeyboard()
   clickWhenEnabled("✨ Создать персонажа")

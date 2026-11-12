@@ -1,7 +1,7 @@
 import type { Character, Chat, Memory, Message } from '@prisma/client';
 import type { AiMessage, AiTier } from './aiGateway.js';
 
-type CharacterSheet = Pick<Character, 'id' | 'name' | 'age' | 'gender' | 'traits' | 'appearance' |
+type CharacterSheet = Pick<Character, 'id' | 'name' | 'age' | 'gender' | 'mature' | 'traits' | 'appearance' |
   'biography' | 'personality' | 'interests' | 'backstory' | 'speechStyle' | 'scenario' | 'greeting' | 'language'>;
 type Note = Pick<Memory, 'content' | 'kind' | 'pinned' | 'source'>;
 type HistoryLine = Pick<Message, 'role' | 'content' | 'speakerId'>;
@@ -100,7 +100,10 @@ export function buildCharacterPrompt(input: {
   const { speaker, cast, chat, tier, request } = input;
   const settings = dialogueSettings(chat.responseStyle, chat.tone, tier);
   const compact = input.tokenBudget <= 8000;
-  const system: AiMessage = { role: 'system', content: rules + ' ' + settings.length + ' ' + settings.voice };
+  const romance = cast.some(character => character.mature)
+    ? ' Adult romance and drama are allowed, but never sexually explicit. Never involve minors. Fade to black.'
+    : '';
+  const system: AiMessage = { role: 'system', content: rules + romance + ' ' + settings.length + ' ' + settings.voice };
   const current: AiMessage = { role: 'user', content: request };
   const context = {
     activeCharacter: characterCard(speaker, compact),

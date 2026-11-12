@@ -94,9 +94,20 @@ describe('Avatars and the finished character',()=>{
   expect((await up({data:jpeg(210_000),source:'upload',rightsConfirmed:true})).statusCode).toBe(413);
   const ok=await up({data:jpeg(),source:'upload',rightsConfirmed:true});expect(ok.statusCode,ok.body).toBe(201);
   expect(ok.json().url).toMatch(/^https:\/\/.+\/media\/[0-9a-f-]{36}\.jpg$/);
-  const file=await app.inject({url:'/media/'+ok.json().id+'.jpg'});
+  const url = '/media/' + ok.json().id + '.jpg';
+  const stranger = await user();
+  expect((await app.inject({ url })).statusCode).toBe(404);
+  expect((await app.inject({ url, headers: headers(stranger) })).statusCode).toBe(404);
+  const file = await app.inject({ url, headers: headers(u) });
+  expect(file.headers['cache-control']).toBe('private, no-store');
   expect(file.statusCode).toBe(200);expect(file.headers['content-type']).toBe('image/jpeg');expect(file.headers['x-content-type-options']).toBe('nosniff');
   expect(file.rawPayload.length).toBe(2000);
+  const published = await db.character.create({ data: { ownerId: u, name: 'Портрет', greeting: 'Привет', category: 'Тест',
+    tags: [], avatarUrl: ok.json().url, publication: { create: { status: 'PUBLISHED' } } } });
+  expect((await app.inject({ url })).statusCode).toBe(200);
+  await db.character.update({ where: { id: published.id }, data: { mature: true } });
+  expect((await app.inject({ url })).statusCode).toBe(404);
+  expect((await app.inject({ url, headers: headers(stranger) })).statusCode).toBe(404);
   expect((await app.inject({url:'/media/../../etc/passwd'})).statusCode).toBe(404);
   expect((await app.inject({method:'POST',url:'/v1/media/avatar',payload:{data:jpeg(),source:'upload',rightsConfirmed:true}})).statusCode).toBe(401);
  });

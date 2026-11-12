@@ -27,6 +27,13 @@ const sendInput=z.object({content:z.string().trim().min(1).max(4000).optional(),
   .refine(v=>!!v.content!==!!v.regenerateMessageId,{message:'Exactly one of content or regenerateMessageId'});
 class RegenerateTargetChanged extends Error {}
 export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
+  const background = new Set<Promise<void>>();
+  const runInBackground = (task: Promise<unknown>, onFailure: () => void) => {
+    const pending = task.then(() => undefined, onFailure).finally(() => background.delete(pending));
+    background.add(pending);
+  };
+  const drainChatJobs = async () => { await Promise.all(background); };
+  app.addHook('onClose', drainChatJobs);
   const auth={preHandler:app.auth};
   await registerMemoryRoutes(app,db,async userId=>visibleCharacter(userId,await showsMature(db,userId)));
   /** Adds the speaking character's name to group replies (names only; the chat is the caller's own). */
@@ -52,13 +59,17 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
     const chat=await db.chat.create({data:{userId:req.user.sub,characterId:parsed.data.characterId,
       participantIds:members.filter(x=>x!==parsed.data.characterId),scenario:parsed.data.scenario||preset?.scenario||'',persona:parsed.data.persona,
       title:(characters.map(x=>x.name).join(', ')+(preset?' · '+preset.title:'')).slice(0,200)}});
-    return reply.code(201).send({chat,greeting:preset?.greeting||null});
+    const lead = characters.find(character => character.id === chat.characterId)!;
+    return reply.code(201).send({
+      chat: { ...chat, characterName: lead.name, characterAvatarUrl: lead.avatarUrl },
+      greeting: preset?.greeting || null,
+    });
   });
   app.get('/v1/chats',auth,async(req:any,reply)=>{
     const q=z.object({limit:z.coerce.number().int().min(1).max(100).default(50),q:z.string().max(100).optional()}).safeParse(req.query);
     if(!q.success)return reply.code(400).send({error:'INVALID_QUERY'});
-    const items=await db.chat.findMany({where:{userId:req.user.sub,...(q.data.q?{OR:[{title:{contains:q.data.q,mode:'insensitive'}},{messages:{some:{content:{contains:q.data.q,mode:'insensitive'}}}}]}:{})},orderBy:[{updatedAt:'desc'},{id:'desc'}],take:q.data.limit,include:{character:{select:{name:true}}}});
-    return {items:items.map(({character,...chat})=>({...chat,characterName:character.name}))};
+    const items=await db.chat.findMany({where:{userId:req.user.sub,...(q.data.q?{OR:[{title:{contains:q.data.q,mode:'insensitive'}},{messages:{some:{content:{contains:q.data.q,mode:'insensitive'}}}}]}:{})},orderBy:[{updatedAt:'desc'},{id:'desc'}],take:q.data.limit,include:{character:{select:{name:true,avatarUrl:true}}}});
+    return {items:items.map(({character,...chat})=>({...chat,characterName:character.name,characterAvatarUrl:character.avatarUrl}))};
   });
   app.get('/v1/chats/:id/messages',auth,async(req:any,reply)=>{
     const q=z.object({before:z.coerce.number().int().positive().optional(),limit:z.coerce.number().int().min(1).max(100).default(50),
@@ -261,9 +272,9 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
         return {userMessage,assistantMessage:named,extraMessages:extraNamed};
       });
       // Automatic memories are best-effort too: every few turns, one small call, never blocking the reply.
-      void extractMemories(db,chat.id,userId).catch(()=>req.log.warn({code:'MEMORY_DEFERRED'},'Memory extraction deferred'));
+      runInBackground(extractMemories(db, chat.id, userId), () => req.log.warn({ code: 'MEMORY_DEFERRED' }, 'Memory extraction deferred'));
       // Referral rewards unlock after the invitee's first real chats; best-effort, idempotent.
-      void settleReferral(db,userId).catch(()=>req.log.warn({code:'REFERRAL_DEFERRED'},'Referral settle deferred'));
+      runInBackground(settleReferral(db, userId), () => req.log.warn({ code: 'REFERRAL_DEFERRED' }, 'Referral settle deferred'));
       return {...saved,duplicate:false,tier,tokensCharged:price,
         inference:{provider:output.provider,model:output.model}};
     }catch(error){
@@ -276,4 +287,5 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
         error instanceof RegenerateTargetChanged?409:503).send({error:code,requestId});
     }
   }
+  return drainChatJobs;
 }

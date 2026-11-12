@@ -114,12 +114,29 @@ fun CharacterEditor(model: NovaViewModel) {
     var ideaOpen by remember { mutableStateOf(false) }
     var advanced by remember { mutableStateOf(false) }
     var readyOpen by remember { mutableStateOf(false) }
-    var consentUri by remember { mutableStateOf<android.net.Uri?>(null) }
+    var consentUri by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<android.net.Uri?>(null) }
+    var cameraUri by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<android.net.Uri?>(null) }
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val owner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     var moreTraits by remember { mutableStateOf(false) }
     var customTrait by remember { mutableStateOf("") }
     var customScene by remember { mutableStateOf(false) }
     // Autosave: the unfinished character survives closing the app.
     LaunchedEffect(model.draftSignature) { kotlinx.coroutines.delay(500); model.persistDraft() }
+    DisposableEffect(owner, model) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) model.persistDraft()
+        }
+        owner.lifecycle.addObserver(observer)
+        onDispose {
+            owner.lifecycle.removeObserver(observer)
+            model.persistDraft()
+        }
+    }
+    val camera = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
+        if (taken) consentUri = cameraUri
+        cameraUri = null
+    }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> if (uri != null) consentUri = uri }
 
     Text(if (model.editingCharacterId == null) "Создать персонажа" else "Редактировать персонажа", style = MaterialTheme.typography.headlineMedium)
@@ -162,6 +179,17 @@ fun CharacterEditor(model: NovaViewModel) {
             }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 OutlinedButton(onClick = { picker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, enabled = !model.avatarBusy, modifier = Modifier.fillMaxWidth()) { Text("Из галереи") }
+                OutlinedButton(onClick = {
+                    runCatching {
+                        val dir = java.io.File(context.cacheDir, "portrait-camera").apply { mkdirs() }
+                        val file = java.io.File(dir, "portrait.jpg")
+                        if (file.exists()) file.delete()
+                        check(file.createNewFile())
+                        val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".portraits", file)
+                        cameraUri = uri
+                        camera.launch(uri)
+                    }.onFailure { model.showNotice("Камера недоступна. Выбери фото из галереи.") }
+                }, enabled = !model.avatarBusy, modifier = Modifier.fillMaxWidth()) { Text("Сделать фото") }
                 OutlinedButton(onClick = { model.avatarFromAi() }, enabled = !model.avatarBusy, modifier = Modifier.fillMaxWidth()) { Text("Портрет с AI") }
                 OutlinedButton(onClick = { readyOpen = true }, enabled = !model.avatarBusy, modifier = Modifier.fillMaxWidth()) { Text("Готовые") }
             }
@@ -267,10 +295,10 @@ fun CharacterEditor(model: NovaViewModel) {
     model.cardSuggestion?.let { CardPreviewDialog(model, it) }
     if (readyOpen) ReadyAvatarsDialog(model) { readyOpen = false }
     consentUri?.let { uri ->
-        AlertDialog(onDismissRequest = { consentUri = null }, title = { Text("Использовать это фото?") },
-            text = { Text("Фото уменьшится и сохранится на сервере NOVA только как портрет персонажа. AI-сервисам оно не отправляется. Подтверди, что у тебя есть право на это изображение, на нём нет детей и откровенного контента, а реальные люди дали согласие.") },
-            confirmButton = { Button(onClick = { consentUri = null; model.avatarFromPhoto(uri) }) { Text("Подтверждаю") } },
-            dismissButton = { TextButton(onClick = { consentUri = null }) { Text("Отмена") } })
+        PortraitCropDialog(uri, context.contentResolver, onDismiss = { consentUri = null }) { bitmap, crop ->
+            consentUri = null
+            model.uploadCroppedPortrait(bitmap, crop)
+        }
     }
 }
 

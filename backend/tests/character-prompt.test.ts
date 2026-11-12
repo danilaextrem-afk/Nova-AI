@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { buildCharacterPrompt, estimatePrompt } from '../src/characterPrompt.js';
 
 const aurora = {
-  id: 'aurora', name: 'Аврора Вейл', age: 28, gender: 'female', language: 'ru', traits: ['Наблюдательная'],
+  id: 'aurora', name: 'Аврора Вейл', age: 28, gender: 'female', mature: false, language: 'ru', traits: ['Наблюдательная'],
   biography: 'Детектив из Астры-9.', speechStyle: 'Говорит коротко и с лёгкой иронией.',
   personality: 'Находчивая', appearance: 'Серебристые волосы', interests: 'Шифры',
   backstory: 'Росла у моря.', scenario: 'Пропавший архив', greeting: 'Поможешь разгадать шифр?',

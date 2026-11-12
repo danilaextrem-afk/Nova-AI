@@ -379,6 +379,17 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun portraitAuthorization(url: String): String? {
+        val image = runCatching { java.net.URI(url) }.getOrNull() ?: return null
+        val server = runCatching { java.net.URI(serverUrl) }.getOrNull() ?: return null
+        val sameOrigin = image.scheme == server.scheme && image.host != null &&
+            image.host.equals(server.host, ignoreCase = true) && image.port == server.port
+        if (!sameOrigin || image.userInfo != null || image.query != null ||
+            !Regex("/media/[0-9a-f-]{36}\\.jpg").matches(image.path.orEmpty())) return null
+        if (image.scheme != "https" && !(BuildConfig.DEBUG && image.host in setOf("127.0.0.1", "10.0.2.2", "localhost"))) return null
+        return (store.get("access") ?: accessToken)?.let { "Bearer $it" }
+    }
+
     fun chatPortraitUrl(characterId:String):String? =
         catalog.firstOrNull{it.id==characterId}?.avatarUrl ?: owned.firstOrNull{it.id==characterId}?.avatarUrl ?: store.get("portrait-$characterId")
     fun startStudioChat(hero:StudioHero) {
@@ -397,10 +408,10 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         execute {
             val api = service()
             val created = api.createChat(authorization(), NovaCreateChatBody(character.id, groupIds.filter { it != character.id }.take(4), if (scenario == null) storyScenario else "", playerPersona, scenario?.id))
-            activeChat = created.chat
+            activeChat = created.chat.copy(characterAvatarUrl = created.chat.characterAvatarUrl ?: character.avatarUrl)
             chatGreeting = created.greeting?.takeIf { it.isNotBlank() } ?: character.greeting
             profileCharacter = null; characterMemories = emptyList(); memories = emptyList()
-            store.put("chat", gson.toJson(created.chat))
+            store.put("chat", gson.toJson(activeChat))
             chatMessages = emptyList()
             chatInput = ""
             activeTab = NovaTab.CHATS
@@ -669,27 +680,37 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         val jpeg = withContext(Dispatchers.Default) { toAvatarJpeg(bitmap) }
         val result = service().uploadAvatar(authorization(), AvatarUpload(android.util.Base64.encodeToString(jpeg, android.util.Base64.NO_WRAP), source, true))
         draftAvatar = result.url
+        persistDraft()
         return result.url
     }
-    fun avatarFromPhoto(uri: android.net.Uri) {
+    fun uploadCroppedPortrait(bitmap: android.graphics.Bitmap, crop: androidx.compose.ui.unit.IntRect) {
         if (avatarBusy) return
-        avatarBusy = true; error = null
+        avatarBusy = true
+        error = null
         viewModelScope.launch {
             try {
-                val bitmap = withContext(Dispatchers.IO) {
-                    val resolver = getApplication<Application>().contentResolver
-                    if (android.os.Build.VERSION.SDK_INT >= 28) android.graphics.ImageDecoder.decodeBitmap(android.graphics.ImageDecoder.createSource(resolver, uri)) { d, info, _ ->
-                        d.allocator = android.graphics.ImageDecoder.ALLOCATOR_SOFTWARE
-                        val big = maxOf(info.size.width, info.size.height); if (big > 1024) d.setTargetSampleSize(big / 1024) }
-                    else resolver.openInputStream(uri)!!.use { android.graphics.BitmapFactory.decodeStream(it, null, android.graphics.BitmapFactory.Options().apply { inSampleSize = 2 }) }
-                } ?: throw IllegalStateException("Не удалось открыть фото")
-                uploadAvatarBitmap(bitmap, "upload"); notification = "Фото персонажа загружено"
-            } catch (e: HttpException) { error = if (e.code() == 413) "Фото слишком большое. Выбери другое." else "Не удалось загрузить фото (код ${e.code()})." }
-            catch (e: CancellationException) { throw e }
-            catch (e: Exception) { error = "Не удалось загрузить фото. Попробуй другое изображение." }
-            finally { avatarBusy = false }
+                val portrait = withContext(Dispatchers.Default) {
+                    android.graphics.Bitmap.createBitmap(bitmap, crop.left, crop.top, crop.width, crop.height)
+                }
+                uploadAvatarBitmap(portrait, "upload")
+                persistDraft()
+                notification = "Фото персонажа сохранено"
+            } catch (e: HttpException) {
+                error = when (e.code()) {
+                    413 -> "Фото слишком большое. Выбери другое."
+                    409 -> "Достигнут лимит портретов. Освободи место и попробуй снова."
+                    else -> "Не удалось сохранить фото. Попробуй ещё раз."
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                error = "Не удалось сохранить фото. Проверь подключение и попробуй снова."
+            } finally {
+                avatarBusy = false
+            }
         }
     }
+
     /** Uses the AI Art allowance (3 free a day) with a prompt built from the card's appearance. */
     fun avatarFromAi() {
         if (avatarBusy) return

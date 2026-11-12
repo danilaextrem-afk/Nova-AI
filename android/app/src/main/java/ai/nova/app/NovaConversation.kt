@@ -41,7 +41,7 @@ import androidx.compose.material.icons.filled.Call
  Surface(color=NovaDesign.Surface){
   Row(Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=6.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
    TextButton(onClick={model.closeChat()},enabled=!model.loading,contentPadding=PaddingValues(4.dp)){Text("Назад")}
-   NovaPortrait(chat.characterId,chat.characterName?:chat.title?:"NOVA",Modifier.size(44.dp).clip(CircleShape),model.chatPortraitUrl(chat.characterId))
+   NovaPortrait(chat.characterId,chat.characterName?:chat.title?:"NOVA",Modifier.size(44.dp).clip(CircleShape),chat.characterAvatarUrl ?: model.chatPortraitUrl(chat.characterId))
    Column(Modifier.weight(1f)){
     Text(chat.characterName?:chat.title?:"Твоя история",style=MaterialTheme.typography.titleMedium,maxLines=1)
     Text(if(chat.participantIds.isNullOrEmpty())"Вымышленный AI-персонаж" else "Групповая сцена · персонажей: ${chat.participantIds.size+1}",style=MaterialTheme.typography.labelSmall,color=NovaDesign.Muted)

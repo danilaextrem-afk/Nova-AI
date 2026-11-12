@@ -78,7 +78,8 @@ data class NovaChat(
     // Nullable on purpose: Gson ignores Kotlin defaults, and a server/fixture that omits a field would
     // otherwise put null into a non-null property and crash later (seen in UI tests on chat.copy()).
     val characterName: String? = null, val persona: String? = null, val scenario: String? = null,
-    val responseStyle: String? = null, val tone: String? = null, val participantIds: List<String>? = null
+    val responseStyle: String? = null, val tone: String? = null, val participantIds: List<String>? = null,
+    val characterAvatarUrl: String? = null
 )
 data class NovaChatsResponse(val items: List<NovaChat> = emptyList())
 data class NovaCreateChatBody(val characterId: String, val participantIds: List<String> = emptyList(), val scenario: String = "", val persona: String = "", val scenarioId: String? = null)

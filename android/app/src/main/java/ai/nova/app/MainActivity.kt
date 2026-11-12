@@ -65,7 +65,7 @@ class MainActivity : ComponentActivity() {
             NovaTheme {
                 val model: NovaViewModel = viewModel()
                 LaunchedEffect(linked) { if (linked != null) model.pendingLinkCharacterId = linked }
-                NovaApp(model)
+                CompositionLocalProvider(LocalPortraitAccount provides model) { NovaApp(model) }
             }
         }
     }
@@ -539,7 +539,7 @@ private fun ChatsScreen(model: NovaViewModel) {
         Card(onClick = { if (!model.loading) model.openChat(chat) }, shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, NovaDesign.Border),
             colors = CardDefaults.cardColors(containerColor = CardSurface), modifier = Modifier.fillMaxWidth()) {
             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                NovaPortrait(chat.characterId, chat.characterName ?: chat.title ?: "NOVA", Modifier.size(58.dp).clip(CircleShape), model.chatPortraitUrl(chat.characterId))
+                NovaPortrait(chat.characterId, chat.characterName ?: chat.title ?: "NOVA", Modifier.size(58.dp).clip(CircleShape), chat.characterAvatarUrl ?: model.chatPortraitUrl(chat.characterId))
                 Column(Modifier.weight(1f)) {
                     Text((if (!chat.participantIds.isNullOrEmpty()) chat.title else null) ?: chat.characterName ?: chat.title ?: "AI-персонаж", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(if ((chat.participantIds ?: emptyList()).isNotEmpty()) "Групповая история" else "Продолжить разговор",
