@@ -76,8 +76,8 @@ internal val LocalPortraitAccount = staticCompositionLocalOf<NovaViewModel?> { n
   else Text(name.take(1),style=MaterialTheme.typography.headlineLarge,color=NovaDesign.Lavender)
  }
 }
-@Composable fun NovaEditorialHero(title:String,subtitle:String,id:String="00000000-0000-4000-8000-000000000101",eyebrow:String="NOVA ORIGINALS"){
- Box(Modifier.fillMaxWidth().height(310.dp).clip(RoundedCornerShape(28.dp))){
+@Composable fun NovaEditorialHero(title:String,subtitle:String,id:String="00000000-0000-4000-8000-000000000101",eyebrow:String="NOVA ORIGINALS",height:Dp=310.dp){
+ Box(Modifier.fillMaxWidth().height(height).clip(RoundedCornerShape(28.dp))){
   NovaPortrait(id,title,Modifier.fillMaxSize())
   Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color.Transparent,Color(0x33100B18),Color(0xF7100B18)))))
   Column(Modifier.align(Alignment.BottomStart).padding(22.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){

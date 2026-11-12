@@ -102,7 +102,8 @@ data class NovaChatMessage(
     val id: String, val role: String, val content: String,
     val createdAt: String? = null, val sequence: Int = 0, val pinned: Boolean = false,
     val alternatives: List<String>? = null, // Gson ignores Kotlin defaults: absent field stays null.
-    val speakerName: String? = null // Group chats: which character wrote the reply.
+    val speakerName: String? = null,
+    val speakerId: String? = null
 )
 data class NovaChatMessagesResponse(val items: List<NovaChatMessage> = emptyList(), val nextBefore: Int? = null)
 // Exactly one of content / regenerateMessageId is sent; Gson omits nulls.

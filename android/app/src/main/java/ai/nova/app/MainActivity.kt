@@ -320,10 +320,12 @@ private fun SectionHeader(title: String, subtitle: String) {
 
 @Composable
 private fun HomeScreen(model: NovaViewModel) {
-    NovaEyebrow("ДЛЯ ТЕБЯ")
-    Text("У каждой встречи\nесть продолжение.",style=MaterialTheme.typography.headlineLarge)
-    NovaEditorialHero("Найди свою\nисторию","Детективы, мечтатели и герои новых миров.")
-    Button(onClick={model.changeTab(NovaTab.CATALOG)},modifier=Modifier.fillMaxWidth().height(54.dp)){Text("Исследовать каталог")}
+    NovaEditorialHero("Найди свою\nисторию", "Детективы, мечтатели и герои новых миров.", height = 244.dp)
+    Button(onClick = { model.changeTab(NovaTab.CATALOG) }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+        Text("Исследовать каталог")
+    }
+    RecommendationDeck(model)
+    DiscoverShelves(model)
     NovaCard {
         NovaEyebrow("ТВОЯ ВООБРАЖАЕМАЯ ВСЕЛЕННАЯ")
         Text("Кем будет следующий герой?",style=MaterialTheme.typography.titleLarge)
@@ -337,8 +339,6 @@ private fun HomeScreen(model: NovaViewModel) {
         Text("Опиши картинку словами — AI нарисует её за полминуты. Несколько штук в день бесплатно.",color=NovaDesign.Muted)
         Button(onClick={model.openArt()},modifier=Modifier.fillMaxWidth()){Text("Открыть AI Арт")}
     }
-    RecommendationDeck(model)
-    DiscoverShelves(model)
     GuestCastPreview()
 
 }

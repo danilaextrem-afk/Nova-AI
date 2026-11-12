@@ -167,6 +167,7 @@ class NovaUiTest {
   compose.onNodeWithText("Напиши сообщение").reveal().performTextInput("Привет")
   clickWhenEnabled("Отправить бесплатно")
   compose.waitUntil(20000){compose.onAllNodesWithText("Тестовый ответ сервера").fetchSemanticsNodes().isNotEmpty()}
+  waitFor("reply saved"){!vm().loading}
   compose.onNodeWithText("Тестовый ответ сервера").reveal();screenshot("03-chat")
   assertEquals("chat reply must arrive over the SSE stream route",1,streamCalls)
   clickWhenEnabled("Другой ответ")
@@ -397,7 +398,7 @@ class NovaUiTest {
   androidx.test.espresso.intent.Intents.init()
   try {
    androidx.test.espresso.intent.Intents.intending(picker).respondWith(
-    androidx.test.Instrumentation.ActivityResult(android.app.Activity.RESULT_OK, android.content.Intent().setData(uri)))
+    android.app.Instrumentation.ActivityResult(android.app.Activity.RESULT_OK, android.content.Intent().setData(uri)))
    clickWhenEnabled("Из галереи")
    androidx.test.espresso.intent.Intents.intended(picker)
    waitFor("crop controls"){compose.onAllNodesWithText("Масштаб").fetchSemanticsNodes().isNotEmpty()}
