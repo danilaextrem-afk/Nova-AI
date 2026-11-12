@@ -152,7 +152,7 @@ const micros = (m:ModelConfig, input:number, output:number) => Math.ceil(input*m
 
 // Shared database reservations enforce provider quotas/budgets across server replicas.
 // Token estimation uses UTF-8 bytes as a conservative upper bound; includes output reservation.
-export type AiStreamOptions = { onDelta?: (text:string)=>void; signal?: AbortSignal };
+export type AiStreamOptions = { onDelta?: (text:string)=>void; signal?: AbortSignal; maxOutput?: number };
 export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', db?:PrismaClient, requestId?:string, opts:AiStreamOptions={}):Promise<AiCompletion> {
   const models = modelPool(tier).filter(m => tier !== 'premium' || !modelPool('free').some(f=>m.model===f.model&&m.provider===f.provider));
   if (!models.length) throw new AiProviderError('AI_NOT_CONFIGURED',503);
@@ -160,7 +160,7 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
   if (messages.length < 2 || messages.length > 80 || messages.some(m=>m.content.length>20000)) throw new AiProviderError('INVALID_AI_CONTEXT',400);
   const leave = await enter(tier);
   try {
-    const maxOutput = tier === 'premium' ? 1600 : 360;
+    const maxOutput = Math.min(2400, opts.maxOutput ?? (tier === 'premium' ? 1600 : 360));
     const inputEstimate = messages.reduce((n,m)=>n+Buffer.byteLength(m.content,'utf8')+8,0);
     let lastError = new AiProviderError('AI_RATE_LIMITED',429);
     const deadline = Date.now()+70000;

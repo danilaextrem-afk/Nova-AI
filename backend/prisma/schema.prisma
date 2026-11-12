@@ -63,6 +63,7 @@ model User {
   profile       Profile?
   sessions      Session[]
   characterMemories CharacterMemory[]
+  media         Media[]
   characters    Character[]
   chats         Chat[]
   favorites     Favorite[]
@@ -128,6 +129,9 @@ model Character {
   isHidden      Boolean  @default(false)
   isLibrary     Boolean  @default(false)
   mature        Boolean  @default(false) // 18+ section: adult romance/drama, never sexually explicit.
+  age           Int?     // Always 18+; chosen by the author, never guessed from a photo.
+  gender        String?  // female | male | other
+  traits        String[] @default([])
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -489,4 +493,19 @@ model CharacterScenario {
   character   Character @relation(fields: [characterId], references: [id], onDelete: Cascade)
 
   @@index([characterId])
+}
+
+/// Small avatar images uploaded by a user (own photo with rights confirmed, or an AI portrait).
+/// Stored as JPEG bytes; served at /media/<id>.jpg. Never sent to AI providers.
+model Media {
+  id        String   @id @default(uuid())
+  ownerId   String
+  mime      String
+  data      Bytes
+  bytes     Int
+  source    String   // upload | ai
+  createdAt DateTime @default(now())
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId, createdAt])
 }

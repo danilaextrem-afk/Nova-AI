@@ -26,8 +26,10 @@ const sendInput=z.object({content:z.string().trim().min(1).max(4000).optional(),
   regenerateMessageId:id.optional()}).strict()
   .refine(v=>!!v.content!==!!v.regenerateMessageId,{message:'Exactly one of content or regenerateMessageId'});
 class RegenerateTargetChanged extends Error {}
-function characterPrompt(c:any){return JSON.stringify({name:c.name,biography:c.biography,personality:c.personality,
-  speechStyle:c.speechStyle,backstory:c.backstory,scenario:c.scenario,greeting:c.greeting}).slice(0,4500);}
+/** The whole character sheet the author wrote, so the character knows and keeps its own traits. */
+export function characterPrompt(c:any){return JSON.stringify({name:c.name,age:c.age??undefined,gender:c.gender??undefined,
+  traits:c.traits?.length?c.traits:undefined,appearance:c.appearance||undefined,biography:c.biography,personality:c.personality,
+  interests:c.interests||undefined,speechStyle:c.speechStyle,backstory:c.backstory,scenario:c.scenario,greeting:c.greeting}).slice(0,6000);}
 export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
   const auth={preHandler:app.auth};
   await registerMemoryRoutes(app,db,async userId=>visibleCharacter(userId,await showsMature(db,userId)));
