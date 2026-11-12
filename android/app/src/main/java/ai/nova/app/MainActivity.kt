@@ -645,7 +645,7 @@ private fun ChatsScreen(model: NovaViewModel) {
                 else "Отправить бесплатно"
             ) }
             Text(
-                "Ответ создаёт AI, а не реальный человек. Доступность зависит от лимитов провайдера.",
+                "Ответ создаёт AI, а не реальный человек. Сообщения обрабатывают внешние AI-провайдеры (Groq, OpenRouter, Google Gemini); на бесплатных тарифах провайдер может использовать запросы для улучшения своих моделей — не пиши личные данные.",
                 style = MaterialTheme.typography.bodySmall, color = Color.LightGray
             )
         }

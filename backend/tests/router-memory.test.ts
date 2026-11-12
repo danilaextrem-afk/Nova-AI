@@ -223,3 +223,32 @@ describe('Edit, delete and search messages',()=>{
   expect((await db.message.findMany({where:{chatId},orderBy:{sequence:'asc'}})).map(m=>m.content)).toEqual(['А теперь о море','Ответ про драконов']);
  });
 });
+
+describe('Gemini native adapter (HTTP fixtures, not live AI)',()=>{
+ const geminiModel=[{provider:'gemini',tier:'free',model:'gemini-flash-latest',approved:true,rpm:1000,rpd:1000,tpm:10000000,tpd:100000000,inputUsdPerMillion:0,outputUsdPerMillion:0,dailyBudgetMicros:0}];
+ it('is excluded until the owner has reviewed the free-tier data terms',()=>{
+  vi.stubEnv('GEMINI_API_KEY','AQ.fixture');vi.stubEnv('NOVA_AI_MODELS_JSON',JSON.stringify(geminiModel));vi.stubEnv('NOVA_GEMINI_TERMS_REVIEWED','');
+  expect(modelPool('free')).toEqual([]);
+  vi.stubEnv('NOVA_GEMINI_TERMS_REVIEWED','true');expect(modelPool('free').map(m=>m.provider)).toEqual(['gemini']);
+ });
+ it('calls the native endpoint with the AQ key header, maps roles and system prompt, and streams text',async()=>{
+  vi.stubEnv('GEMINI_API_KEY','AQ.fixture-key');vi.stubEnv('NOVA_GEMINI_TERMS_REVIEWED','true');vi.stubEnv('NOVA_AI_MODELS_JSON',JSON.stringify(geminiModel));
+  const sse=['{"candidates":[{"content":{"parts":[{"text":"думаю","thought":true}]}}]}','{"candidates":[{"content":{"parts":[{"text":"Привет, "}]}}]}',
+   '{"candidates":[{"content":{"parts":[{"text":"путник!"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":12,"candidatesTokenCount":4}}'].map(x=>'data: '+x+'\r\n\r\n').join('');
+  const mock=vi.fn(async(_u:any,_i:any)=>new Response(sse,{status:200,headers:{'content-type':'text/event-stream'}}));vi.stubGlobal('fetch',mock);
+  const seen:string[]=[];
+  const out=await completeAiChat([{role:'system',content:'Ты персонаж.'},{role:'user',content:'А'},{role:'assistant',content:'Б'},{role:'user',content:'В'}],'free',db,randomUUID(),{onDelta:t=>seen.push(t)});
+  expect(out.text).toBe('Привет, путник!');expect(seen).toEqual(['Привет, ','путник!']);expect(out.provider).toBe('gemini');
+  const [url,init]=mock.mock.calls[0];
+  expect(url).toBe('https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:streamGenerateContent?alt=sse');
+  expect(init.headers['x-goog-api-key']).toBe('AQ.fixture-key');expect(init.headers.Authorization).toBeUndefined();
+  const body=JSON.parse(init.body);
+  expect(body.systemInstruction.parts[0].text).toBe('Ты персонаж.');
+  expect(body.contents.map((c:any)=>c.role)).toEqual(['user','model','user']);
+ });
+ it('treats a safety block as a content-filter failure without saving text',async()=>{
+  vi.stubEnv('GEMINI_API_KEY','AQ.fixture-key');vi.stubEnv('NOVA_GEMINI_TERMS_REVIEWED','true');vi.stubEnv('NOVA_AI_MODELS_JSON',JSON.stringify(geminiModel));
+  vi.stubGlobal('fetch',vi.fn(async()=>new Response(JSON.stringify({promptFeedback:{blockReason:'SAFETY'}}),{status:200,headers:{'content-type':'application/json'}})));
+  await expect(completeAiChat([{role:'system',content:'s'},{role:'user',content:'u'}],'free',db,randomUUID())).rejects.toBeTruthy();
+ });
+});

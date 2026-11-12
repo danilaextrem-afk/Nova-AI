@@ -10,7 +10,8 @@ export class AiProviderError extends Error {
 const providers = {
   groq: { base: 'https://api.groq.com/openai/v1', keyEnv: 'GROQ_API_KEY', model: 'openai/gpt-oss-20b' },
   openrouter: { base: 'https://openrouter.ai/api/v1', keyEnv: 'OPENROUTER_API_KEY', model: 'openrouter/free' },
-  gemini: { base: 'https://generativelanguage.googleapis.com/v1beta/openai', keyEnv: 'GEMINI_API_KEY', model: 'gemini-2.5-flash' },
+  // Native Gemini API: AI Studio now issues 'AQ.' auth keys, which the OpenAI-compatible endpoint rejects.
+  gemini: { base: 'https://generativelanguage.googleapis.com/v1beta', keyEnv: 'GEMINI_API_KEY', model: 'gemini-flash-latest' },
   cerebras: { base: 'https://api.cerebras.ai/v1', keyEnv: 'CEREBRAS_API_KEY', model: 'gpt-oss-120b' },
 } as const;
 const modelSchema = z.object({
@@ -46,7 +47,11 @@ export function modelPool(tier: AiTier): ModelConfig[] {
     });
     const groq = groqModels.map(model => free('groq', model));
     const openrouter = [free('openrouter', preferred === 'openrouter' && process.env.AI_MODEL?.trim() ? process.env.AI_MODEL.trim() : providers.openrouter.model)];
-    models = preferred === 'openrouter' ? [...openrouter, ...groq] : [...groq, ...openrouter];
+    // Gemini (free tier) is a last resort and only with the owner's documented consent (NOVA_GEMINI_TERMS_REVIEWED):
+    // Google may use free-tier prompts to improve its products. Conservative limits; the provider's 429 still rules.
+    const gemini = [{...free('gemini', process.env.NOVA_GEMINI_MODEL?.trim() || providers.gemini.model), rpm: 8, rpd: 200, tpm: 200000, tpd: 2000000}];
+    models = preferred === 'openrouter' ? [...openrouter, ...groq, ...gemini]
+      : preferred === 'gemini' ? [...gemini, ...groq, ...openrouter] : [...groq, ...openrouter, ...gemini];
     if (process.env.NOVA_PREMIUM_MODEL?.trim()) {
       const provider = (process.env.NOVA_PREMIUM_PROVIDER || 'groq') as AiProviderName;
       if (provider in providers) models.push({
@@ -76,6 +81,37 @@ export function aiSettings(tier: AiTier = 'free') {
 }
 export const premiumReady = () => modelPool('premium').some(p =>
   !modelPool('free').some(f => p.model === f.model && p.provider === f.provider));
+/** Request for one provider. Gemini uses its native generateContent API; the rest are OpenAI-compatible. */
+export function providerRequest(m:Pick<ModelConfig,'provider'|'model'>,messages:AiMessage[],streaming:boolean,maxOutput:number){
+  const p=providers[m.provider];const key=process.env[p.keyEnv]||'';
+  if(m.provider==='gemini'){
+    const system=messages.filter(x=>x.role==='system').map(x=>x.content).join('\n\n');
+    const contents:{role:'user'|'model';parts:{text:string}[]}[]=[];
+    for(const x of messages.filter(x=>x.role!=='system')){
+      const role=x.role==='assistant'?'model':'user';const last=contents.at(-1);
+      if(last?.role===role)last.parts.push({text:x.content});else contents.push({role,parts:[{text:x.content}]});
+    }
+    return {url:`${p.base}/models/${encodeURIComponent(m.model)}:${streaming?'streamGenerateContent?alt=sse':'generateContent'}`,
+      headers:{'x-goog-api-key':key,'Content-Type':'application/json'},
+      // Extra output room: thinking models spend part of the budget before the visible answer.
+      body:{...(system?{systemInstruction:{parts:[{text:system}]}}:{}),contents,generationConfig:{temperature:0.8,maxOutputTokens:maxOutput+1024}}};
+  }
+  return {url:p.base+'/chat/completions',
+    headers:{Authorization:'Bearer '+key,'Content-Type':'application/json',...(m.provider==='openrouter'?{'X-Title':'NOVA AI'}:{})},
+    body:{model:m.model,messages,stream:streaming,temperature:0.8,max_tokens:maxOutput,
+      ...(streaming?{stream_options:{include_usage:true}}:{}),...(m.provider==='openrouter'?{provider:{data_collection:'deny'}}:{})}};
+}
+/** Maps a Gemini response or stream chunk onto the OpenAI-compatible shape the gateway already parses. */
+export function geminiToOpenAI(chunk:any){
+  if(chunk?.error)return {error:chunk.error};
+  const c=chunk?.candidates?.[0];
+  const text=(c?.content?.parts??[]).filter((x:any)=>!x?.thought&&typeof x?.text==='string').map((x:any)=>x.text).join('');
+  const r=c?.finishReason;
+  const finish=r==='STOP'?'stop':r==='MAX_TOKENS'?'length':r||chunk?.promptFeedback?.blockReason?'content_filter':null;
+  const u=chunk?.usageMetadata;
+  return {choices:[{delta:{content:text},message:{content:text},finish_reason:finish}],
+    ...(u?{usage:{prompt_tokens:u.promptTokenCount,completion_tokens:u.candidatesTokenCount}}:{})};
+}
 export type AiCompletion = { text:string; provider:AiProviderName; model:string; inputTokens:number; outputTokens:number; costMicros:number };
 export function retryAfterMs(value: string | null | undefined, now = Date.now()): number {
   if (!value) return 0;
@@ -146,13 +182,9 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
       let retry=0; let code='AI_UPSTREAM_ERROR'; let status=502; let certainNoCharge=false; let emitted=false;
       const streaming=!!opts.onDelta;
       try {
-        const p=providers[m.provider];
-        const response=await fetch(p.base+'/chat/completions',{
-          method:'POST',headers:{Authorization:'Bearer '+process.env[p.keyEnv],'Content-Type':'application/json',
-            ...(m.provider==='openrouter'?{'X-Title':'NOVA AI'}:{})},
-          body:JSON.stringify({model:m.model,messages,stream:streaming,temperature:0.8,max_tokens:maxOutput,
-            ...(streaming?{stream_options:{include_usage:true}}:{}),
-            ...(m.provider==='openrouter'?{provider:{data_collection:'deny'}}:{})}),
+        const req=providerRequest(m,messages,streaming,maxOutput);
+        const response=await fetch(req.url,{
+          method:'POST',headers:req.headers,body:JSON.stringify(req.body),
           signal:AbortSignal.any([AbortSignal.timeout(Math.min(streaming?60000:30000,Math.max(1000,deadline-Date.now()))),
             ...(opts.signal?[opts.signal]:[])]),
         });
@@ -183,6 +215,7 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
               if(!line.startsWith('data:'))continue;
               const data=line.slice(5).trim();if(data==='[DONE]'){completed=true;continue;}if(!data)continue;
               let chunk:any;try{chunk=JSON.parse(data);}catch{continue;}
+              if(m.provider==='gemini')chunk=geminiToOpenAI(chunk);
               if(chunk?.error){code='AI_UPSTREAM_ERROR';throw new Error(code);}
               if(chunk?.usage)usage=chunk.usage;
               const finish=chunk?.choices?.[0]?.finish_reason;
@@ -198,7 +231,8 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
           if(!completed){code='AI_STREAM_INTERRUPTED';throw new Error(code);}
           text=out;
         }else{
-          const obj=await response.json() as {choices?:{message?:{content?:unknown}}[];usage?:Usage};
+          let obj=await response.json() as any;
+          if(m.provider==='gemini'){obj=geminiToOpenAI(obj);if(obj.choices[0].finish_reason==='content_filter'){code='AI_CONTENT_FILTERED';throw new Error(code);}}
           text=obj?.choices?.[0]?.message?.content;usage=obj?.usage;
         }
         if(opts.signal?.aborted)throw new Error('AI_CANCELLED');
