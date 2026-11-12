@@ -223,8 +223,8 @@ class NovaUiTest {
   waitFor("home"){compose.onAllNodesWithText("Открыть AI Арт").fetchSemanticsNodes().isNotEmpty()}
   clickWhenEnabled("Открыть AI Арт")
   waitFor("art status"){compose.onAllNodesWithText("Бесплатно сегодня: 3 из 3. Картинки сохраняются только на твоём телефоне.").fetchSemanticsNodes().isNotEmpty()}
-  compose.onNodeWithText("Что нарисовать?").performTextInput("Озеро на рассвете")
-  compose.onNodeWithText("Фэнтези").performClick()
+  compose.onNodeWithText("Фэнтези").reveal().performClick()
+  compose.onNodeWithText("Что нарисовать?").reveal().performTextInput("Озеро на рассвете")
   clickWhenEnabled("Нарисовать бесплатно")
   waitFor("art result"){compose.onAllNodesWithText("Мои картинки").fetchSemanticsNodes().isNotEmpty()}
   assertTrue("art request: $artBody",artBody!!.contains("fantasy")&&artBody!!.contains("Озеро на рассвете"))
