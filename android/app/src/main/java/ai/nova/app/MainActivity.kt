@@ -353,8 +353,8 @@ private fun CharacterCard(model: NovaViewModel, character: NovaCharacter) {
     Card(onClick = { model.showCharacterProfile(character.id) }, shape = RoundedCornerShape(24.dp), border = BorderStroke(1.dp, NovaDesign.Border),
         colors = CardDefaults.cardColors(containerColor = CardSurface), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(12.dp), horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            NovaPortrait(character.id, character.name, Modifier.width(112.dp).height(150.dp).clip(RoundedCornerShape(18.dp)), character.avatarUrl)
-            Column(Modifier.weight(1f).heightIn(min = 150.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            NovaPortrait(character.id, character.name, Modifier.width(108.dp).height(178.dp).clip(RoundedCornerShape(18.dp)), character.avatarUrl)
+            Column(Modifier.weight(1f).heightIn(min = 178.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     NovaEyebrow(character.category)
                     if (character.mature) MatureBadge()
@@ -363,12 +363,13 @@ private fun CharacterCard(model: NovaViewModel, character: NovaCharacter) {
                 Text(character.biography?.takeIf { it.isNotBlank() } ?: character.greeting, style = MaterialTheme.typography.bodySmall,
                     color = NovaDesign.Muted, maxLines = 3, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.weight(1f))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Button(onClick = { model.startChat(character) }, enabled = !model.loading, contentPadding = PaddingValues(horizontal = 14.dp)) {
-                        Text("Начать AI-чат", fontSize = 13.sp)
-                    }
-                    TextButton(onClick = { model.showCharacterProfile(character.id) }, enabled = !model.loading) { Text("Полный профиль", fontSize = 12.sp) }
+                // Stacked, never side by side: on narrow phones a squeezed button wrapped letter by letter.
+                Button(onClick = { model.startChat(character) }, enabled = !model.loading, modifier = Modifier.fillMaxWidth(),
+                    contentPadding = PaddingValues(horizontal = 12.dp)) {
+                    Text("Начать AI-чат", fontSize = 13.sp, maxLines = 1)
                 }
+                TextButton(onClick = { model.showCharacterProfile(character.id) }, enabled = !model.loading,
+                    modifier = Modifier.fillMaxWidth(), contentPadding = PaddingValues(0.dp)) { Text("Полный профиль", fontSize = 12.sp, maxLines = 1) }
             }
         }
     }
@@ -464,7 +465,7 @@ private fun ChatsScreen(model: NovaViewModel) {
         Button(onClick = { model.changeTab(NovaTab.CATALOG) }) { Text("Открыть персонажей") }
     }
     model.chats.forEach { chat ->
-        Card(onClick = { model.openChat(chat) }, enabled = !model.loading, shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, NovaDesign.Border),
+        Card(onClick = { if (!model.loading) model.openChat(chat) }, shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, NovaDesign.Border),
             colors = CardDefaults.cardColors(containerColor = CardSurface), modifier = Modifier.fillMaxWidth()) {
             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 NovaPortrait(chat.characterId, chat.characterName ?: chat.title ?: "NOVA", Modifier.size(58.dp).clip(CircleShape), model.chatPortraitUrl(chat.characterId))
