@@ -45,6 +45,7 @@ class NovaLiveAuthTest {
   compose.waitUntil(120000){compose.onAllNodes(hasText(text) and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
   val n=compose.onNode(hasText(text) and isEnabled());runCatching{n.performScrollTo()};n.performClick()
  }
+ private fun confirmAdult(){ if(compose.onAllNodes(isToggleable() and isOff()).fetchSemanticsNodes().isNotEmpty())compose.onNode(isToggleable()).performScrollTo().performClick() }
  private fun type(label:String,value:String){val n=compose.onNodeWithText(label);n.performTextClearance();n.performTextInput(value)}
 
  @Test fun registerSignOutSignInAndDeleteOnLiveServer(){
@@ -53,7 +54,7 @@ class NovaLiveAuthTest {
   tap("Войти")
   waitText("unknown-account","Неверный email или пароль. Если аккаунта ещё нет — нажми «Создать аккаунт».")
   // 2. Registration with the age confirmation.
-  compose.onNode(isToggleable()).performScrollTo().performClick()
+  confirmAdult()
   tap("Создать аккаунт")
   waitText("registered","Каталог");screenshot("live-01-registered")
   // 3. Sign out, then the same email cannot be registered twice.
@@ -61,7 +62,7 @@ class NovaLiveAuthTest {
   tap("Выйти из аккаунта")
   waitText("signed-out","Создать аккаунт")
   type("Email",email);type("Пароль (от 10 символов)",password)
-  compose.onNode(isToggleable()).performScrollTo().performClick()
+  confirmAdult()
   tap("Создать аккаунт")
   waitText("email-taken","Этот email уже зарегистрирован — нажми «Войти».")
   assertTrue(compose.onAllNodes(hasText("HTTP",substring=true)).fetchSemanticsNodes().isEmpty())
