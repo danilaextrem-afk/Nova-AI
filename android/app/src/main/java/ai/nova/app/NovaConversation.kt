@@ -13,7 +13,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.*
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.Stop
 
+@OptIn(ExperimentalLayoutApi::class)
 /** Presentation only: all requests, streaming, persistence and charging remain in the existing model. */
 @Composable fun ColumnScope.NovaConversation(model:NovaViewModel){
  val chat=model.activeChat?:return
@@ -25,7 +29,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
   if(list.layoutInfo.totalItemsCount>0)list.scrollToItem(list.layoutInfo.totalItemsCount-1)
  }
  Surface(color=NovaDesign.Surface){
-  Row(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=10.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
+  Row(Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=6.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
    TextButton(onClick={model.closeChat()},enabled=!model.loading,contentPadding=PaddingValues(4.dp)){Text("Назад")}
    NovaPortrait(chat.characterId,chat.characterName?:chat.title?:"NOVA",Modifier.size(44.dp).clip(CircleShape),model.chatPortraitUrl(chat.characterId))
    Column(Modifier.weight(1f)){
@@ -82,20 +86,27 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
    }
   }}
  }
+ // Composer: one row (field + round send button) so it fits above the keyboard on small phones;
+ // the mode chips, dictation and price hint show only while the keyboard is closed.
+ val imeOpen=WindowInsets.isImeVisible
  Surface(color=NovaDesign.Surface,shadowElevation=12.dp){
-  Column(Modifier.fillMaxWidth().padding(horizontal=14.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
-   Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(8.dp)){
+  Column(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
+   if(!imeOpen)Row(Modifier.horizontalScroll(rememberScrollState()),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
     FilterChip(selected=!model.premiumChatSelected,onClick={model.premiumChatSelected=false},label={Text("Обычный · бесплатно",fontSize=11.sp)})
     FilterChip(selected=model.premiumChatSelected,onClick={model.premiumChatSelected=true},enabled=model.aiStatus?.premiumConfigured==true,label={Text("Premium · ${model.aiStatus?.premiumPriceTokens?:5} ◈",fontSize=11.sp)})
+    DictationButton(model)
    }
-   OutlinedTextField(value=model.chatInput,onValueChange={model.updateChatInput(it)},label={Text("Напиши сообщение")},modifier=Modifier.fillMaxWidth(),maxLines=3,shape=RoundedCornerShape(20.dp))
-   Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.CenterVertically){
-    Box(Modifier.weight(1f)){DictationButton(model)}
-    if(model.streamingText!=null)OutlinedButton(onClick={model.stopReply()}){Text("Остановить ответ")}
-    else Button(onClick={keyboard?.hide();model.sendChatMessage()},enabled=!model.loading&&model.chatInput.isNotBlank()){
-     Text(if(model.premiumChatSelected)"Отправить · ${model.aiStatus?.premiumPriceTokens?:5} ◈" else "Отправить бесплатно",fontSize=12.sp)
+   Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(8.dp)){
+    OutlinedTextField(value=model.chatInput,onValueChange={model.updateChatInput(it)},label={Text("Напиши сообщение")},
+     modifier=Modifier.weight(1f),maxLines=4,shape=RoundedCornerShape(20.dp))
+    val sendLabel=if(model.premiumChatSelected)"Отправить · ${model.aiStatus?.premiumPriceTokens?:5} ◈" else "Отправить бесплатно"
+    if(model.streamingText!=null)FilledTonalIconButton(onClick={model.stopReply()},modifier=Modifier.size(54.dp)){
+     Icon(Icons.Default.Stop,contentDescription="Остановить ответ")
+    } else FilledIconButton(onClick={keyboard?.hide();model.sendChatMessage()},enabled=!model.loading&&model.chatInput.isNotBlank(),modifier=Modifier.size(54.dp)){
+     Icon(Icons.AutoMirrored.Filled.Send,contentDescription=sendLabel)
     }
    }
+   if(!imeOpen&&model.premiumChatSelected)Text("Premium: ${model.aiStatus?.premiumPriceTokens?:5} ◈ спишутся только за успешный ответ",style=MaterialTheme.typography.labelSmall,color=NovaDesign.Muted)
   }
  }
  if(settings)AlertDialog(onDismissRequest={settings=false},title={Text("Твоя история")},text={Column(Modifier.verticalScroll(rememberScrollState())){

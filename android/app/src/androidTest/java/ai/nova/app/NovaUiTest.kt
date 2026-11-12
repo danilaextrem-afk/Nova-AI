@@ -104,8 +104,10 @@ class NovaUiTest {
   return this
  }
  private fun clickWhenEnabled(text:String){
-  waitFor("enabled button '$text'"){compose.onAllNodes(hasText(text) and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
-  val node=compose.onNode(hasText(text) and isEnabled())
+  // Matches a visible label or an icon button's accessible name (e.g. the round send button).
+  val m=(hasText(text) or hasContentDescription(text)) and isEnabled()
+  waitFor("enabled button '$text'"){compose.onAllNodes(m).fetchSemanticsNodes().isNotEmpty()}
+  val node=compose.onNode(m)
   try { node.reveal().assertIsDisplayed().performClick() } catch (e:AssertionError) {
    screenshot("failure-click-"+text.replace(Regex("[^a-zA-Zа-яА-Я0-9]"),"-")); throw AssertionError("Could not tap '$text'",e)
   }
