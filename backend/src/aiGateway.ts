@@ -53,7 +53,8 @@ export function modelPool(tier: AiTier): ModelConfig[] {
     // A removed model answers 404 and the gateway moves on to the next entry.
     const openrouter = Array.from(new Set([
       ...(preferred === 'openrouter' && process.env.AI_MODEL?.trim() ? [process.env.AI_MODEL.trim()] : []),
-      ...(process.env.NOVA_OPENROUTER_FREE_MODELS?.trim() || 'openrouter/free' // deepseek-v4-flash:free was withdrawn (404, 2026-11-12)).split(',').map(x => x.trim()).filter(Boolean),
+      // deepseek-v4-flash:free was withdrawn (404 'unavailable for free', 2026-11-12).
+      ...(process.env.NOVA_OPENROUTER_FREE_MODELS?.trim() || 'openrouter/free').split(',').map(x => x.trim()).filter(Boolean),
     ])).slice(0, 4).map(model => free('openrouter', model));
     // Gemini (free tier) is a last resort and only with the owner's documented consent (NOVA_GEMINI_TERMS_REVIEWED):
     // Google may use free-tier prompts to improve its products. Conservative limits; the provider's 429 still rules.
