@@ -352,8 +352,8 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             chatMessages = page.items; nextBefore = page.nextBefore
             memories = service().memories(authorization(), chat.id).items
             aiStatus = service().aiStatus(authorization())
-            playerPersona = chat.persona; storyScenario = chat.scenario
-            responseStyle = chat.responseStyle; storyTone = chat.tone
+            playerPersona = chat.persona.orEmpty(); storyScenario = chat.scenario.orEmpty()
+            responseStyle = chat.responseStyle ?: "balanced"; storyTone = chat.tone ?: "friendly"
             activeTab = NovaTab.CHATS
         }
     }
@@ -596,6 +596,9 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteAccount() {execute {service().deleteAccount(authorization(),mapOf("confirmation" to "DELETE"));clearAccount()} }
     suspend fun verifyPurchase(sku:String,token:String):Boolean = service().verifyPurchase(authorization(),VerifyPurchaseBody(sku,token)).status=="VERIFIED"
     fun showNotice(text:String) {notification=text}
+    fun dismissMessages() { error = null; notification = null }
+    /** Auto-hide only the notice that was shown, never a newer one. */
+    fun dismissNotice(text: String) { if (notification == text) notification = null }
 
     fun loadFollowing() {execute {catalog=service().following(authorization()).items} }
     fun follow(id:String,enabled:Boolean) {execute {if(enabled)service().follow(authorization(),id)else service().unfollow(authorization(),id);notification=if(enabled)"Подписка сохранена" else "Подписка отменена"} }

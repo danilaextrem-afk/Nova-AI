@@ -164,6 +164,7 @@ class NovaUiTest {
   compose.onNodeWithText("Войти",useUnmergedTree=true).reveal().performClick()
   compose.waitUntil(20000){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Каталог").performClick()
+  clickWhenEnabled("Полный профиль") // discussion, likes and follows live in the character profile
   compose.waitUntil(20000){compose.onAllNodes(hasText("Обсуждение") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Обсуждение").reveal().performClick()
   compose.waitUntil(20000){compose.onAllNodesWithText("Комментарий").fetchSemanticsNodes().isNotEmpty()}
