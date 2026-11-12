@@ -83,6 +83,24 @@ export function modelPool(tier: AiTier): ModelConfig[] {
 export function quotaKey(m: Pick<ModelConfig,'provider'|'model'>): string {
   return m.provider === 'groq' ? 'groq:' + m.model : m.provider;
 }
+/** Circuit breaker per model: one broken OpenRouter model must not block the others behind the shared quota. */
+export function breakerKey(m: Pick<ModelConfig,'provider'|'model'>): string {
+  return m.provider === 'groq' ? quotaKey(m) : 'breaker:' + m.provider + ':' + m.model;
+}
+/**
+ * Conservative token estimate. Measured on live traffic (2026-11-12): Russian prompts average ~2.7
+ * characters per token on gpt-oss, while the old UTF-8 byte count reserved ~5x the real usage and
+ * made Groq's 8k tokens/minute look full after one request.
+ */
+export function estimateTokens(messages: AiMessage[]): number {
+  return messages.reduce((n, m) => n + Math.ceil(m.content.length / 2) + 8, 0);
+}
+/** gpt-oss spends part of max_tokens on hidden reasoning; Cloudflare has no switch to shorten it. */
+export function outputAllowance(m: Pick<ModelConfig,'provider'|'model'>, maxOutput: number): number {
+  return m.provider === 'cloudflare' && m.model.includes('gpt-oss') ? Math.max(maxOutput, 1024) : maxOutput;
+}
+/** Failures worth one more try within the same request: the provider may answer next time. */
+const TRANSIENT = new Set(['AI_UPSTREAM_ERROR', 'AI_EMPTY_RESPONSE', 'AI_TIMEOUT']);
 export function aiSettings(tier: AiTier = 'free') {
   const candidate = modelPool(tier)[0];
   const raw = (tier === 'premium' ? process.env.NOVA_PREMIUM_PROVIDER : process.env.AI_PROVIDER) || 'groq';
@@ -111,7 +129,7 @@ export function providerRequest(m:Pick<ModelConfig,'provider'|'model'>,messages:
   const base=m.provider==='cloudflare'?`${p.base}/${process.env.CLOUDFLARE_ACCOUNT_ID}/ai/v1`:p.base;
   return {url:base+'/chat/completions',
     headers:{Authorization:'Bearer '+key,'Content-Type':'application/json',...(m.provider==='openrouter'?{'X-Title':'NOVA AI'}:{} as Record<string,string>)},
-    body:{model:m.model,messages,stream:streaming,temperature,max_tokens:maxOutput,
+    body:{model:m.model,messages,stream:streaming,temperature,max_tokens:outputAllowance(m,maxOutput),
       ...(groqGptOss ? { reasoning_effort: 'low', include_reasoning: false } : {}),
       ...(streaming?{stream_options:{include_usage:true}}:{}),...(m.provider==='openrouter'?{provider:{data_collection:'deny'}}:{})}};
 }
@@ -163,25 +181,37 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
   const leave = await enter(tier);
   try {
     const maxOutput = Math.min(2400, opts.maxOutput ?? (tier === 'premium' ? 1600 : 360));
-    const inputEstimate = messages.reduce((n,m)=>n+Buffer.byteLength(m.content,'utf8')+8,0);
+    const inputEstimate = estimateTokens(messages);
     let lastError = new AiProviderError('AI_RATE_LIMITED',429);
     const deadline = Date.now()+70000;
-    for (const m of models) {
-      if (Date.now()>deadline) break;
+    // Pass 1 tries every model once. Pass 2 retries, once, only the models that just failed transiently
+    // (5xx, timeout, empty answer) — bounded by the same deadline, never after text was shown.
+    const retryable = new Set<ModelConfig>();
+    const queue: { m: ModelConfig; second: boolean }[] = models.map(m => ({ m, second: false }));
+    for (let qi = 0; ; qi++) {
+      if (qi === models.length) for (const r of models.filter(x => retryable.has(x))) queue.push({ m: r, second: true });
+      if (qi >= queue.length || Date.now() > deadline) break;
+      const { m, second } = queue[qi];
       const now = new Date();
       const minute = new Date(Math.floor(now.getTime()/60000)*60000);
       const day = new Date(now.toISOString().slice(0,10));
       const estimate = inputEstimate + maxOutput;
       const maxCost = micros(m,inputEstimate,maxOutput);
       const key = quotaKey(m); // Groq limits are per model; other providers share one conservative bucket.
+      const bkey = breakerKey(m);
       const attempt = await db.$transaction(async tx => {
+        if (bkey !== key) {
+          const b = await tx.aiProviderState.upsert({where:{key:bkey},create:{key:bkey,minuteAt:minute,dayAt:day},update:{}});
+          if (!second && b.retryAt && b.retryAt > now) return null;
+        }
         await tx.aiProviderState.upsert({where:{key},create:{key,minuteAt:minute,dayAt:day},update:{}});
         await tx.$queryRaw`SELECT key FROM "AiProviderState" WHERE key = ${key} FOR UPDATE`;
         let state = (await tx.aiProviderState.findUnique({where:{key}}))!;
         const reset = {...(state.minuteAt<minute ? {minuteAt:minute,minuteRequests:0,minuteTokens:0}:{}),
           ...(state.dayAt<day ? {dayAt:day,dayRequests:0,dayTokens:0,costMicros:0}:{})};
         if(Object.keys(reset).length) state = await tx.aiProviderState.update({where:{key},data:reset});
-        if(state.retryAt && state.retryAt>now) return null;
+        // A breaker on the shared row (rate limit, or Groq's per-model row) is skipped only for the one bounded retry.
+        if(state.retryAt && state.retryAt>now && !(second && bkey===key)) return null;
         const active = await tx.aiAttempt.count({where:{provider:m.provider,status:'PENDING',expiresAt:{gt:now}}});
         if (active >= m.concurrency || state.minuteRequests>=m.rpm || state.dayRequests>=m.rpd ||
           state.minuteTokens+estimate>m.tpm || state.dayTokens+estimate>m.tpd ||
@@ -194,6 +224,7 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
       if (!attempt) continue;
       const started=Date.now();
       let retry=0; let code='AI_UPSTREAM_ERROR'; let status=502; let certainNoCharge=false; let emitted=false;
+      let httpStatus=0; let detail='';
       const streaming=!!opts.onDelta;
       try {
         const req=providerRequest(m,messages,streaming,maxOutput,opts.temperature);
@@ -203,6 +234,9 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
             ...(opts.signal?[opts.signal]:[])]),
         });
         if(!response.ok){
+          httpStatus=response.status;
+          // Keep the provider's own error message (never our prompt) for diagnosis.
+          detail=await response.text().then(t=>{try{const j=JSON.parse(t);return String(j?.error?.message??j?.error??j?.errors?.[0]?.message??t);}catch{return t;}}).catch(()=>'');
           retry=retryAfterMs(response.headers?.get('retry-after'));
           status=response.status===429?429:502; code=response.status===429?'AI_RATE_LIMITED':'AI_UPSTREAM_ERROR';
           certainNoCharge=[400,401,403,404,429].includes(response.status);
@@ -262,10 +296,14 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
             ...(state.dayAt.getTime()===day.getTime()?{costMicros:{increment:cost-maxCost},dayTokens:{increment:inputTokens+outputTokens-estimate}}:{}),
             ...(state.minuteAt.getTime()===minute.getTime()?{minuteTokens:{increment:inputTokens+outputTokens-estimate}}:{})}});
           await tx.aiAttempt.update({where:{id:attempt.id},data:{status:'SUCCEEDED',costMicros:cost,latencyMs:Date.now()-started}});
+          if(bkey!==key)await tx.aiProviderState.update({where:{key:bkey},data:{failures:0,retryAt:null}});
         });
         return {text:text.trim().slice(0,tier==='premium'?12000:4000),provider:m.provider,model:m.model,inputTokens,outputTokens,costMicros:cost};
       }catch(error){
         const cancelled=!!opts.signal?.aborted;if(cancelled)code='AI_CANCELLED';
+        if(!cancelled&&!httpStatus&&(error as Error)?.name==='TimeoutError'){code='AI_TIMEOUT';status=504;}
+        if(!cancelled)console.warn(JSON.stringify({level:40,msg:'AI provider attempt failed',provider:m.provider,model:m.model,code,
+          httpStatus:httpStatus||undefined,retry:second||undefined,detail:detail.replace(/\s+/g,' ').replace(/(key|token|bearer)[=: ]+\S+/gi,'$1=…').slice(0,240)||undefined}));
         await db.$transaction(async tx=>{
           await tx.$queryRaw`SELECT key FROM "AiProviderState" WHERE key = ${key} FOR UPDATE`;
           const state=(await tx.aiProviderState.findUnique({where:{key}}))!;
@@ -273,14 +311,18 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
             await tx.aiAttempt.update({where:{id:attempt.id},data:{status:'FAILED',errorCode:code,latencyMs:Date.now()-started}});
             return;
           }
-          const failures=state.failures+1;
+          // Rate limits are account-wide (shared row); other failures belong to this model only.
+          const target=code==='AI_RATE_LIMITED'?key:bkey;
+          const b=target===key?state:(await tx.aiProviderState.findUnique({where:{key:target}}))!;
+          const failures=b.failures+1;
           const backoff=Math.min(60000,1000*2**Math.min(failures,6))+Math.floor(Math.random()*500);
           const until=new Date(Date.now()+Math.max(retry,backoff,failures>=3?30000:0));
-          await tx.aiProviderState.update({where:{key},data:{failures,retryAt:until,
-            ...(certainNoCharge&&state.dayAt.getTime()===day.getTime()?{costMicros:{decrement:maxCost}}:{})}});
-          await tx.aiAttempt.update({where:{id:attempt.id},data:{status:'FAILED',errorCode:code,latencyMs:Date.now()-started}});
+          await tx.aiProviderState.update({where:{key:target},data:{failures,retryAt:until}});
+          if(certainNoCharge&&state.dayAt.getTime()===day.getTime())await tx.aiProviderState.update({where:{key},data:{costMicros:{decrement:maxCost}}});
+          await tx.aiAttempt.update({where:{id:attempt.id},data:{status:'FAILED',errorCode:httpStatus?code+':'+httpStatus:code,latencyMs:Date.now()-started}});
         });
-        lastError=new AiProviderError(code,status,Math.max(1,Math.ceil(retry/1000)||30));
+        lastError=new AiProviderError(code==='AI_TIMEOUT'?'AI_UPSTREAM_ERROR':code,code==='AI_TIMEOUT'?502:status,Math.max(1,Math.ceil(retry/1000)||30));
+        if(!second&&TRANSIENT.has(code))retryable.add(m);
         // A cancelled request, or a stream that already showed text, is never silently continued elsewhere.
         if(opts.signal?.aborted)throw new AiProviderError('AI_CANCELLED',499,1);
         if(emitted)throw new AiProviderError('AI_STREAM_INTERRUPTED',502,5);

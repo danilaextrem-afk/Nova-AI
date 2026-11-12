@@ -5,7 +5,7 @@ import jwt from '@fastify/jwt';
 import {randomUUID} from 'node:crypto';
 import {registerChatRoutes} from '../src/chatRoutes.js';
 import {registerStoryRoutes} from '../src/storyRoutes.js';
-import {completeAiChat,retryAfterMs,modelPool,quotaKey} from '../src/aiGateway.js';
+import {completeAiChat,retryAfterMs,modelPool,quotaKey,breakerKey,estimateTokens,providerRequest} from '../src/aiGateway.js';
 import {credit,balance,debit} from '../src/ledger.js';
 const db=new PrismaClient();const app=Fastify();let drainChatJobs: () => Promise<void>;let userId:string;let other:string;let characterId:string;let chatId:string;
 const model=(provider:string,tier='free',extras:any={})=>({provider,tier,model:provider==='openrouter'?'openrouter/free':'test-'+tier,approved:true,rpm:10000,rpd:10000,tpm:10000000,tpd:100000000,inputUsdPerMillion:0,outputUsdPerMillion:0,dailyBudgetMicros:0,...extras});
@@ -266,5 +266,68 @@ describe('Cloudflare Workers AI adapter (HTTP fixtures, not live AI)',()=>{
   expect(mock.mock.calls[0][0]).toBe('https://api.cloudflare.com/client/v4/accounts/e9349634542ae1b6b5730a9ffdad2855/ai/v1/chat/completions');
   expect(mock.mock.calls[0][1].headers.Authorization).toBe('Bearer cfut_fixture');
   expect(JSON.parse(mock.mock.calls[0][1].body).model).toBe('@cf/openai/gpt-oss-20b');
+ });
+});
+
+// Regression for the 502 AI_UPSTREAM_ERROR seen in live runs on 886ad2c/75ac117 (2026-11-12).
+describe('Provider recovery (HTTP fixtures, not live AI)',()=>{
+ const msgs=[{role:'system' as const,content:'Сцена'},{role:'user' as const,content:'Привет'}];
+ const two=(a:string,b:string)=>[{...model('openrouter'),model:a},{...model('openrouter'),model:b}];
+ it('estimates Russian prompts close to real usage instead of reserving ~5x by UTF-8 bytes',()=>{
+  const text='Вечер в архиве Луногорска, фонарь мерцает над старыми картами. '.repeat(50); // ~3200 chars
+  const est=estimateTokens([{role:'user',content:text}]);
+  expect(est).toBeGreaterThan(text.length/3); // Still above the measured ~2.7 chars per token.
+  expect(est).toBeLessThan(Buffer.byteLength(text,'utf8')/3);
+ });
+ it('lets several ordinary turns per minute use one Groq model (8k tokens/minute) without spilling to fallbacks',async()=>{
+  vi.stubEnv('NOVA_AI_MODELS_JSON',JSON.stringify([model('groq','free',{tpm:8000}),model('openrouter')]));
+  const mock=vi.fn(async()=>new Response(JSON.stringify({choices:[{message:{content:'Ответ'}}],usage:{prompt_tokens:1300,completion_tokens:150}}),{status:200,headers:{'Content-Type':'application/json'}}));
+  vi.stubGlobal('fetch',mock);
+  const prompt=[{role:'system' as const,content:'Лист персонажа и память. '.repeat(120)},{role:'user' as const,content:'Что дальше?'}]; // ~3000 chars
+  for(let i=0;i<4;i++)expect((await completeAiChat(prompt,'free',db)).provider).toBe('groq');
+ });
+ it('a broken OpenRouter model does not block the next one, and records the provider status',async()=>{
+  vi.stubEnv('NOVA_AI_MODELS_JSON',JSON.stringify(two('dead/model:free','openrouter/free')));
+  const warn=vi.spyOn(console,'warn').mockImplementation(()=>{});
+  vi.stubGlobal('fetch',vi.fn(async(_u:string,init:any)=>JSON.parse(init.body).model==='dead/model:free'
+   ?new Response(JSON.stringify({error:{message:'No endpoints found for dead/model:free.'}}),{status:404}):ok('Живая модель')));
+  const r=await completeAiChat(msgs,'free',db,randomUUID());expect(r.model).toBe('openrouter/free');
+  const failed=await db.aiAttempt.findFirst({where:{status:'FAILED'}});expect(failed!.errorCode).toBe('AI_UPSTREAM_ERROR:404');
+  expect(warn.mock.calls.map(c=>String(c[0])).join()).toContain('No endpoints found');
+  const dead=await db.aiProviderState.findUnique({where:{key:breakerKey({provider:'openrouter',model:'dead/model:free'})}});
+  expect(dead!.retryAt!.getTime()).toBeGreaterThan(Date.now());
+  expect((await db.aiProviderState.findUnique({where:{key:'openrouter'}}))!.retryAt).toBeNull();
+  // Next request goes straight to the live model while the broken one rests.
+  const again=await completeAiChat(msgs,'free',db,randomUUID());expect(again.model).toBe('openrouter/free');
+  expect(await db.aiAttempt.count({where:{model:'dead/model:free'}})).toBe(1);
+  warn.mockRestore();
+ });
+ it.each([503,'empty','timeout'])('retries once after a transient %s when every provider failed, then succeeds without double charge',async(kind)=>{
+  vi.spyOn(console,'warn').mockImplementation(()=>{});
+  await credit(db,{userId,bucket:'BONUS',amount:20,source:'test',idempotencyKey:randomUUID()});const before=await balance(db,userId);
+  const calls:string[]=[];let n=0;
+  vi.stubGlobal('fetch',vi.fn(async(url:string)=>{calls.push(url.includes('groq')?'groq':'openrouter');n++;
+   if(n===1){if(kind==='timeout')throw new DOMException('timed out','TimeoutError');
+    return kind==='empty'?ok(' '):new Response('{}',{status:503});}
+   return ok('Со второй попытки');}));
+  const r=await send('Продолжим',randomUUID(),'premium');expect(r.statusCode,r.body).toBe(200);
+  expect(r.json().assistantMessage.content).toBe('Со второй попытки');
+  expect((await balance(db,userId)).total).toBe(before.total-5);
+  expect(n).toBe(2);
+ });
+ it('never retries more than once per model and stops on rate limits',async()=>{
+  vi.spyOn(console,'warn').mockImplementation(()=>{});
+  const fail=vi.fn(async()=>new Response('{}',{status:503}));vi.stubGlobal('fetch',fail);
+  await expect(completeAiChat(msgs,'free',db,randomUUID())).rejects.toMatchObject({code:'AI_UPSTREAM_ERROR'});
+  expect(fail).toHaveBeenCalledTimes(4); // groq + openrouter, then one retry each.
+  await db.aiProviderState.deleteMany();
+  const limited=vi.fn(async()=>new Response('{}',{status:429,headers:{'Retry-After':'30'}}));vi.stubGlobal('fetch',limited);
+  await expect(completeAiChat(msgs,'free',db,randomUUID())).rejects.toMatchObject({code:'AI_RATE_LIMITED'});
+  expect(limited).toHaveBeenCalledTimes(2);
+ });
+ it('gives gpt-oss on Cloudflare room for its hidden reasoning',()=>{
+  vi.stubEnv('CLOUDFLARE_ACCOUNT_ID','e9349634542ae1b6b5730a9ffdad2855');
+  expect(providerRequest({provider:'cloudflare',model:'@cf/openai/gpt-oss-20b'},msgs,false,360).body.max_tokens).toBe(1024);
+  expect(providerRequest({provider:'groq',model:'openai/gpt-oss-20b'},msgs,false,360).body.max_tokens).toBe(360);
  });
 });
