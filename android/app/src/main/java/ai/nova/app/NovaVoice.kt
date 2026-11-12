@@ -1,6 +1,7 @@
 package ai.nova.app
 
 import android.content.Context
+import android.content.Intent
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import androidx.compose.foundation.layout.*
@@ -21,45 +22,136 @@ class NovaVoice(context: Context) {
     private val prefs = context.getSharedPreferences("nova_voice", Context.MODE_PRIVATE)
     var ready by mutableStateOf(false); private set
     var speakingId by mutableStateOf<String?>(null); private set
+    /** Russian user-facing text of the last speech failure; null when the last start succeeded. */
+    var problem by mutableStateOf<String?>(null); private set
     var autoRead by mutableStateOf(prefs.getBoolean("autoRead", false))
         private set
+    @Volatile private var lastUtteranceId: String? = null
     private val tts: TextToSpeech = TextToSpeech(context.applicationContext) { status ->
         ready = status == TextToSpeech.SUCCESS
     }.apply {
         setOnUtteranceProgressListener(object : UtteranceProgressListener() {
             override fun onStart(id: String?) {}
-            override fun onDone(id: String?) { if (speakingId == id) speakingId = null }
-            @Deprecated("Deprecated in Java") override fun onError(id: String?) { if (speakingId == id) speakingId = null }
+            override fun onDone(id: String?) {
+                // Only the last chunk of a reply ends the speech.
+                if (id != null && id == lastUtteranceId && speakingId == id.substringBeforeLast('#')) speakingId = null
+            }
+            @Deprecated("Deprecated in Java") override fun onError(id: String?) {
+                if (id != null && speakingId == id.substringBeforeLast('#')) {
+                    speakingId = null
+                    problem = "Не удалось озвучить ответ"
+                }
+            }
         })
     }
 
     data class Profile(val pitch: Float, val rate: Float)
-    fun profile(characterId: String): Profile {
+    fun profile(characterId: String, gender: String? = null): Profile {
         val saved = prefs.getString("p:$characterId", null)?.split('|')?.mapNotNull { it.toFloatOrNull() }
         if (saved != null && saved.size == 2) return Profile(saved[0], saved[1])
         val h = abs(characterId.hashCode() % 1000) / 1000f
-        return Profile(0.8f + h * 0.45f, 1.0f) // 0.8 (deep) … 1.25 (light)
+        val pitch = when (genderKind(gender)) {
+            1 -> 1.05f + h * 0.25f // female: 1.05 … 1.30
+            2 -> 0.75f + h * 0.20f // male: 0.75 … 0.95
+            else -> 0.85f + h * 0.35f // unknown: 0.85 … 1.20
+        }
+        return Profile(pitch, 1.0f)
     }
     fun saveProfile(characterId: String, p: Profile) { prefs.edit().putString("p:$characterId", "${p.pitch}|${p.rate}").apply() }
     fun updateAutoRead(on: Boolean) { autoRead = on; prefs.edit().putBoolean("autoRead", on).apply() }
 
-    fun speak(id: String, text: String, characterId: String, language: String = "ru") {
-        if (!ready) return
-        val p = profile(characterId)
-        tts.language = Locale.forLanguageTag(if (language == "en") "en-US" else "ru-RU")
+    private fun fail(message: String) { speakingId = null; lastUtteranceId = null; problem = message }
+
+    fun speak(id: String, text: String, characterId: String, language: String = "ru", gender: String? = null) {
+        if (!ready) { fail("Голосовой движок телефона ещё не готов"); return }
+        val parts = chunks(clean(text), maxChunk())
+        if (parts.isEmpty()) return
+        val p = profile(characterId, gender)
+        val lang = tts.setLanguage(Locale.forLanguageTag(if (language == "en") "en-US" else "ru-RU"))
+        if (lang == TextToSpeech.LANG_MISSING_DATA || lang == TextToSpeech.LANG_NOT_SUPPORTED) {
+            fail(if (language == "en") "В телефоне не установлен английский голос. Установи его в настройках синтеза речи."
+                else "В телефоне не установлен русский голос. Установи его в настройках синтеза речи.")
+            return
+        }
         tts.setPitch(p.pitch); tts.setSpeechRate(p.rate)
         speakingId = id
-        tts.speak(clean(text), TextToSpeech.QUEUE_FLUSH, null, id)
+        lastUtteranceId = "$id#${parts.lastIndex}"
+        parts.forEachIndexed { i, part ->
+            val r = tts.speak(part, if (i == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, "$id#$i")
+            if (r == TextToSpeech.ERROR) { tts.stop(); fail("Не удалось озвучить ответ"); return }
+        }
+        problem = null
     }
-    fun stop() { tts.stop(); speakingId = null }
+    fun stop() { tts.stop(); speakingId = null; lastUtteranceId = null }
     fun shutdown() { tts.stop(); tts.shutdown() }
+
+    /** Opens the system screen that installs missing voice data. */
+    fun installVoiceData(context: Context) {
+        runCatching {
+            context.startActivity(Intent(TextToSpeech.Engine.ACTION_INSTALL_TTS_DATA).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+        }
+    }
+
+    private fun maxChunk(): Int = runCatching { TextToSpeech.getMaxSpeechInputLength() - 100 }.getOrDefault(3800).let { if (it < 200) 3800 else it }
 
     companion object {
         /** Reads the words, not the markup: *actions* keep their text, symbols and emoji are dropped. */
         fun clean(text: String) = text
             .replace(Regex("[*_~`#>|\\[\\]]"), " ")
             .replace(Regex("[\\p{So}\\p{Cn}\\x{1F000}-\\x{1FFFF}]"), " ")
-            .replace(Regex("\\s+"), " ").trim().take(3900)
+            .replace(Regex("\\s+"), " ").trim()
+
+        /** 1 = female, 2 = male, 0 = unknown. Gender comes from the API as free text. */
+        internal fun genderKind(gender: String?): Int {
+            val g = gender?.trim()?.lowercase(Locale.ROOT) ?: return 0
+            return when {
+                g.startsWith("f") || g.contains("жен") || g.contains("девуш") || g.contains("girl") || g.contains("woman") -> 1
+                g.startsWith("m") || g.contains("муж") || g.contains("парен") || g.contains("boy") -> 2
+                else -> 0
+            }
+        }
+
+        /** Splits text into pieces of at most [max] chars, preferring sentence ends, then spaces. Pure; no words are lost. */
+        fun chunks(text: String, max: Int): List<String> {
+            val limit = if (max < 1) 1 else max
+            val out = ArrayList<String>()
+            var rest = text.trim()
+            while (rest.length > limit) {
+                val window = rest.substring(0, limit + 1) // one extra char to see whether the cut falls on a space
+                var cut = -1
+                var i = limit - 1
+                while (i >= limit / 3) { // sentence end followed by a space
+                    val c = window[i]
+                    if ((c == '.' || c == '!' || c == '?' || c == '…' || c == '\n') && window[i + 1].isWhitespace()) { cut = i + 1; break }
+                    i--
+                }
+                if (cut < 0) {
+                    val sp = window.lastIndexOf(' ', limit)
+                    cut = if (sp > 0) sp else limit // a single very long word is cut hard
+                }
+                val piece = rest.substring(0, cut).trim()
+                if (piece.isNotEmpty()) out.add(piece)
+                rest = rest.substring(cut).trim()
+            }
+            if (rest.isNotEmpty()) out.add(rest)
+            return out
+        }
+    }
+}
+
+/** Gender of a character known to the app (catalog, own, favourites, recommendations); null when not loaded. */
+fun NovaViewModel.genderOf(characterId: String?): String? =
+    if (characterId == null) null
+    else (catalog + owned + favorites + recommended).firstOrNull { it.id == characterId }?.gender
+
+/** Small error line with a button that opens the system voice-data installer. */
+@Composable
+fun VoiceProblem(voice: NovaVoice) {
+    val problem = voice.problem ?: return
+    val context = LocalContext.current
+    Column {
+        Text(problem, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+        TextButton(onClick = { voice.installVoiceData(context) }) { Text("Установить голос") }
     }
 }
 
@@ -73,8 +165,8 @@ fun rememberNovaVoice(): NovaVoice {
 
 /** Voice section of the chat settings: auto-read, pitch and speed for this character. */
 @Composable
-fun VoiceSettings(voice: NovaVoice, characterId: String, sample: String) {
-    var p by remember(characterId) { mutableStateOf(voice.profile(characterId)) }
+fun VoiceSettings(voice: NovaVoice, characterId: String, sample: String, gender: String? = null) {
+    var p by remember(characterId) { mutableStateOf(voice.profile(characterId, gender)) }
     NovaEyebrow("ГОЛОС ПЕРСОНАЖА")
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Читать ответы вслух", Modifier.weight(1f))
@@ -86,7 +178,8 @@ fun VoiceSettings(voice: NovaVoice, characterId: String, sample: String) {
     Text("Скорость: " + String.format(Locale.US, "%.1f×", p.rate), style = MaterialTheme.typography.bodySmall)
     Slider(value = p.rate, onValueChange = { p = p.copy(rate = it) }, valueRange = 0.6f..1.6f,
         onValueChangeFinished = { voice.saveProfile(characterId, p) })
-    TextButton(onClick = { voice.saveProfile(characterId, p); voice.speak("sample", tr(sample), characterId, NovaLang.code) }, enabled = voice.ready) { Text("Прослушать голос") }
+    TextButton(onClick = { voice.saveProfile(characterId, p); voice.speak("sample", tr(sample), characterId, NovaLang.code, gender) }, enabled = voice.ready) { Text("Прослушать голос") }
     if (!voice.ready) Text("Голосовой движок телефона ещё загружается или не установлен (Настройки → Синтез речи).", style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted)
+    VoiceProblem(voice)
     Spacer(Modifier.height(8.dp))
 }

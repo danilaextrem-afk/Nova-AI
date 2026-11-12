@@ -114,7 +114,9 @@ fun VoiceCallDialog(model: NovaViewModel, voice: NovaVoice, onClose: () -> Unit)
         if (model.error != null || fresh.isEmpty()) { state = CallState.PAUSED; note = model.error ?: "Ответ не пришёл. Нажми «Продолжить» и повтори."; return@LaunchedEffect }
         lastSpokenId = all.last().id; replyDelayMs = System.currentTimeMillis() - sentAt
         state = CallState.SPEAKING
-        voice.speak("call-" + all.last().id, fresh.joinToString(". ") { (it.speakerName?.let { n -> "$n. " } ?: "") + it.content }, chat.characterId, NovaLang.code)
+        voice.speak("call-" + all.last().id, fresh.joinToString(". ") { (it.speakerName?.let { n -> "$n. " } ?: "") + it.content }, chat.characterId, NovaLang.code, model.genderOf(chat.characterId))
+        // A failed start never changes speakingId, so the effect below would not fire: go back to listening here.
+        if (voice.speakingId == null) listen()
     }
     LaunchedEffect(voice.speakingId) { if (state == CallState.SPEAKING && voice.speakingId == null) listen() }
 
@@ -136,6 +138,7 @@ fun VoiceCallDialog(model: NovaViewModel, voice: NovaVoice, onClose: () -> Unit)
                 if (state == CallState.LISTENING || state == CallState.THINKING) LinearProgressIndicator(Modifier.fillMaxWidth(0.6f))
                 if (heard.isNotBlank()) androidx.compose.material3.Text("«$heard»", textAlign = TextAlign.Center, color = NovaDesign.Muted, maxLines = 4)
                 note?.let { Text(it, textAlign = TextAlign.Center, color = NovaDesign.Rose, style = MaterialTheme.typography.bodySmall) }
+                VoiceProblem(voice)
                 replyDelayMs?.let { Text("Ответ пришёл за ${(it + 500) / 1000} с", style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted) }
                 when (state) {
                     CallState.NEED_MIC -> Button(onClick = { permission.launch(Manifest.permission.RECORD_AUDIO) }) { Text("Разрешить микрофон") }

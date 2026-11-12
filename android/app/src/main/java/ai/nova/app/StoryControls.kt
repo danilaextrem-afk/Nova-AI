@@ -20,9 +20,15 @@ import java.util.Locale
 @Composable fun SpeakButton(text: String) {
     val context=LocalContext.current
     var ready by remember { mutableStateOf(false) }
+    var failed by remember { mutableStateOf(false) }
     val tts=remember { TextToSpeech(context) { ready=it==TextToSpeech.SUCCESS } }
     DisposableEffect(tts) { onDispose {tts.stop();tts.shutdown()} }
-    TextButton(onClick={tts.language=Locale.forLanguageTag("ru-RU");tts.speak(text,TextToSpeech.QUEUE_FLUSH,null,"nova-message")},enabled=ready) {Text("Озвучить")}
+    TextButton(onClick={
+        val lang=tts.setLanguage(Locale.forLanguageTag("ru-RU"))
+        if(lang==TextToSpeech.LANG_MISSING_DATA||lang==TextToSpeech.LANG_NOT_SUPPORTED){failed=true}
+        else failed=tts.speak(text.take(TextToSpeech.getMaxSpeechInputLength()-1),TextToSpeech.QUEUE_FLUSH,null,"nova-message")==TextToSpeech.ERROR
+    },enabled=ready) {Text("Озвучить")}
+    if(failed)Text("Голос недоступен",style=MaterialTheme.typography.labelSmall,color=MaterialTheme.colorScheme.error)
 }
 @Composable fun DictationButton(model: NovaViewModel, compact: Boolean = false) {
     val launcher=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
