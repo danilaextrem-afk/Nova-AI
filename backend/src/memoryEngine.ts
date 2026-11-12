@@ -98,7 +98,7 @@ export function pickSpeakers<T extends { id: string; name: string }>(cast: T[], 
 /** Models sometimes prefix their own name; the app shows the speaker itself. */
 export function stripSpeakerPrefix(text: string, name: string): string {
   const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return text.replace(new RegExp(`^\\s*(\\*\\*|\\[)?${escaped}(\\*\\*|\\])?\\s*[:：—-]\\s*`, 'i'), '').trim() || text.trim();
+  return text.replace(new RegExp(`^\\s*(\\*\\*|\\[)?${escaped}(\\*\\*|\\])?\\s*[:：—-]\\s*(\\*\\*)?\\s*`, 'i'), '').trim() || text.trim();
 }
 
 export async function registerMemoryRoutes(app: FastifyInstance, db: PrismaClient,

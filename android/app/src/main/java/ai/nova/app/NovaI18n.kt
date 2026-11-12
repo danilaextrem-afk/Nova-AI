@@ -89,6 +89,7 @@ private val EN_PATTERNS: List<Pair<Regex, (List<String>) -> String>> = listOf(
     Regex("Не удалось создать аккаунт \\(код (\\d+)\\)\\. Попробуй ещё раз\\.") to { g -> "Could not create the account (code ${g[1]}). Try again." },
     Regex("Не удалось войти \\(код (\\d+)\\)\\. Попробуй ещё раз\\.") to { g -> "Could not sign in (code ${g[1]}). Try again." },
     Regex("Групповая сцена · персонажей: (\\d+)") to { g -> "Group scene · characters: ${g[1]}" },
+    Regex("Ответ пришёл за (\\d+) с") to { g -> "Reply arrived in ${g[1]} s" },
     Regex("(\\d+) Токены") to { g -> "${g[1]} Tokens" },
     Regex("◈ (\\d+) Токены") to { g -> "◈ ${g[1]} Tokens" },
 )
@@ -226,6 +227,20 @@ private val EN: Map<String, String> = mapOf(
     "Персонаж присоединился к сцене" to "The character joined the scene", "Заполни название и описание сценария" to "Fill in the scenario title and description",
     "Сценарий добавлен" to "Scenario added",
     // Voice
+    "Голосовой разговор" to "Voice conversation", "ГОЛОСОВОЙ РАЗГОВОР" to "VOICE CONVERSATION", "Нужен доступ к микрофону" to "Microphone access is needed",
+    "Слушаю тебя…" to "Listening…", "Персонаж думает…" to "The character is thinking…", "Персонаж говорит" to "The character is speaking",
+    "Пауза" to "Pause", "На телефоне нет службы распознавания речи" to "This phone has no speech recognition service",
+    "Разрешить микрофон" to "Allow microphone", "Продолжить" to "Resume", "Отменить ответ" to "Cancel reply", "Завершить разговор" to "End conversation",
+    "Речь распознаёт и озвучивает сам телефон; в NOVA уходит только текст. Это разговор по очереди, а не непрерывный аудиопоток." to
+        "Speech is recognised and spoken by the phone itself; only text goes to NOVA. This is a turn-by-turn conversation, not a continuous audio stream.",
+    "Установи или включи «Голосовой ввод Google» в настройках телефона. Диктовка и озвучка в чате остаются доступны." to
+        "Install or enable Google voice typing in the phone settings. Dictation and read-aloud in chat remain available.",
+    "Разговор на паузе: звук занят звонком или другим приложением" to "Paused: audio is in use by a call or another app",
+    "Не слышу тебя. Нажми «Продолжить» и говори." to "I can't hear you. Tap Resume and speak.",
+    "Распознаванию речи нужен интернет. Проверь связь." to "Speech recognition needs internet. Check your connection.",
+    "Распознавание речи прервалось. Нажми «Продолжить»." to "Speech recognition stopped. Tap Resume.",
+    "Без доступа к микрофону голосовой разговор невозможен. Разрешение можно выдать в настройках телефона." to "Voice conversation needs microphone access. You can grant it in the phone settings.",
+    "Ответ не пришёл. Нажми «Продолжить» и повтори." to "No reply arrived. Tap Resume and try again.",
     "ГОЛОС ПЕРСОНАЖА" to "CHARACTER VOICE", "Читать ответы вслух" to "Read replies aloud", "низкий" to "low", "высокий" to "high", "средний" to "medium",
     "Прослушать голос" to "Preview voice", "Привет! Так звучит мой голос." to "Hi! This is how my voice sounds.",
     "Голосовой движок телефона ещё загружается или не установлен (Настройки → Синтез речи)." to "The phone's speech engine is loading or not installed (Settings → Text-to-speech).",

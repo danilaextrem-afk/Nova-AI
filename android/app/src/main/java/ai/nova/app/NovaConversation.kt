@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Call
 
 @OptIn(ExperimentalLayoutApi::class)
 /** Presentation only: all requests, streaming, persistence and charging remain in the existing model. */
@@ -26,11 +27,12 @@ import androidx.compose.material.icons.filled.Stop
  var deleting by remember{mutableStateOf(false)}
  val list=rememberLazyListState()
  val voice=rememberNovaVoice()
+ var call by remember(chat.id){mutableStateOf(false)}
  // Auto-read only replies that arrive while the chat is open, never the history shown on opening.
  var heardId by remember(chat.id){mutableStateOf(model.chatMessages.lastOrNull()?.id)}
  LaunchedEffect(model.chatMessages.lastOrNull()?.id){
   val last=model.chatMessages.lastOrNull()?:return@LaunchedEffect
-  if(last.id!=heardId){val prev=heardId;heardId=last.id;if(prev!=null&&voice.autoRead&&last.role!="user")voice.speak(last.id,last.content,chat.characterId,NovaLang.code)}
+  if(last.id!=heardId){val prev=heardId;heardId=last.id;if(prev!=null&&!call&&voice.autoRead&&last.role!="user")voice.speak(last.id,last.content,chat.characterId,NovaLang.code)}
  }
  DisposableEffect(chat.id){onDispose{voice.stop()}}
  LaunchedEffect(model.chatMessages.size,model.streamingText?.length){
@@ -44,6 +46,7 @@ import androidx.compose.material.icons.filled.Stop
     Text(chat.characterName?:chat.title?:"Твоя история",style=MaterialTheme.typography.titleMedium,maxLines=1)
     Text(if(chat.participantIds.isNullOrEmpty())"Вымышленный AI-персонаж" else "Групповая сцена · персонажей: ${chat.participantIds.size+1}",style=MaterialTheme.typography.labelSmall,color=NovaDesign.Muted)
    }
+   IconButton(onClick={voice.stop();call=true}){Icon(Icons.Default.Call,contentDescription=tr("Голосовой разговор"))}
    TextButton(onClick={settings=true},contentPadding=PaddingValues(4.dp)){Text("Ещё")}
   }
  }
@@ -126,6 +129,7 @@ import androidx.compose.material.icons.filled.Stop
    if(!imeOpen&&model.premiumChatSelected)Text("Premium: ${model.aiStatus?.premiumPriceTokens?:5} ◈ спишутся только за успешный ответ",style=MaterialTheme.typography.labelSmall,color=NovaDesign.Muted)
   }
  }
+ if(call)VoiceCallDialog(model,voice){call=false}
  if(settings)AlertDialog(onDismissRequest={settings=false},title={Text("Твоя история")},text={Column(Modifier.verticalScroll(rememberScrollState())){
   NovaEyebrow("РЕЖИМ ОБЩЕНИЯ")
   Text(if(model.premiumChatSelected) "Premium: более мощная модель, длинные ответы и увеличенный контекст. ${model.aiStatus?.premiumPriceTokens?:5} токенов только за успешный ответ. Баланс: ${model.aiStatus?.tokenBalance?:0} ◈." else "Обычный чат: без дневного лимита NOVA и без списания токенов. Возможны технические задержки провайдера.",style=MaterialTheme.typography.bodyMedium)

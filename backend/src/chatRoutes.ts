@@ -69,8 +69,8 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
     if(!await db.chat.findFirst({where:{id:req.params.id,userId:req.user.sub}}))return reply.code(404).send({error:'CHAT_NOT_FOUND'});
     const rows=await db.message.findMany({where:{chatId:req.params.id,...(q.data.before?{sequence:{lt:q.data.before}}:{}),
       ...(q.data.q?{content:{contains:q.data.q,mode:'insensitive'}}:{})},orderBy:{sequence:'desc'},take:q.data.limit});
-    const nextBefore=rows.length===q.data.limit?rows[0].sequence:null;
-    return {items:await withNames(rows.reverse()),nextBefore};
+    rows.reverse(); // Oldest first; the cursor is the oldest row of this page.
+    return {items:await withNames(rows),nextBefore:rows.length===q.data.limit?rows[0].sequence:null};
   });
   app.get('/v1/chats/:id/requests',auth,async(req:any,reply)=>{
     if(!await db.chat.findFirst({where:{id:req.params.id,userId:req.user.sub}}))return reply.code(404).send({error:'CHAT_NOT_FOUND'});
@@ -186,6 +186,7 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
         db.memory.findMany({where:{chatId:chat.id},orderBy:[{pinned:'desc'},{updatedAt:'desc'}],take:tier==='premium'?20:8}),
         db.character.findMany({where:{id:{in:chat.participantIds},...visibleCharacter(userId,await showsMature(db,userId))}}),
       ]);
+      others.sort((x,y)=>chat.participantIds.indexOf(x.id)-chat.participantIds.indexOf(y.id)); // Stable cast order.
       const cast=[chat.character,...others];
       const isGroup=others.length>0;
       const names=new Map(cast.map(c=>[c.id,c.name]));
