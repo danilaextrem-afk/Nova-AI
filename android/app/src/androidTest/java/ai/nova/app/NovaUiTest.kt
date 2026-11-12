@@ -331,6 +331,7 @@ class NovaUiTest {
   waitFor("preview"){compose.onAllNodesWithText("ПЕРВОЕ СООБЩЕНИЕ").fetchSemanticsNodes().isNotEmpty()}
   screenshot("30-character-preview")
   compose.onNodeWithText("Закрыть").performClick()
+  waitFor("preview closed"){compose.onAllNodesWithText("ПЕРВОЕ СООБЩЕНИЕ").fetchSemanticsNodes().isEmpty()}
   compose.onNodeWithText("Очистить черновик").reveal().performClick()
   waitFor("draft cleared"){SessionStore(compose.activity).get("characterDraft").isNullOrEmpty()}
  }
