@@ -20,7 +20,8 @@ data class CharacterDraft(
     val appearance: String = "", val biography: String = "", val personality: String = "",
     val interests: String = "", val backstory: String = "", val speechStyle: String = "",
     val scenario: String = "", val avatarUrl: String? = null,
-    val mature: Boolean = false
+    val mature: Boolean = false,
+    val age: Int? = null, val gender: String? = null, val traits: List<String> = emptyList()
 )
 data class NovaCharacter(
     val id: String,
@@ -33,8 +34,22 @@ data class NovaCharacter(
     val interests: String? = null, val backstory: String? = null, val speechStyle: String? = null,
     val scenario: String? = null, val language: String = "ru", val ownerId: String? = null, val publication: PublicationInfo? = null,
     val mature: Boolean = false,
+    val age: Int? = null, val gender: String? = null, val traits: List<String>? = null,
     val reason: String? = null // Recommendation feed: TASTE | NEW | POPULAR
 )
+/** Smart creator: the current card is sent as context; the server returns a suggestion and never saves it. */
+data class AssistCurrent(val name: String? = null, val age: Int? = null, val gender: String? = null, val traits: List<String>? = null,
+    val biography: String? = null, val personality: String? = null, val interests: String? = null, val appearance: String? = null,
+    val speechStyle: String? = null, val backstory: String? = null, val scenario: String? = null, val greeting: String? = null,
+    val category: String? = null, val tags: List<String>? = null)
+data class AssistRequest(val mode: String, val idea: String? = null, val field: String? = null, val action: String? = null,
+    val current: AssistCurrent = AssistCurrent(), val language: String = "ru")
+data class AssistCard(val name: String = "", val biography: String = "", val personality: String = "", val interests: String = "",
+    val appearance: String = "", val speechStyle: String = "", val backstory: String = "", val scenario: String = "", val greeting: String = "",
+    val tags: List<String>? = null, val traits: List<String>? = null, val category: String? = null)
+data class AssistResponse(val card: AssistCard? = null, val variants: List<String>? = null, val needs: List<String>? = null)
+data class AvatarUpload(val data: String, val source: String, val rightsConfirmed: Boolean = true)
+data class AvatarResult(val id: String, val url: String)
 data class ArtStatus(val configured: Boolean = false, val freePerDay: Int = 0, val usedToday: Int = 0, val freeLeft: Int = 0, val priceTokens: Int = 0)
 data class ArtRequest(val prompt: String, val style: String, val requestId: String)
 data class ArtResult(val image: String? = null, val mime: String? = null, val prompt: String? = null, val chargedTokens: Int = 0, val freeLeft: Int = 0)
@@ -149,6 +164,8 @@ interface NovaApi {
     @GET("v1/characters/{id}/memories") suspend fun characterMemories(@Header("Authorization") bearer: String, @Path("id") id: String): CharacterMemoryPage
     @POST("v1/characters/{id}/memories") suspend fun addCharacterMemory(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: CharacterMemoryBody)
     @DELETE("v1/characters/{id}/memories/{memoryId}") suspend fun deleteCharacterMemory(@Header("Authorization") bearer: String, @Path("id") id: String, @Path("memoryId") memoryId: String): retrofit2.Response<Unit>
+    @POST("v1/characters/assist") suspend fun assist(@Header("Authorization") bearer: String, @Body body: AssistRequest): AssistResponse
+    @POST("v1/media/avatar") suspend fun uploadAvatar(@Header("Authorization") bearer: String, @Body body: AvatarUpload): AvatarResult
     @GET("v1/discover/recommended") suspend fun recommended(@Header("Authorization") bearer: String): CharacterPage
     @GET("v1/discover/collections") suspend fun shelves(@Header("Authorization") bearer: String): ShelvesResponse
     @GET("v1/creators/{id}") suspend fun author(@Header("Authorization") bearer: String, @Path("id") id: String): AuthorPage

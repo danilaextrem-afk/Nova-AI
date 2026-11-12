@@ -54,7 +54,7 @@ object NovaDesign {
  val asset=when {
   id?.matches(Regex("00000000-0000-4000-8000-000000000[12](0[1-9]|1[0-2])"))==true -> "file:///android_asset/portraits/${id.takeLast(3)}.webp"
   id?.matches(Regex("studio-2(0[1-9]|1[0-2])"))==true -> "file:///android_asset/portraits/${id.takeLast(3)}.webp"
-  url?.startsWith(StudioCast.assetBase+"/")==true && url.substringAfterLast("/").removeSuffix(".webp").toIntOrNull()?.let { it in 201..212 } == true -> "file:///android_asset/portraits/${url.substringAfterLast("/")}"
+  url?.startsWith(StudioCast.assetBase+"/")==true && url.substringAfterLast("/").removeSuffix(".webp").toIntOrNull()?.let { it in 101..112 || it in 201..212 } == true -> "file:///android_asset/portraits/${url.substringAfterLast("/")}"
   else->null
  }
  Box(modifier.background(Color(0xFF2C2339)),contentAlignment=Alignment.Center){
