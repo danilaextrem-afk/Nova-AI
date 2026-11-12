@@ -215,6 +215,12 @@ private fun LoginScreen(model: NovaViewModel) {
     }
 }
 
+private val showcaseNames = listOf(
+    "Аврора Вейл", "Лея Винтер", "Мира Соль", "Ника Блэйз",
+    "София Рейн", "Элина Фрост", "Кай Номад", "Леон Арден",
+    "Арсен Вольт", "Даниэль Рэй", "Рэн Блэквуд", "Тео Картер"
+)
+
 @Composable
 private fun GuestCastPreview() {
     NovaEyebrow("NOVA ORIGINALS")
