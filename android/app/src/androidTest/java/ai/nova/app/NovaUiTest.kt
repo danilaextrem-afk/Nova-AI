@@ -227,6 +227,7 @@ class NovaUiTest {
   screenshot("23-ai-art-style")
   waitFor("style selected"){compose.onAllNodes(hasText("Фэнтези") and isSelected()).fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Что нарисовать?").reveal().performTextInput("Озеро на рассвете")
+  compose.onNodeWithText("Что нарисовать?").performImeAction()
   clickWhenEnabled("Нарисовать бесплатно")
   waitFor("art result"){compose.onAllNodesWithText("Мои картинки").fetchSemanticsNodes().isNotEmpty()}
   assertTrue("art request: $artBody",artBody!!.contains("fantasy")&&artBody!!.contains("Озеро на рассвете"))

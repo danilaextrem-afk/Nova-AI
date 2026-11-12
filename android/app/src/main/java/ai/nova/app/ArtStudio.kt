@@ -17,6 +17,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
@@ -36,6 +40,7 @@ private val ART_IDEAS = listOf(
 fun ArtScreen(model: NovaViewModel) {
     val context = LocalContext.current
     var open by remember { mutableStateOf<File?>(null) }
+    val keyboard = LocalSoftwareKeyboardController.current
     NovaEyebrow("AI АРТ")
     Text("Нарисуй сцену\nиз своей истории", style = MaterialTheme.typography.headlineLarge)
     val status = model.artStatus
@@ -47,26 +52,27 @@ fun ArtScreen(model: NovaViewModel) {
             else -> "Бесплатные картинки на сегодня закончились. Следующая — ${status.priceTokens} ◈."
         }, color = NovaDesign.Muted, style = MaterialTheme.typography.bodySmall
     )
-    OutlinedTextField(
-        value = model.artPrompt, onValueChange = { model.artPrompt = it.take(600) },
-        label = { Text("Что нарисовать?") }, placeholder = { Text("Например: героиня у окна поезда на закате") },
-        minLines = 3, maxLines = 6, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp)
-    )
     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         ART_STYLES.forEach { (id, label) -> FilterChip(selected = model.artStyle == id, onClick = { model.artStyle = id }, label = { Text(label) }) }
     }
-    if (model.artPrompt.isBlank()) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        ART_IDEAS.forEach { idea -> AssistChip(onClick = { model.artPrompt = idea }, label = { Text(idea, maxLines = 1) }) }
-    }
+    OutlinedTextField(
+        value = model.artPrompt, onValueChange = { model.artPrompt = it.take(600) },
+        label = { Text("Что нарисовать?") }, placeholder = { Text("Например: героиня у окна поезда на закате") },
+        minLines = 2, maxLines = 5, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(20.dp),
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done), keyboardActions = KeyboardActions(onDone = { keyboard?.hide() })
+    )
     val paid = status != null && status.freeLeft == 0
     Button(
-        onClick = { model.generateArt() },
+        onClick = { keyboard?.hide(); model.generateArt() },
         enabled = !model.loading && status?.configured == true && model.artPrompt.trim().length >= 3,
         modifier = Modifier.fillMaxWidth().height(54.dp)
     ) { Text(if (paid) "Нарисовать · ${status!!.priceTokens} ◈" else "Нарисовать бесплатно") }
     if (model.loading && model.activeTab == NovaTab.ART && status != null) Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
         CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp)
         Text("Рисую… обычно 10–30 секунд", color = NovaDesign.Muted)
+    }
+    if (model.artPrompt.isBlank()) FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        ART_IDEAS.forEach { idea -> AssistChip(onClick = { model.artPrompt = idea }, label = { Text(idea, maxLines = 1) }) }
     }
     Text("Нельзя: обнажённая натура, дети, реальные люди, жестокость. Такие запросы отклоняются без списания токенов.",
         style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted)
