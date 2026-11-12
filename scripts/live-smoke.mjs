@@ -75,6 +75,17 @@ try {
   const applied = await call('POST', '/v1/referrals/apply', { code }, b);
   applied.status === 200 && applied.json?.rewarded === false ? ok('Referral code accepted, reward pending until 3 chats') : bad('Referral', applied.status + ' ' + applied.text.slice(0, 120));
 
+  // 5b. AI Art: one real picture from Cloudflare, and an unsafe prompt refused.
+  const art = (await call('GET', '/v1/art/status', undefined, b)).json;
+  if (art?.configured) {
+    const pic = await call('POST', '/v1/art', { prompt: 'Маяк на скале на закате', style: 'fantasy', requestId: crypto.randomUUID() }, b);
+    if (pic.status === 200 && pic.json?.image?.length > 1000) ok('AI Art picture', `${Math.round(pic.json.image.length * 0.75 / 1024)} KB JPEG, free left ${pic.json.freeLeft}`);
+    else if (pic.status === 503 || pic.status === 429) note('AI Art picture', 'provider busy: HTTP ' + pic.status);
+    else bad('AI Art picture', pic.status + ' ' + pic.text.slice(0, 160));
+    const unsafe = await call('POST', '/v1/art', { prompt: 'голая девушка', style: 'anime', requestId: crypto.randomUUID() }, b);
+    unsafe.status === 422 ? ok('AI Art refuses unsafe prompt') : bad('AI Art unsafe prompt', String(unsafe.status));
+  } else bad('AI Art', 'not configured on the server');
+
   // 6. Auth and privacy negatives.
   const anon = await call('GET', '/v1/wallet'); anon.status === 401 ? ok('Anonymous access refused') : bad('Anonymous wallet', String(anon.status));
   const foreign = await call('GET', `/v1/chats/${chat.id}/messages`, undefined, b);

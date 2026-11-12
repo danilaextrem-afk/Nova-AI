@@ -28,7 +28,7 @@ import java.util.Locale
     }
     TextButton(onClick={runCatching {launcher.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
-        putExtra(RecognizerIntent.EXTRA_LANGUAGE,"ru-RU")
+        putExtra(RecognizerIntent.EXTRA_LANGUAGE,if(NovaLang.code=="en")"en-US" else "ru-RU")
         putExtra(RecognizerIntent.EXTRA_PROMPT,"Диктовка сообщения — текст можно изменить до отправки")
     })}.onFailure {model.showNotice("На устройстве нет службы распознавания речи")} }) {Text("Диктовать сообщение")}
 }

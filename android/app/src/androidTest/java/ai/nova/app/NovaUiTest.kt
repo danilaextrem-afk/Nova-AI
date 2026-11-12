@@ -27,6 +27,12 @@ class NovaUiTest {
  @Volatile private var bonusClaims=0
  @Volatile private var showMature=false
  @Volatile private var userText="Привет"
+ @Volatile private var artBody:String?=null
+ private val artJpeg:String by lazy {
+  val b=Bitmap.createBitmap(64,64,Bitmap.Config.ARGB_8888);b.eraseColor(android.graphics.Color.rgb(120,80,200))
+  val out=java.io.ByteArrayOutputStream();b.compress(Bitmap.CompressFormat.JPEG,90,out)
+  android.util.Base64.encodeToString(out.toByteArray(),android.util.Base64.NO_WRAP)
+ }
  @Before fun setUp(){
   server.dispatcher=object:Dispatcher(){override fun dispatch(r:RecordedRequest):MockResponse {
    if(r.path=="/v1/auth/register"){
@@ -65,6 +71,8 @@ class NovaUiTest {
     r.path=="/v1/publications/fixture-publication/comments" && r.method=="POST" -> {commentSent=true;"{}"}
     r.path=="/v1/publications/fixture-publication/comments" -> if(commentSent) """{"items":[{"id":"comment","content":"Интересная история","status":"PENDING_REVIEW"}]}""" else """{"items":[]}"""
     r.path=="/v1/auth/logout" -> "{}"
+    r.path=="/v1/art/status" -> """{"configured":true,"freePerDay":3,"usedToday":${if(artBody==null)0 else 1},"freeLeft":${if(artBody==null)3 else 2},"priceTokens":3}"""
+    r.path=="/v1/art" && r.method=="POST" -> {artBody=r.body.readUtf8();"""{"image":"$artJpeg","mime":"image/jpeg","prompt":"a lake","chargedTokens":0,"freeLeft":2}"""}
     else -> """{"items":[]}"""
    };return MockResponse().setHeader("Content-Type","application/json").setBody(json)
   }}
@@ -79,7 +87,7 @@ class NovaUiTest {
    vm.serverUrl=baseUrl
   }
  }
- @After fun finish(){server.shutdown();SessionStore(compose.activity).clear()}
+ @After fun finish(){server.shutdown();SessionStore(compose.activity).clear();NovaLang.set(compose.activity,"ru");File(compose.activity.filesDir,"nova-art").deleteRecursively()}
  private fun screenshot(name:String){
   val image=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
   val dir=File(compose.activity.getExternalFilesDir(null),"screenshots");dir.mkdirs()
@@ -207,6 +215,37 @@ class NovaUiTest {
   compose.waitUntil(20000){compose.onAllNodesWithText("Получено сегодня. Следующий бонус — завтра.").fetchSemanticsNodes().isNotEmpty()}
   assertEquals(1,bonusClaims)
   compose.onNodeWithText("NOVA2345").reveal().assertExists();screenshot("05-wallet-rewards")
+ }
+ @Test fun artStudioDrawsAPictureAndEnglishInterfaceSwitches(){
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  waitFor("home"){compose.onAllNodesWithText("Открыть AI Арт").fetchSemanticsNodes().isNotEmpty()}
+  clickWhenEnabled("Открыть AI Арт")
+  waitFor("art status"){compose.onAllNodesWithText("Бесплатно сегодня: 3 из 3. Картинки сохраняются только на твоём телефоне.").fetchSemanticsNodes().isNotEmpty()}
+  // The art screen re-lays out when the day's status arrives; tap again if the first tap landed mid-layout.
+  for(attempt in 1..3){
+   if(compose.onAllNodes(hasText("Фэнтези") and isSelected()).fetchSemanticsNodes().isNotEmpty())break
+   compose.onNodeWithText("Фэнтези").reveal().performClick();compose.waitForIdle()
+  }
+  waitFor("style selected"){compose.onAllNodes(hasText("Фэнтези") and isSelected()).fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Что нарисовать?").reveal().performTextInput("Озеро на рассвете")
+  compose.onNodeWithText("Что нарисовать?").performImeAction()
+  clickWhenEnabled("Нарисовать бесплатно")
+  waitFor("art result"){compose.onAllNodesWithText("Мои картинки").fetchSemanticsNodes().isNotEmpty()}
+  assertTrue("art request: $artBody",artBody!!.contains("fantasy")&&artBody!!.contains("Озеро на рассвете"))
+  compose.onNodeWithText("ГОТОВО").reveal();screenshot("23-ai-art")
+  compose.onNodeWithText("Профиль").performClick()
+  compose.onNodeWithText("English").reveal().performClick()
+  waitFor("english"){compose.onAllNodesWithText("Sign out").fetchSemanticsNodes().isNotEmpty()}
+  assertTrue("bottom bar not translated",compose.onAllNodesWithText("Catalog").fetchSemanticsNodes().isNotEmpty())
+  screenshot("24-english-profile")
+  compose.onNodeWithText("Catalog").performClick()
+  waitFor("english catalog"){compose.onAllNodesWithText("Start AI chat").fetchSemanticsNodes().isNotEmpty()}
+  screenshot("25-english-catalog")
+  compose.onNodeWithText("Profile").performClick()
+  compose.onNodeWithText("Русский").reveal().performClick()
+  waitFor("russian again"){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
  }
  @Test fun matureSectionNeedsExplicitAdultConfirmation(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")

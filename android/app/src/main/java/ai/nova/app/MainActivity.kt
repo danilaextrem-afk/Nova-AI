@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.ScrollState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -56,6 +57,7 @@ private val NovaColors = darkColorScheme(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        NovaLang.load(this)
         setContent {
             NovaTheme {
                 val model: NovaViewModel = viewModel()
@@ -126,7 +128,8 @@ private fun NovaApp(model: NovaViewModel) {
                 .fillMaxSize()
                 .padding(innerPadding)
                 .imePadding()
-                .verticalScroll(rememberScrollState())
+                // A new tab opens at its top, not at the previous tab's scroll position.
+                .verticalScroll(remember(model.activeTab) { ScrollState(0) })
                 .padding(horizontal = 18.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -138,6 +141,7 @@ private fun NovaApp(model: NovaViewModel) {
                 NovaTab.CREATE -> CreateScreen(model)
                 NovaTab.WALLET -> WalletScreen(model)
                 NovaTab.ACCOUNT -> AccountScreen(model)
+                NovaTab.ART -> ArtScreen(model)
             }
             Spacer(Modifier.height(8.dp))
         }
@@ -155,6 +159,17 @@ private fun TokenPill(model: NovaViewModel) {
     }
 }
 
+/** RU / EN interface switch; the choice is remembered on this phone. */
+@Composable
+private fun LanguageSwitch() {
+    val context = LocalContext.current
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Язык приложения", style = MaterialTheme.typography.labelMedium, color = NovaDesign.Muted)
+        FilterChip(selected = NovaLang.code == "ru", onClick = { NovaLang.set(context, "ru") }, label = { Text("Русский") })
+        FilterChip(selected = NovaLang.code == "en", onClick = { NovaLang.set(context, "en") }, label = { Text("English") })
+    }
+}
+
 @Composable
 private fun LoginScreen(model: NovaViewModel) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -169,6 +184,7 @@ private fun LoginScreen(model: NovaViewModel) {
             .imePadding().statusBarsPadding().navigationBarsPadding().padding(horizontal = 22.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
+        LanguageSwitch()
         NovaWordmark()
         NovaEditorialHero("Ближе, чем\nвоображение.", "Персонажи. Разговоры. Твоя история.", eyebrow = "ДОБРО ПОЖАЛОВАТЬ")
         NovaCard {
@@ -256,7 +272,7 @@ private fun StatusMessage(model: NovaViewModel) {
 }
 
 @Composable
-private fun NovaCard(content: @Composable ColumnScope.() -> Unit) {
+fun NovaCard(content: @Composable ColumnScope.() -> Unit) {
     Card(
         shape = RoundedCornerShape(26.dp),
         border = BorderStroke(1.dp,NovaDesign.Border),
@@ -292,6 +308,12 @@ private fun HomeScreen(model: NovaViewModel) {
         Text("Создай характер, выбери настроение и начни разговор.",color=NovaDesign.Muted)
         OutlinedButton(onClick={model.changeTab(NovaTab.CREATE)},modifier=Modifier.fillMaxWidth()){Text("Создать персонажа")}
         TextButton(onClick={model.changeTab(NovaTab.CHATS)}){Text("Мои переписки")}
+    }
+    NovaCard {
+        NovaEyebrow("НОВОЕ · AI АРТ")
+        Text("Нарисуй любимую сцену",style=MaterialTheme.typography.titleLarge)
+        Text("Опиши картинку словами — AI нарисует её за полминуты. Несколько штук в день бесплатно.",color=NovaDesign.Muted)
+        Button(onClick={model.openArt()},modifier=Modifier.fillMaxWidth()){Text("Открыть AI Арт")}
     }
     GuestCastPreview()
 
@@ -425,6 +447,7 @@ private fun CharacterProfileSheet(model: NovaViewModel) {
                     }
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         TextButton(onClick = { model.cloneCharacter(c.id) }, enabled = !model.loading) { Text("Создать свою версию") }
+                        TextButton(onClick = { model.openArt(listOfNotNull(c.name, c.appearance?.takeIf { it.isNotBlank() } ?: c.biography).joinToString(", ")) }) { Text("Нарисовать арт") }
                         owner?.let { creator ->
                             TextButton(onClick = { model.follow(creator, true) }, enabled = !model.loading) { Text("Подписаться на автора") }
                             TextButton(onClick = { model.follow(creator, false) }, enabled = !model.loading) { Text("Отписаться") }
@@ -569,6 +592,7 @@ private fun AccountScreen(model: NovaViewModel) {
             "Сессия и неотправленный текст зашифрованы на устройстве. Чаты и память хранятся в твоём аккаунте.",
             color = Color.LightGray, style = MaterialTheme.typography.bodySmall
         )
+        LanguageSwitch()
         MatureSettings(model)
         OutlinedButton(onClick = { model.logout() }) { Text("Выйти из аккаунта") }
         OutlinedButton(onClick={model.exportAccount()},enabled=!model.loading){Text("Экспортировать мои данные")}
