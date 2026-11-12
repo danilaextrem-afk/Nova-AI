@@ -67,6 +67,22 @@ try {
   status?.configured && msg.status === 200 ? (saved >= 2 ? ok('History in PostgreSQL', saved + ' messages') : bad('History', saved + ' messages'))
     : (saved === 0 ? ok('No fake messages saved on AI failure') : bad('Messages saved without AI', String(saved)));
 
+  // 4b. Group scene with real models: separate replies from different characters; lasting character memory.
+  const group = (await call('POST', '/v1/chats', { characterId: items[0].id, participantIds: [items[1].id, items[2].id] }, a)).json?.chat;
+  const turn = await call('POST', `/v1/chats/${group.id}/messages`, { content: 'Привет всем! Представьтесь по одному предложению.', requestId: crypto.randomUUID() }, a);
+  if (turn.status === 200) {
+    const replies = [turn.json.assistantMessage, ...(turn.json.extraMessages ?? [])];
+    const speakers = replies.map(m => m?.speakerName);
+    new Set(speakers).size >= 2 && speakers.every(Boolean) && replies.every(m => m.content.trim())
+      ? ok('Group scene: separate speakers', speakers.join(' → ') + `: «${replies[1].content.slice(0, 80).replace(/\|/g, '/')}»`)
+      : note('Group scene', 'only ' + speakers.join(', ') + ' answered (second speaker is best-effort)');
+  } else if (turn.status === 429 || turn.status === 503) note('Group scene', 'provider busy: HTTP ' + turn.status);
+  else bad('Group scene', turn.status + ' ' + turn.text.slice(0, 160));
+  const mem = await call('POST', `/v1/characters/${items[0].id}/memories`, { content: 'Игрок любит ночные прогулки' }, a);
+  const memList = (await call('GET', `/v1/characters/${items[0].id}/memories`, undefined, a)).json?.items ?? [];
+  const memOther = (await call('GET', `/v1/characters/${items[0].id}/memories`, undefined, b)).json?.items ?? [];
+  mem.status === 201 && memList.length === 1 && memOther.length === 0 ? ok('Character memory is private to its user') : bad('Character memory', mem.status + ' ' + memList.length + '/' + memOther.length);
+
   // 5. Daily bonus (idempotent) and referral.
   const d1 = await call('POST', '/v1/rewards/daily', undefined, a); const d2 = await call('POST', '/v1/rewards/daily', undefined, a);
   const wallet = (await call('GET', '/v1/wallet', undefined, a)).json;
