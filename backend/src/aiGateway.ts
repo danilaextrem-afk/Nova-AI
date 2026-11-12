@@ -1,7 +1,7 @@
 import type { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 
-export type AiProviderName = 'openrouter' | 'groq' | 'gemini' | 'cerebras';
+export type AiProviderName = 'openrouter' | 'groq' | 'gemini' | 'cerebras' | 'cloudflare';
 export type AiTier = 'free' | 'premium';
 export type AiMessage = { role: 'system' | 'user' | 'assistant'; content: string };
 export class AiProviderError extends Error {
@@ -13,9 +13,11 @@ const providers = {
   // Native Gemini API: AI Studio now issues 'AQ.' auth keys, which the OpenAI-compatible endpoint rejects.
   gemini: { base: 'https://generativelanguage.googleapis.com/v1beta', keyEnv: 'GEMINI_API_KEY', model: 'gemini-flash-latest' },
   cerebras: { base: 'https://api.cerebras.ai/v1', keyEnv: 'CEREBRAS_API_KEY', model: 'gpt-oss-120b' },
+  // Workers AI, OpenAI-compatible; the account id is part of the URL. Free plan: 10,000 Neurons/day, then errors (no charge).
+  cloudflare: { base: 'https://api.cloudflare.com/client/v4/accounts', keyEnv: 'CLOUDFLARE_API_TOKEN', model: '@cf/openai/gpt-oss-20b' },
 } as const;
 const modelSchema = z.object({
-  provider: z.enum(['groq','openrouter','gemini','cerebras']), model: z.string().min(1).max(150),
+  provider: z.enum(['groq','openrouter','gemini','cerebras','cloudflare']), model: z.string().min(1).max(150),
   tier: z.enum(['free','premium']), approved: z.literal(true),
   rpm: z.number().int().positive(), rpd: z.number().int().positive(),
   tpm: z.number().int().positive(), tpd: z.number().int().positive(),
@@ -50,8 +52,10 @@ export function modelPool(tier: AiTier): ModelConfig[] {
     // Gemini (free tier) is a last resort and only with the owner's documented consent (NOVA_GEMINI_TERMS_REVIEWED):
     // Google may use free-tier prompts to improve its products. Conservative limits; the provider's 429 still rules.
     const gemini = [{...free('gemini', process.env.NOVA_GEMINI_MODEL?.trim() || providers.gemini.model), rpm: 8, rpd: 200, tpm: 200000, tpd: 2000000}];
-    models = preferred === 'openrouter' ? [...openrouter, ...groq, ...gemini]
-      : preferred === 'gemini' ? [...gemini, ...groq, ...openrouter] : [...groq, ...openrouter, ...gemini];
+    // Neuron-based quota (~10k/day) mapped to conservative token/request budgets; the provider's errors still rule.
+    const cloudflare = [{...free('cloudflare', process.env.NOVA_CLOUDFLARE_MODEL?.trim() || providers.cloudflare.model), rpm: 60, rpd: 300, tpm: 50000, tpd: 300000}];
+    const first = preferred === 'openrouter' ? openrouter : preferred === 'gemini' ? gemini : preferred === 'cloudflare' ? cloudflare : groq;
+    models = Array.from(new Set([first, groq, openrouter, cloudflare, gemini])).flat();
     if (process.env.NOVA_PREMIUM_MODEL?.trim()) {
       const provider = (process.env.NOVA_PREMIUM_PROVIDER || 'groq') as AiProviderName;
       if (provider in providers) models.push({
@@ -68,6 +72,7 @@ export function modelPool(tier: AiTier): ModelConfig[] {
     .filter(m => m.provider !== 'openrouter' || tier !== 'free' || m.model === 'openrouter/free' || m.model.endsWith(':free'))
     .filter(m => m.provider !== 'gemini' || process.env.NOVA_GEMINI_TERMS_REVIEWED === 'true')
     .filter(m => m.provider !== 'cerebras' || tier !== 'free')
+    .filter(m => m.provider !== 'cloudflare' || /^[0-9a-f]{32}$/.test(process.env.CLOUDFLARE_ACCOUNT_ID || ''))
     .filter(m => m.inputUsdPerMillion + m.outputUsdPerMillion === 0 || m.dailyBudgetMicros > 0);
 }
 export function quotaKey(m: Pick<ModelConfig,'provider'|'model'>): string {
@@ -97,7 +102,8 @@ export function providerRequest(m:Pick<ModelConfig,'provider'|'model'>,messages:
       // Extra output room: thinking models spend part of the budget before the visible answer.
       body:{...(system?{systemInstruction:{parts:[{text:system}]}}:{}),contents,generationConfig:{temperature:0.8,maxOutputTokens:maxOutput+1024}}};
   }
-  return {url:p.base+'/chat/completions',
+  const base=m.provider==='cloudflare'?`${p.base}/${process.env.CLOUDFLARE_ACCOUNT_ID}/ai/v1`:p.base;
+  return {url:base+'/chat/completions',
     headers:{Authorization:'Bearer '+key,'Content-Type':'application/json',...(m.provider==='openrouter'?{'X-Title':'NOVA AI'}:{} as Record<string,string>)},
     body:{model:m.model,messages,stream:streaming,temperature:0.8,max_tokens:maxOutput,
       ...(streaming?{stream_options:{include_usage:true}}:{}),...(m.provider==='openrouter'?{provider:{data_collection:'deny'}}:{})}};

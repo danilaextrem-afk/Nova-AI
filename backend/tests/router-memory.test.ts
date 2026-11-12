@@ -252,3 +252,18 @@ describe('Gemini native adapter (HTTP fixtures, not live AI)',()=>{
   await expect(completeAiChat([{role:'system',content:'s'},{role:'user',content:'u'}],'free',db,randomUUID())).rejects.toBeTruthy();
  });
 });
+
+describe('Cloudflare Workers AI adapter (HTTP fixtures, not live AI)',()=>{
+ const cf=[{provider:'cloudflare',tier:'free',model:'@cf/openai/gpt-oss-20b',approved:true,rpm:1000,rpd:1000,tpm:10000000,tpd:100000000,inputUsdPerMillion:0,outputUsdPerMillion:0,dailyBudgetMicros:0}];
+ it('needs a valid account id, then calls the account-scoped OpenAI-compatible endpoint with the token',async()=>{
+  vi.stubEnv('CLOUDFLARE_API_TOKEN','cfut_fixture');vi.stubEnv('NOVA_AI_MODELS_JSON',JSON.stringify(cf));
+  vi.stubEnv('CLOUDFLARE_ACCOUNT_ID','not-an-id');expect(modelPool('free')).toEqual([]);
+  vi.stubEnv('CLOUDFLARE_ACCOUNT_ID','e9349634542ae1b6b5730a9ffdad2855');
+  const mock=vi.fn(async(_u:any,_i:any)=>ok('Ответ Workers AI'));vi.stubGlobal('fetch',mock);
+  const out=await completeAiChat([{role:'system',content:'s'},{role:'user',content:'u'}],'free',db,randomUUID());
+  expect(out.text).toBe('Ответ Workers AI');expect(out.provider).toBe('cloudflare');
+  expect(mock.mock.calls[0][0]).toBe('https://api.cloudflare.com/client/v4/accounts/e9349634542ae1b6b5730a9ffdad2855/ai/v1/chat/completions');
+  expect(mock.mock.calls[0][1].headers.Authorization).toBe('Bearer cfut_fixture');
+  expect(JSON.parse(mock.mock.calls[0][1].body).model).toBe('@cf/openai/gpt-oss-20b');
+ });
+});
