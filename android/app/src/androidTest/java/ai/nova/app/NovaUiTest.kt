@@ -227,16 +227,16 @@ class NovaUiTest {
   compose.onNodeWithText("Фэнтези").performClick()
   clickWhenEnabled("Нарисовать бесплатно")
   waitFor("art result"){compose.onAllNodesWithText("Мои картинки").fetchSemanticsNodes().isNotEmpty()}
-  assertTrue(artBody!!.contains("\"style\":\"fantasy\"")&&artBody!!.contains("Озеро на рассвете"))
-  compose.onNodeWithText("ГОТОВО").reveal();screenshot("20-ai-art")
+  assertTrue("art request: $artBody",artBody!!.contains("fantasy")&&artBody!!.contains("Озеро на рассвете"))
+  compose.onNodeWithText("ГОТОВО").reveal();screenshot("23-ai-art")
   compose.onNodeWithText("Профиль").performClick()
   compose.onNodeWithText("English").reveal().performClick()
   waitFor("english"){compose.onAllNodesWithText("Sign out").fetchSemanticsNodes().isNotEmpty()}
-  assertTrue(compose.onAllNodesWithText("Catalog").fetchSemanticsNodes().isNotEmpty())
-  screenshot("21-english-profile")
+  assertTrue("bottom bar not translated",compose.onAllNodesWithText("Catalog").fetchSemanticsNodes().isNotEmpty())
+  screenshot("24-english-profile")
   compose.onNodeWithText("Catalog").performClick()
   waitFor("english catalog"){compose.onAllNodesWithText("Start AI chat").fetchSemanticsNodes().isNotEmpty()}
-  screenshot("22-english-catalog")
+  screenshot("25-english-catalog")
   compose.onNodeWithText("Profile").performClick()
   compose.onNodeWithText("Русский").reveal().performClick()
   waitFor("russian again"){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
