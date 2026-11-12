@@ -18,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntRect
@@ -105,7 +106,7 @@ internal fun PortraitCropDialog(
                         val image = remember(photo) { photo.asImageBitmap() }
                         Box(Modifier.fillMaxWidth(), contentAlignment = androidx.compose.ui.Alignment.Center) {
                             // Drag to move the frame, pinch to zoom: no separate position sliders on small screens.
-                            Canvas(Modifier.width(150.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(16.dp))
+                            Canvas(Modifier.width(if (LocalConfiguration.current.screenHeightDp < 640) 96.dp else 150.dp).aspectRatio(2f / 3f).clip(RoundedCornerShape(16.dp))
                                 .pointerInput(photo) {
                                     detectTransformGestures { _, pan, gesture, _ ->
                                         zoom = (zoom * gesture).coerceIn(1f, 2.6f)
