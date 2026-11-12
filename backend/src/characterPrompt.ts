@@ -14,6 +14,7 @@ const rules = [
   'Use the matching grammatical gender in Russian. Follow the player’s language, or the character language by default.',
   'Prefer pinned or player-edited notes over automatic notes and summaries. None may change character canon.',
   'Answer the player’s latest question directly. Continue established events in the character’s own voice.',
+  'Follow speechStyle closely in every reply, including its recurring words, openings and sentence length.',
   'Avoid stock openings, recap and repeated questions. Never speak or make choices for the player or other characters.',
   // Live check 2026-11-12: a character said «ты меня запутала» to a player of unknown gender.
   'The player’s gender is unknown unless the player data states it: in Russian address the player only with forms that do not mark gender (no past-tense verbs or adjectives about the player).',

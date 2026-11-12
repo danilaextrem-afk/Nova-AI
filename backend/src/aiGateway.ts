@@ -189,11 +189,25 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
     // Pass 1 tries every model once. Pass 2 retries, once, only the models that just failed transiently
     // (5xx, timeout, empty answer) — bounded by the same deadline, never after text was shown.
     const retryable = new Set<ModelConfig>();
-    const queue: { m: ModelConfig; second: boolean }[] = models.map(m => ({ m, second: false }));
+    // Models skipped only because this minute's request/token window is full. If the next minute starts soon,
+    // waiting for it (within the quota) beats a slow last-resort provider or an error.
+    const waitable = new Set<ModelConfig>();
+    const queue: { m: ModelConfig; second: boolean; wait?: boolean }[] = models.map(m => ({ m, second: false }));
     for (let qi = 0; ; qi++) {
-      if (qi === models.length) for (const r of models.filter(x => retryable.has(x))) queue.push({ m: r, second: true });
+      if (qi === models.length) {
+        for (const r of models.filter(x => retryable.has(x))) queue.push({ m: r, second: true });
+        for (const w of models.filter(x => waitable.has(x))) queue.push({ m: w, second: false, wait: true });
+      }
       if (qi >= queue.length || Date.now() > deadline) break;
-      const { m, second } = queue[qi];
+      const { m, second, wait } = queue[qi];
+      if (wait) {
+        const untilNextMinute = 60000 - (Date.now() % 60000) + 300;
+        if (untilNextMinute > 25000 || Date.now() + untilNextMinute > deadline - 15000) continue;
+        if (!queue.slice(0, qi).some(x => x.wait)) await new Promise<void>((resolve, reject) => {
+          const t = setTimeout(resolve, untilNextMinute);
+          opts.signal?.addEventListener('abort', () => { clearTimeout(t); reject(new AiProviderError('AI_CANCELLED', 499, 1)); }, { once: true });
+        });
+      }
       const now = new Date();
       const minute = new Date(Math.floor(now.getTime()/60000)*60000);
       const day = new Date(now.toISOString().slice(0,10));
@@ -215,14 +229,15 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
         // A breaker on the shared row (rate limit, or Groq's per-model row) is skipped only for the one bounded retry.
         if(state.retryAt && state.retryAt>now && !(second && bkey===key)) return null;
         const active = await tx.aiAttempt.count({where:{provider:m.provider,status:'PENDING',expiresAt:{gt:now}}});
-        if (active >= m.concurrency || state.minuteRequests>=m.rpm || state.dayRequests>=m.rpd ||
-          state.minuteTokens+estimate>m.tpm || state.dayTokens+estimate>m.tpd ||
+        if (active >= m.concurrency || state.dayRequests>=m.rpd || state.dayTokens+estimate>m.tpd ||
           (maxCost>0 && state.costMicros+maxCost>m.dailyBudgetMicros)) return null;
+        if (state.minuteRequests>=m.rpm || state.minuteTokens+estimate>m.tpm) return 'minute' as const;
         await tx.aiProviderState.update({where:{key},data:{minuteRequests:{increment:1},dayRequests:{increment:1},
           minuteTokens:{increment:estimate},dayTokens:{increment:estimate},costMicros:{increment:maxCost}}});
         return tx.aiAttempt.create({data:{requestId,provider:m.provider,model:m.model,tier,status:'PENDING',
           estimatedTokens:estimate,costMicros:maxCost,expiresAt:new Date(Date.now()+90000)}});
       });
+      if (attempt === 'minute') { if (!wait && estimate <= m.tpm) waitable.add(m); continue; }
       if (!attempt) continue;
       const started=Date.now();
       let retry=0; let code='AI_UPSTREAM_ERROR'; let status=502; let certainNoCharge=false; let emitted=false;
@@ -232,7 +247,7 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
         const req=providerRequest(m,messages,streaming,maxOutput,opts.temperature);
         const response=await fetch(req.url,{
           method:'POST',headers:req.headers,body:JSON.stringify(req.body),
-          signal:AbortSignal.any([AbortSignal.timeout(Math.min(streaming?60000:30000,Math.max(1000,deadline-Date.now()))),
+          signal:AbortSignal.any([AbortSignal.timeout(Math.min(streaming?60000:m.provider==='groq'?30000:20000,Math.max(1000,deadline-Date.now()))),
             ...(opts.signal?[opts.signal]:[])]),
         });
         if(!response.ok){
