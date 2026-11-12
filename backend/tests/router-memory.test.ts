@@ -107,7 +107,7 @@ describe('Default free pool (no NOVA_AI_MODELS_JSON; HTTP fixtures, not live AI)
  });
  it('never hands out the configured Premium model as Free',async()=>{
   vi.stubEnv('NOVA_PREMIUM_MODEL','openai/gpt-oss-120b');vi.stubEnv('NOVA_AI_DAILY_BUDGET_MICROS','100000');
-  expect(modelPool('free').map(m=>m.model)).toEqual(['openai/gpt-oss-20b','deepseek/deepseek-v4-flash:free','openrouter/free']);
+  expect(modelPool('free').map(m=>m.model)).toEqual(['openai/gpt-oss-20b','openrouter/free']);
   expect(modelPool('premium').map(m=>m.model)).toEqual(['openai/gpt-oss-120b']);
  });
 });
