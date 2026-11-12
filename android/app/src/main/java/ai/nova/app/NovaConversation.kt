@@ -63,7 +63,7 @@ import androidx.compose.ui.text.style.TextOverflow
     chat.characterAvatarUrl ?: model.chatPortraitUrl(chat.characterId))
    Column(Modifier.weight(1f).padding(horizontal = 4.dp)) {
     Text(name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-    Text(if (chat.participantIds.isNullOrEmpty()) "AI-персонаж" else "Групповая сцена",
+    Text(if (chat.participantIds.isNullOrEmpty()) "AI-персонаж" else "Группа · ${chat.participantIds.size + 1}",
      style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
    }
    IconButton(onClick = { voice.stop(); call = true }) {
@@ -150,7 +150,7 @@ import androidx.compose.ui.text.style.TextOverflow
      Icon(Icons.AutoMirrored.Filled.Send,contentDescription=tr(sendLabel))
     }
    }
-   if(!imeOpen&&model.premiumChatSelected)Text("Premium: ${model.aiStatus?.premiumPriceTokens?:5} ◈ спишутся только за успешный ответ",style=MaterialTheme.typography.labelSmall,color=NovaDesign.Muted)
+   if(model.premiumChatSelected)Text("Premium: ${model.aiStatus?.premiumPriceTokens?:5} ◈ спишутся только за успешный ответ",style=MaterialTheme.typography.labelSmall,color=NovaDesign.Muted)
   }
  }
  if(call)VoiceCallDialog(model,voice){call=false}

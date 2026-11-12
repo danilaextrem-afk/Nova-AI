@@ -28,14 +28,21 @@ import kotlin.math.roundToInt
 
 private fun decodePortrait(resolver: ContentResolver, uri: Uri): Bitmap? {
     if (Build.VERSION.SDK_INT >= 28) {
-        return ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, uri)) { decoder, info, _ ->
-            decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
-            val scale = minOf(1f, 1024f / maxOf(info.size.width, info.size.height))
-            decoder.setTargetSize(
-                (info.size.width * scale).roundToInt().coerceAtLeast(1),
-                (info.size.height * scale).roundToInt().coerceAtLeast(1)
-            )
-        }
+        // Some document providers return a pipe instead of a seekable asset descriptor.
+        val decoded = runCatching {
+            ImageDecoder.decodeBitmap(ImageDecoder.createSource(resolver, uri)) { decoder, info, _ ->
+                decoder.allocator = ImageDecoder.ALLOCATOR_SOFTWARE
+                val largest = maxOf(info.size.width, info.size.height)
+                if (largest > 1024) {
+                    val scale = 1024f / largest
+                    decoder.setTargetSize(
+                        (info.size.width * scale).roundToInt().coerceAtLeast(1),
+                        (info.size.height * scale).roundToInt().coerceAtLeast(1)
+                    )
+                }
+            }
+        }.getOrNull()
+        if (decoded != null) return decoded
     }
     val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
     resolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, bounds) }
@@ -76,7 +83,8 @@ internal fun PortraitCropDialog(
             failed = bitmap == null
         } catch (cancelled: CancellationException) {
             throw cancelled
-        } catch (_: Exception) {
+        } catch (error: Exception) {
+            if (BuildConfig.DEBUG) android.util.Log.w("NovaPortrait", "Portrait decode failed: " + error.javaClass.simpleName)
             failed = true
         }
     }

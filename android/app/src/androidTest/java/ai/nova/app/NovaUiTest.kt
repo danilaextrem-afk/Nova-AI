@@ -317,7 +317,7 @@ class NovaUiTest {
   compose.onNodeWithText("Аврора Вейл, Кай Номад").performClick()
   waitFor("second speaker"){compose.onAllNodesWithText("КАЙ НОМАД").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("АВРОРА ВЕЙЛ").assertExists()
-  compose.onNodeWithText("Групповая сцена · персонажей: 2").assertExists()
+  compose.onNodeWithText("Группа · 2").assertExists()
   screenshot("28-group-scene")
   compose.onNodeWithContentDescription("Голосовой разговор").performClick()
   waitFor("voice screen"){compose.onAllNodesWithText("ГОЛОСОВОЙ РАЗГОВОР").fetchSemanticsNodes().isNotEmpty()}
@@ -388,12 +388,17 @@ class NovaUiTest {
   clickWhenEnabled("Готовые")
   compose.onNodeWithContentDescription("Портрет персонажа Аватар 1").performClick()
   waitFor("ready avatar"){vm().draftAvatar.endsWith("/101.webp")}
-  val photo = Bitmap.createBitmap(960, 640, Bitmap.Config.ARGB_8888)
-  photo.eraseColor(android.graphics.Color.rgb(200, 120, 60))
+  val photo = compose.activity.assets.open("portraits/201.webp").use { android.graphics.BitmapFactory.decodeStream(it) }
+  assertNotNull(photo)
   val file = File(File(compose.activity.cacheDir, "portrait-camera").apply { mkdirs() }, "fixture.jpg")
-  file.outputStream().use { photo.compress(Bitmap.CompressFormat.JPEG, 90, it) }
+  file.outputStream().use { assertTrue(photo.compress(Bitmap.CompressFormat.JPEG, 90, it)) }
   photo.recycle()
   val uri = androidx.core.content.FileProvider.getUriForFile(compose.activity, compose.activity.packageName + ".portraits", file)
+  compose.activity.contentResolver.openInputStream(uri).use { stream ->
+   assertNotNull("The same FileProvider URI the app will receive must be readable", stream)
+   assertEquals(0xff, stream!!.read())
+   assertEquals(0xd8, stream.read())
+  }
   val picker = androidx.test.espresso.intent.matcher.IntentMatchers.hasAction(android.provider.MediaStore.ACTION_PICK_IMAGES)
   androidx.test.espresso.intent.Intents.init()
   try {
@@ -401,7 +406,11 @@ class NovaUiTest {
     android.app.Instrumentation.ActivityResult(android.app.Activity.RESULT_OK, android.content.Intent().setData(uri)))
    clickWhenEnabled("Из галереи")
    androidx.test.espresso.intent.Intents.intended(picker)
-   waitFor("crop controls"){compose.onAllNodesWithText("Масштаб").fetchSemanticsNodes().isNotEmpty()}
+   waitFor("crop result") {
+    compose.onAllNodesWithText("Масштаб").fetchSemanticsNodes().isNotEmpty() ||
+     compose.onAllNodesWithText("Не удалось открыть изображение.", substring = true).fetchSemanticsNodes().isNotEmpty()
+   }
+   compose.onNodeWithText("Масштаб").assertExists()
    screenshot("38-portrait-crop")
    compose.onNode(isToggleable() and hasAnyAncestor(isDialog())).reveal().performClick()
    clickWhenEnabled("Сохранить портрет")

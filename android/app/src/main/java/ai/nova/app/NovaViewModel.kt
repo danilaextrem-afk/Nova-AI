@@ -147,8 +147,14 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         val refresh = store.get("refresh")
                         val next = refresh?.let { runCatching { refreshApi.refreshSync(RefreshBody(it)).execute().body() }.getOrNull() }
-                        if (next == null) null else {
-                            store.put("access", next.accessToken); store.put("refresh", next.refreshToken)
+                        if (next == null || store.get("refresh") != refresh) null else {
+                            store.put("access", next.accessToken)
+                            store.put("refresh", next.refreshToken)
+                            viewModelScope.launch {
+                                if (accessToken != null && store.get("access") == next.accessToken) {
+                                    accessToken = next.accessToken
+                                }
+                            }
                             response.request.newBuilder().header("Authorization", "Bearer " + next.accessToken).build()
                         }
                     }
