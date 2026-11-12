@@ -82,3 +82,19 @@ describe('Character dialogue context', () => {
     expect(messages[0].content).toContain('no headings, bullet or numbered lists');
   });
 });
+
+describe('anti-repetition context', () => {
+  it('lists only the active speaker’s latest reply openings, newest first', async () => {
+    const { recentOpenings } = await import('../src/characterPrompt.js');
+    const history = [
+      { role: 'assistant', content: '*улыбается* Ну. Давай посмотрим на карту ещё раз.', speakerId: 'vera' },
+      { role: 'user', content: 'Что дальше?', speakerId: null },
+      { role: 'assistant', content: 'Маяк молчит третью ночь.', speakerId: 'ilya' },
+      { role: 'assistant', content: '*улыбается* Ну. Ключ у меня.', speakerId: 'vera' },
+      { role: 'assistant', content: 'Старый ответ без автора.', speakerId: null },
+      { role: 'assistant', content: 'Слишком старый.', speakerId: 'vera' },
+    ] as any;
+    expect(recentOpenings(history, 'vera')).toEqual([
+      '*улыбается* Ну. Давай посмотрим на карту', '*улыбается* Ну. Ключ у меня.', 'Старый ответ без автора.']);
+  });
+});

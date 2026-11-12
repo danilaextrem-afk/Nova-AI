@@ -209,8 +209,20 @@ try {
       const history = requireOk(await call('GET', '/v1/chats/' + memoryChat + '/messages?limit=100'), 'Reload history').items;
       const after100 = await send(memoryChat, 'Где мы нашли самый первый старый ключ и что на нём было написано?', '05');
       check('05 · Recall after 100 messages', history.length === 100 && /ваз/i.test(after100.text) && /янтарный берег/i.test(after100.text));
+      // Real-model repetition over the long run: how often a reply opens with the same three words as an
+      // earlier reply in this chat, and the most frequent opening.
+      const openings = samples.filter(sample => /^memory-turn-/.test(sample.checkpoint))
+        .map(sample => sample.text.toLocaleLowerCase('ru').replace(/[^\p{L}\p{N}\s*]/gu, '').split(/\s+/u).slice(0, 3).join(' '));
+      const seen = new Map();
+      let repeated = 0;
+      for (const opening of openings) { if (seen.has(opening)) repeated++; seen.set(opening, (seen.get(opening) ?? 0) + 1); }
+      const top = [...seen.entries()].sort((a, b) => b[1] - a[1])[0] ?? ['', 0];
+      const share = openings.length ? repeated / openings.length : 0;
+      check('13 · Varied openings over 100 messages', openings.length >= 40 && share <= 0.25,
+        `${repeated}/${openings.length} replies reuse an earlier opening; most frequent «${top[0]}» ×${top[1]}`);
     } else {
       check('05 · Recall after 100 messages', null, 'Run with --full');
+      check('13 · Varied openings over 100 messages', null, 'Run with --full');
     }
   }
 } catch (error) {
