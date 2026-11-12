@@ -10,7 +10,8 @@ const bad = (name, detail = '') => { failed = true; report.push(`| ❌ | ${name}
 const note = (name, detail = '') => report.push(`| ⚠️ | ${name} | ${detail} |`);
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function call(method, path, body, token) {
-  const r = await fetch(base + path, { method, headers: { 'content-type': 'application/json', ...(token ? { authorization: 'Bearer ' + token } : {}) },
+  // Like the Android client (Retrofit without @Body), send no Content-Type when there is no body.
+  const r = await fetch(base + path, { method, headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(token ? { authorization: 'Bearer ' + token } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(120000) });
   const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch {}
   return { status: r.status, json, text };
