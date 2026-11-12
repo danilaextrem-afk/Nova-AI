@@ -16,6 +16,8 @@ class NovaUiTest {
  private val server=MockWebServer()
  private val character="00000000-0000-4000-8000-000000000101"
  private val chat="10000000-0000-4000-8000-000000000001"
+ @Volatile private var registration:String?=null
+ @Volatile private var studioDraft:String?=null
  @Volatile private var sent=false
  @Volatile private var commentSent=false
  @Volatile private var regenerated=false
@@ -27,6 +29,10 @@ class NovaUiTest {
  @Volatile private var userText="Привет"
  @Before fun setUp(){
   server.dispatcher=object:Dispatcher(){override fun dispatch(r:RecordedRequest):MockResponse {
+   if(r.path=="/v1/auth/register"){
+    registration=r.body.readUtf8()
+    return MockResponse().setHeader("Content-Type","application/json").setBody("""{"accessToken":"fixture-token","refreshToken":"fixture-refresh-token"}""").setBodyDelay(1,java.util.concurrent.TimeUnit.SECONDS)
+   }
    if(r.path=="/v1/chats/$chat/messages/stream"){
     streamIds.add(com.google.gson.JsonParser.parseString(r.body.readUtf8()).asJsonObject.get("requestId").asString)
     if(streamFailure)return MockResponse().setResponseCode(503).setHeader("Content-Type","application/json").setBody("{\"error\":\"AI_NOT_CONFIGURED\"}")
@@ -36,6 +42,8 @@ class NovaUiTest {
     return MockResponse().setHeader("Content-Type","text/event-stream").setBody(sse)
    }
    val json=when {
+    r.path=="/v1/characters" && r.method=="POST" -> {studioDraft=r.body.readUtf8(); """{"character":{"id":"$character","name":"Аделина Мар","greeting":"Привет","category":"Романтика","tags":[],"mature":true}}"""}
+    r.path=="/v1/characters/$character" -> """{"character":{"id":"$character","name":"Аврора Вейл","greeting":"Привет, исследователь!","category":"Приключения","tags":[],"biography":"28 лет. Исследовательница далёких миров.","personality":"Любознательная и решительная."}}"""
     r.path=="/v1/auth/login" -> """{"accessToken":"fixture-token","refreshToken":"fixture-refresh-token"}"""
     r.path=="/v1/me" -> """{"id":"me","email":"adult@example.test","profile":{"showMature":$showMature}}"""
     r.path=="/v1/me/content-settings" -> {val b=r.body.clone().readUtf8();showMature=b.contains("\"showMature\":true")&&b.contains("\"confirmAdult\":true");"""{"showMature":$showMature}"""}
@@ -82,15 +90,32 @@ class NovaUiTest {
  /** Named wait: on timeout the failure says which step hung and dumps the visible UI tree. */
  private fun waitFor(step:String,condition:()->Boolean){
   try{compose.waitUntil(20000,condition)}catch(e:androidx.compose.ui.test.ComposeTimeoutException){
-   val tree=runCatching{compose.onAllNodes(isRoot()).printToString()}.getOrDefault("<no tree>")
-   throw AssertionError("Timed out at step: $step\n"+tree.take(6000),e)
+   val tree=runCatching{compose.onAllNodes(isRoot()).printToString(maxDepth=30)}.getOrDefault("<no tree>")
+   screenshot("failure-"+step.replace(Regex("[^a-zA-Z0-9]"),"-"))
+   var state=""
+   compose.runOnIdle { val vm=ViewModelProvider(compose.activity)[NovaViewModel::class.java];state="loading=${vm.loading}; error=${vm.error}; tab=${vm.activeTab}; studioDraft=$studioDraft" }
+   throw AssertionError("Timed out at step: $step; $state\n"+tree.take(20000),e)
   }
  }
+ private fun SemanticsNodeInteraction.reveal():SemanticsNodeInteraction {
+  // A screen may still be re-laying out after a background refresh, so retry briefly before failing.
+  var last:AssertionError?=null
+  repeat(10){
+   try { performScrollTo(); return this } catch (e:AssertionError) {
+    try { assertIsDisplayed(); return this } catch (e2:AssertionError) { last=e2 }
+   }
+   compose.waitForIdle();Thread.sleep(500)
+  }
+  screenshot("failure-not-displayed"); throw AssertionError("Not displayed: "+runCatching{fetchSemanticsNode().config.toString()}.getOrDefault("?"),last)
+ }
  private fun clickWhenEnabled(text:String){
-  waitFor("enabled button '$text'"){compose.onAllNodes(hasText(text) and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
-  val node=compose.onNode(hasText(text) and isEnabled())
-  runCatching{node.performScrollTo()} // Dialog buttons have no scrollable parent.
-  node.performClick()
+  // Matches a visible label or an icon button's accessible name (e.g. the round send button).
+  val m=(hasText(text) or hasContentDescription(text)) and isEnabled()
+  waitFor("enabled button '$text'"){compose.onAllNodes(m).fetchSemanticsNodes().isNotEmpty()}
+  val node=compose.onNode(m)
+  try { node.reveal().assertIsDisplayed().performClick() } catch (e:AssertionError) {
+   screenshot("failure-click-"+text.replace(Regex("[^a-zA-Zа-яА-Я0-9]"),"-")); throw AssertionError("Could not tap '$text'",e)
+  }
  }
  @Test fun loginCatalogChatAndEncryptedDraftSurviveRecreation(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")
@@ -98,29 +123,34 @@ class NovaUiTest {
   screenshot("01-login")
   clickWhenEnabled("Войти")
   compose.waitUntil(20000){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
+  screenshot("07-home")
   compose.onNodeWithText("Каталог").performClick()
   compose.waitUntil(20000){compose.onAllNodesWithText("Начать AI-чат").fetchSemanticsNodes().isNotEmpty()}
   compose.waitUntil(20000){compose.onAllNodes(hasText("Начать AI-чат") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
-  compose.onNodeWithText("Начать AI-чат").performScrollTo();screenshot("02-catalog");clickWhenEnabled("Начать AI-чат")
+  screenshot("08-search")
+  clickWhenEnabled("Полный профиль")
+  waitFor("character profile"){compose.onAllNodesWithText("Закрыть профиль").fetchSemanticsNodes().isNotEmpty()}
+  screenshot("09-character-profile");clickWhenEnabled("Закрыть профиль")
+  compose.onNodeWithText("Начать AI-чат").reveal();screenshot("02-catalog");clickWhenEnabled("Начать AI-чат")
   compose.waitUntil(20000){compose.onAllNodesWithText("Напиши сообщение").fetchSemanticsNodes().isNotEmpty()}
-  compose.onNodeWithText("Напиши сообщение").performScrollTo().performTextInput("Привет")
+  compose.onNodeWithText("Напиши сообщение").reveal().performTextInput("Привет")
   clickWhenEnabled("Отправить бесплатно")
   compose.waitUntil(20000){compose.onAllNodesWithText("Тестовый ответ сервера").fetchSemanticsNodes().isNotEmpty()}
-  compose.onNodeWithText("Тестовый ответ сервера").performScrollTo();screenshot("03-chat")
+  compose.onNodeWithText("Тестовый ответ сервера").reveal();screenshot("03-chat")
   assertEquals("chat reply must arrive over the SSE stream route",1,streamCalls)
   clickWhenEnabled("Другой ответ")
   compose.waitUntil(20000){compose.onAllNodesWithText("Новая версия ответа").fetchSemanticsNodes().isNotEmpty()}
-  compose.onNodeWithText("Версия 2 · прежние сохранены").performScrollTo().assertExists();screenshot("04-regenerated")
+  compose.onNodeWithText("Версия 2 · прежние сохранены").reveal().assertExists();screenshot("04-regenerated")
   clickWhenEnabled("Изменить")
   waitFor("edit dialog field"){compose.onAllNodes(hasText("Привет") and hasSetTextAction()).fetchSemanticsNodes().isNotEmpty()}
   compose.onNode(hasText("Привет") and hasSetTextAction()).performTextReplacement("Привет, изменено")
   clickWhenEnabled("Сохранить")
   waitFor("edited text shown"){compose.onAllNodesWithText("Привет, изменено").fetchSemanticsNodes().isNotEmpty()}
   assertEquals("Привет, изменено",userText)
-  compose.onNodeWithText("Напиши сообщение").performScrollTo().performTextInput("Сохранённый черновик")
+  compose.onNodeWithText("Напиши сообщение").reveal().performTextInput("Сохранённый черновик")
   compose.activityRule.scenario.recreate()
   compose.waitUntil(20000){compose.onAllNodesWithText("Сохранённый черновик").fetchSemanticsNodes().isNotEmpty()}
-  compose.onNodeWithText("Сохранённый черновик").performScrollTo().assertExists()
+  compose.onNodeWithText("Сохранённый черновик").reveal().assertExists()
  }
  @Test fun failedNetworkRequestKeepsDraftAndRequestIdAcrossRecreation(){
   streamFailure=true
@@ -130,7 +160,7 @@ class NovaUiTest {
   compose.waitUntil(20000){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Каталог").performClick();clickWhenEnabled("Начать AI-чат")
   compose.waitUntil(20000){compose.onAllNodesWithText("Напиши сообщение").fetchSemanticsNodes().isNotEmpty()}
-  compose.onNodeWithText("Напиши сообщение").performScrollTo().performTextInput("Привет")
+  compose.onNodeWithText("Напиши сообщение").reveal().performTextInput("Привет")
   clickWhenEnabled("Отправить бесплатно")
   compose.waitUntil(20000){compose.onAllNodesWithText("AI-провайдер ещё не подключён или временно недоступен").fetchSemanticsNodes().isNotEmpty()}
   compose.activityRule.scenario.recreate()
@@ -142,17 +172,18 @@ class NovaUiTest {
  @Test fun communityCommentClearlyShowsPendingModeration(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")
   compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
-  compose.onNodeWithText("Войти",useUnmergedTree=true).performScrollTo().performClick()
+  compose.onNodeWithText("Войти",useUnmergedTree=true).reveal().performClick()
   compose.waitUntil(20000){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Каталог").performClick()
+  clickWhenEnabled("Полный профиль") // discussion, likes and follows live in the character profile
   compose.waitUntil(20000){compose.onAllNodes(hasText("Обсуждение") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
-  compose.onNodeWithText("Обсуждение").performScrollTo().performClick()
+  compose.onNodeWithText("Обсуждение").reveal().performClick()
   compose.waitUntil(20000){compose.onAllNodesWithText("Комментарий").fetchSemanticsNodes().isNotEmpty()}
-  compose.onNodeWithText("Комментарий").performScrollTo().performTextInput("Интересная история")
+  compose.onNodeWithText("Комментарий").reveal().performTextInput("Интересная история")
   compose.waitUntil(20000){compose.onAllNodes(hasText("Отправить комментарий") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
-  compose.onNodeWithText("Отправить комментарий").performScrollTo().performClick()
+  compose.onNodeWithText("Отправить комментарий").reveal().performClick()
   compose.waitUntil(20000){compose.onAllNodesWithText("Интересная история · На модерации").fetchSemanticsNodes().isNotEmpty()}
-  compose.onNodeWithText("Интересная история · На модерации").performScrollTo().assertExists()
+  compose.onNodeWithText("Интересная история · На модерации").reveal().assertExists()
   screenshot("04-comment-pending")
  }
  @Test fun sessionStoreEncryptsAndReadsAcrossInstances(){
@@ -175,7 +206,7 @@ class NovaUiTest {
   clickWhenEnabled("Забрать +2 ◈")
   compose.waitUntil(20000){compose.onAllNodesWithText("Получено сегодня. Следующий бонус — завтра.").fetchSemanticsNodes().isNotEmpty()}
   assertEquals(1,bonusClaims)
-  compose.onNodeWithText("NOVA2345").performScrollTo().assertExists();screenshot("05-wallet-rewards")
+  compose.onNodeWithText("NOVA2345").reveal().assertExists();screenshot("05-wallet-rewards")
  }
  @Test fun matureSectionNeedsExplicitAdultConfirmation(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")
@@ -185,7 +216,7 @@ class NovaUiTest {
   compose.onNodeWithText("Профиль").performClick()
   compose.waitUntil(20000){compose.onAllNodesWithText("Раздел 18+ (Mature)").fetchSemanticsNodes().isNotEmpty()}
   compose.waitUntil(20000){compose.onAllNodes(isToggleable() and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
-  compose.onNode(isToggleable() and isEnabled()).performScrollTo().performClick()
+  compose.onNode(isToggleable() and isEnabled()).reveal().performClick()
   compose.waitUntil(20000){compose.onAllNodesWithText("Мне есть 18").fetchSemanticsNodes().isNotEmpty()}
   assertFalse("dialog alone must not enable 18+",showMature)
   compose.onNodeWithText("Мне есть 18").performClick()
@@ -194,5 +225,70 @@ class NovaUiTest {
   clickWhenEnabled("18+ Mature")
   compose.waitUntil(20000){compose.onAllNodesWithText("Северина Лис").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("18+").assertExists();screenshot("06-mature-section")
+  clickWhenEnabled("Открыть 12 историй")
+  compose.onNodeWithText("Аделина Мар").reveal();screenshot("10-studio-collection")
+  clickWhenEnabled("Аделина Мар");screenshot("11-studio-profile")
+  clickWhenEnabled("Начать историю")
+  waitFor("studio chat"){compose.onAllNodesWithText("Напиши сообщение").fetchSemanticsNodes().isNotEmpty()}
+  val draft=com.google.gson.JsonParser.parseString(studioDraft).asJsonObject
+  assertTrue(draft.get("mature").asBoolean)
+  assertTrue(draft.get("biography").asString.startsWith("28 лет"))
+  assertEquals(StudioCast.heroes.first().portraitUrl,draft.get("avatarUrl").asString)
+  screenshot("12-studio-chat")
+  compose.activityRule.scenario.recreate()
+  waitFor("studio session restored"){compose.onAllNodesWithText("Аделина Мар").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithContentDescription("Портрет персонажа Аделина Мар").assertExists()
  }
+ @Test fun newPortraitsDecodeAndAdultsHaveUniqueProfiles(){
+  assertEquals(12,StudioCast.heroes.size)
+  assertEquals(12,StudioCast.heroes.map{it.name}.toSet().size)
+  StudioCast.heroes.forEach { hero ->
+   assertTrue(hero.age>=18);assertTrue(hero.greeting.isNotBlank());assertTrue(hero.personality.isNotBlank())
+   compose.activity.assets.open("portraits/${hero.key}.webp").use {
+    val image=android.graphics.BitmapFactory.decodeStream(it)
+    assertEquals(1024,image.width);assertEquals(1536,image.height);image.recycle()
+   }
+  }
+ }
+ @Test fun mainNavigationAndEditorialScreens(){
+  screenshot("00-welcome")
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  waitFor("home navigation"){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Создать").performClick()
+  compose.onNodeWithText("Имя персонажа").reveal();screenshot("13-create-character")
+  compose.onNodeWithText("Профиль").performClick()
+  waitFor("account"){compose.onAllNodesWithText("Раздел 18+ (Mature)").fetchSemanticsNodes().isNotEmpty()}
+  screenshot("14-account")
+  compose.onNodeWithText("Обращение в поддержку").reveal();screenshot("15-settings-support")
+  compose.onNodeWithText("Токены").performClick()
+  waitFor("wallet"){compose.onAllNodesWithText("Баланс").fetchSemanticsNodes().isNotEmpty()}
+  screenshot("16-wallet")
+  compose.onNodeWithText("Ежедневный бонус").reveal();screenshot("17-daily-bonus")
+  compose.onNodeWithText("NOVA2345").reveal();screenshot("18-referral")
+  compose.onNodeWithText("Чаты").performClick()
+  waitFor("chat list"){compose.onAllNodesWithText("Мои чаты").fetchSemanticsNodes().isNotEmpty()}
+  screenshot("19-chat-list-premium")
+  compose.onNodeWithText("Каталог").performClick();clickWhenEnabled("Моё избранное")
+  waitFor("empty favorites"){compose.onAllNodesWithText("Опубликованных персонажей пока нет.").fetchSemanticsNodes().isNotEmpty()}
+  screenshot("20-favorites")
+ }
+
+ @Test fun registrationPreservesAdultConsentAndLoadingState(){
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Создать аккаунт")
+  waitFor("adult confirmation required"){compose.onAllNodesWithText("Подтверди, что тебе исполнилось 18 лет").fetchSemanticsNodes().isNotEmpty()}
+  assertNull(registration)
+  compose.onNode(isToggleable()).reveal().performClick()
+  screenshot("21-registration")
+  clickWhenEnabled("Создать аккаунт")
+  screenshot("22-loading")
+  waitFor("registered home"){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
+  val body=com.google.gson.JsonParser.parseString(registration).asJsonObject
+  assertTrue(body.get("adultConfirmed").asBoolean)
+  assertEquals("adult@example.test",body.get("email").asString)
+ }
+
 }

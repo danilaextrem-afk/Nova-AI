@@ -221,6 +221,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
                 error = e.localizedMessage ?: "Не удалось выполнить запрос"
             } finally {
                 loading = false
+                pendingTabRefresh?.let { tab -> pendingTabRefresh = null; if (activeTab == tab) viewModelScope.launch { changeTab(tab) } }
                 streamingText = null
             }
         }
@@ -249,8 +250,11 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** A tab opened while another request runs is refreshed right after it, never silently skipped. */
+    private var pendingTabRefresh: NovaTab? = null
     fun changeTab(tab: NovaTab) {
         activeTab = tab
+        if (loading) { pendingTabRefresh = tab; return }
         when (tab) {
             NovaTab.CATALOG -> refreshCatalog()
             NovaTab.CHATS -> refreshChats()
@@ -316,6 +320,20 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun chatPortraitUrl(characterId:String):String? =
+        catalog.firstOrNull{it.id==characterId}?.avatarUrl ?: owned.firstOrNull{it.id==characterId}?.avatarUrl ?: store.get("portrait-$characterId")
+    fun startStudioChat(hero:StudioHero) {
+        if(!showMature || !matureSection){error="Включи раздел 18+ в настройках профиля";return}
+        execute {
+            val api=service()
+            val character=api.createCharacter(authorization(),hero.draft()).character
+            store.put("portrait-${character.id}",hero.portraitUrl)
+            val created=api.createChat(authorization(),NovaCreateChatBody(character.id))
+            activeChat=created.chat.copy(characterName=hero.name)
+            store.put("chat",gson.toJson(activeChat));chatMessages=emptyList();chatInput="";nextBefore=null;memories=emptyList();inChatResults=null;activeTab=NovaTab.CHATS
+            chats=api.chats(authorization()).items;aiStatus=api.aiStatus(authorization())
+        }
+    }
     fun startChat(character: NovaCharacter) {
         execute {
             val api = service()
@@ -338,8 +356,8 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             chatMessages = page.items; nextBefore = page.nextBefore
             memories = service().memories(authorization(), chat.id).items
             aiStatus = service().aiStatus(authorization())
-            playerPersona = chat.persona; storyScenario = chat.scenario
-            responseStyle = chat.responseStyle; storyTone = chat.tone
+            playerPersona = chat.persona.orEmpty(); storyScenario = chat.scenario.orEmpty()
+            responseStyle = chat.responseStyle ?: "balanced"; storyTone = chat.tone ?: "friendly"
             activeTab = NovaTab.CHATS
         }
     }
@@ -582,6 +600,9 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteAccount() {execute {service().deleteAccount(authorization(),mapOf("confirmation" to "DELETE"));clearAccount()} }
     suspend fun verifyPurchase(sku:String,token:String):Boolean = service().verifyPurchase(authorization(),VerifyPurchaseBody(sku,token)).status=="VERIFIED"
     fun showNotice(text:String) {notification=text}
+    fun dismissMessages() { error = null; notification = null }
+    /** Auto-hide only the notice that was shown, never a newer one. */
+    fun dismissNotice(text: String) { if (notification == text) notification = null }
 
     fun loadFollowing() {execute {catalog=service().following(authorization()).items} }
     fun follow(id:String,enabled:Boolean) {execute {if(enabled)service().follow(authorization(),id)else service().unfollow(authorization(),id);notification=if(enabled)"Подписка сохранена" else "Подписка отменена"} }

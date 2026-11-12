@@ -112,6 +112,8 @@ jobs:
 
   android_ui:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # only used to publish screenshots to the ui-evidence branch below
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-java@v4
@@ -133,14 +135,27 @@ jobs:
           profile: pixel_2
           disable-animations: true
           script: |
-            cd android && gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
+            cd android && gradle :app:connectedDebugAndroidTest --no-daemon --stacktrace -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true || { adb pull /sdcard/Android/data/ai.nova.app/files/screenshots "$GITHUB_WORKSPACE/ui-screenshots"; exit 1; }
             adb pull /sdcard/Android/data/ai.nova.app/files/screenshots "$GITHUB_WORKSPACE/ui-screenshots"
             mkdir -p "$GITHUB_WORKSPACE/ui-standard-reports"
             cp -R "$GITHUB_WORKSPACE/android/app/build/reports/androidTests" "$GITHUB_WORKSPACE/ui-standard-reports/"
             adb shell wm size 480x800
             adb shell wm density 240
-            cd "$GITHUB_WORKSPACE/android" && gradle :app:connectedDebugAndroidTest --rerun-tasks --no-daemon -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true
+            cd "$GITHUB_WORKSPACE/android" && gradle :app:connectedDebugAndroidTest --rerun-tasks --no-daemon -Pandroid.injected.androidTest.leaveApksInstalledAfterRun=true || { adb pull /sdcard/Android/data/ai.nova.app/files/screenshots "$GITHUB_WORKSPACE/ui-small-screenshots"; exit 1; }
             adb pull /sdcard/Android/data/ai.nova.app/files/screenshots "$GITHUB_WORKSPACE/ui-small-screenshots"
+      # Artifacts cannot be downloaded from the development sandbox, so screenshots are also pushed to an
+      # orphan 'ui-evidence' branch (images only, no code) for remote visual review.
+      - name: Publish screenshots to the ui-evidence branch
+        if: always() && github.event_name == 'push' && startsWith(github.ref, 'refs/heads/nova/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p /tmp/ev && cd /tmp/ev && git init -q -b ui-evidence
+          cp -R "$GITHUB_WORKSPACE/ui-screenshots" ./standard 2>/dev/null || true
+          cp -R "$GITHUB_WORKSPACE/ui-small-screenshots" ./small 2>/dev/null || true
+          echo "$GITHUB_SHA $GITHUB_REF_NAME" > SOURCE
+          git add -A && git -c user.name=nova-ci -c user.email=nova-ci@users.noreply.github.com commit -qm "UI evidence ${GITHUB_SHA::7}"
+          git push -qf "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" ui-evidence
       - uses: actions/upload-artifact@v4
         if: always()
         with:
