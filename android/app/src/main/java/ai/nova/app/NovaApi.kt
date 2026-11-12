@@ -32,7 +32,8 @@ data class NovaCharacter(
     val biography: String? = null, val appearance: String? = null, val personality: String? = null,
     val interests: String? = null, val backstory: String? = null, val speechStyle: String? = null,
     val scenario: String? = null, val language: String = "ru", val ownerId: String? = null, val publication: PublicationInfo? = null,
-    val mature: Boolean = false
+    val mature: Boolean = false,
+    val reason: String? = null // Recommendation feed: TASTE | NEW | POPULAR
 )
 data class ArtStatus(val configured: Boolean = false, val freePerDay: Int = 0, val usedToday: Int = 0, val freeLeft: Int = 0, val priceTokens: Int = 0)
 data class ArtRequest(val prompt: String, val style: String, val requestId: String)
@@ -67,6 +68,13 @@ data class NovaChat(
 data class NovaChatsResponse(val items: List<NovaChat> = emptyList())
 data class NovaCreateChatBody(val characterId: String, val participantIds: List<String> = emptyList(), val scenario: String = "", val persona: String = "", val scenarioId: String? = null)
 data class NovaChatResponse(val chat: NovaChat, val greeting: String? = null)
+data class Shelf(val key: String, val title: String, val items: List<NovaCharacter> = emptyList())
+data class ShelvesResponse(val collections: List<Shelf>? = null)
+data class AuthorPage(val id: String, val displayName: String, val bio: String? = null, val followers: Int = 0, val isFollowing: Boolean = false,
+    val likes: Int = 0, val characters: List<NovaCharacter> = emptyList())
+data class CreatorTotals(val characters: Int = 0, val likes: Int = 0, val stories: Int = 0, val favorites: Int = 0)
+data class CreatorStatItem(val id: String, val name: String, val status: String? = null, val likes: Int = 0, val stories: Int = 0, val favorites: Int = 0, val comments: Int = 0)
+data class CreatorStats(val followers: Int = 0, val totals: CreatorTotals? = null, val items: List<CreatorStatItem>? = null)
 data class ChatCastBody(val participantIds: List<String>)
 data class CharacterMemoryItem(val id: String, val content: String, val pinned: Boolean = false, val source: String? = null)
 data class CharacterMemoryPage(val items: List<CharacterMemoryItem> = emptyList())
@@ -141,6 +149,10 @@ interface NovaApi {
     @GET("v1/characters/{id}/memories") suspend fun characterMemories(@Header("Authorization") bearer: String, @Path("id") id: String): CharacterMemoryPage
     @POST("v1/characters/{id}/memories") suspend fun addCharacterMemory(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: CharacterMemoryBody)
     @DELETE("v1/characters/{id}/memories/{memoryId}") suspend fun deleteCharacterMemory(@Header("Authorization") bearer: String, @Path("id") id: String, @Path("memoryId") memoryId: String): retrofit2.Response<Unit>
+    @GET("v1/discover/recommended") suspend fun recommended(@Header("Authorization") bearer: String): CharacterPage
+    @GET("v1/discover/collections") suspend fun shelves(@Header("Authorization") bearer: String): ShelvesResponse
+    @GET("v1/creators/{id}") suspend fun author(@Header("Authorization") bearer: String, @Path("id") id: String): AuthorPage
+    @GET("v1/me/creator-stats") suspend fun creatorStats(@Header("Authorization") bearer: String): CreatorStats
     @GET("v1/characters/{id}/scenarios") suspend fun scenarios(@Header("Authorization") bearer: String, @Path("id") id: String): ScenarioPage
     @POST("v1/characters/{id}/scenarios") suspend fun addScenario(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: ScenarioBody)
     @DELETE("v1/characters/{id}/scenarios/{scenarioId}") suspend fun deleteScenario(@Header("Authorization") bearer: String, @Path("id") id: String, @Path("scenarioId") scenarioId: String): retrofit2.Response<Unit>

@@ -30,6 +30,8 @@ class NovaUiTest {
  @Volatile private var artBody:String?=null
  @Volatile private var authRequests=0
  @Volatile private var groupMode=false
+ @Volatile private var discoverMode=false
+ @Volatile private var favoritePut:String?=null
  private val artJpeg:String by lazy {
   val b=Bitmap.createBitmap(64,64,Bitmap.Config.ARGB_8888);b.eraseColor(android.graphics.Color.rgb(120,80,200))
   val out=java.io.ByteArrayOutputStream();b.compress(Bitmap.CompressFormat.JPEG,90,out)
@@ -66,6 +68,10 @@ class NovaUiTest {
     r.path?.startsWith("/v1/characters/catalog")==true -> """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет, исследователь!","category":"Приключения","tags":[],"ownerId":"fixture-creator","publication":{"id":"fixture-publication","likesCount":0}}]}"""
     groupMode && r.path=="/v1/chats" && r.method=="GET" -> """{"items":[{"id":"$chat","characterId":"$character","title":"Аврора Вейл, Кай Номад","characterName":"Аврора Вейл","participantIds":["00000000-0000-4000-8000-000000000107"]}]}"""
     groupMode && r.path?.startsWith("/v1/chats/$chat/messages")==true && r.method=="GET" -> """{"items":[{"id":"u","role":"user","content":"Привет всем","sequence":1},{"id":"a","role":"assistant","content":"Рада встрече!","sequence":2,"speakerName":"Аврора Вейл"},{"id":"b","role":"assistant","content":"Я тоже здесь.","sequence":3,"speakerName":"Кай Номад"}]}"""
+    discoverMode && r.path=="/v1/discover/recommended" -> """{"items":[{"id":"00000000-0000-4000-8000-000000000102","name":"Лея Винтер","greeting":"Привет","category":"Романтика","tags":["город"],"biography":"Фотограф ночного города.","reason":"TASTE"}],"personalised":true}"""
+    r.path=="/v1/discover/collections" && discoverMode -> """{"collections":[{"key":"new","title":"NEW","items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет","category":"Приключения","tags":[],"publication":{"id":"fixture-publication","likesCount":3}}]}]}"""
+    r.path=="/v1/creators/fixture-creator" -> """{"id":"fixture-creator","displayName":"Студия Север","bio":"Пишу истории о дальних мирах.","followers":4,"isFollowing":false,"likes":7,"characters":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет","category":"Приключения","tags":[]}]}"""
+    r.method=="PUT" && r.path?.endsWith("/favorite")==true -> {favoritePut=r.path;"{}"}
     r.path=="/v1/chats" && r.method=="POST" -> """{"chat":{"id":"$chat","characterId":"$character","title":"Аврора Вейл"}}"""
     r.path=="/v1/chats" -> """{"items":[{"id":"$chat","characterId":"$character","title":"Аврора Вейл"}]}"""
     r.path=="/v1/rewards/daily" && r.method=="POST" -> {bonusClaims++;"""{"granted":true,"amount":2}"""}
@@ -334,6 +340,23 @@ class NovaUiTest {
   waitFor("preview closed"){compose.onAllNodesWithText("ПЕРВОЕ СООБЩЕНИЕ").fetchSemanticsNodes().isEmpty()}
   compose.onNodeWithText("Очистить черновик").reveal().performClick()
   waitFor("draft cleared"){SessionStore(compose.activity).get("characterDraft").isNullOrEmpty()}
+ }
+ @Test fun recommendationDeckShelvesAndAuthorPage(){
+  discoverMode=true
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  waitFor("deck"){compose.onAllNodesWithText("Похоже на твои истории").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Лея Винтер").reveal();screenshot("31-recommendations")
+  compose.onNodeWithText("Новинки").reveal().assertExists()
+  clickWhenEnabled("♥ Нравится")
+  waitFor("favourite saved"){favoritePut=="/v1/characters/00000000-0000-4000-8000-000000000102/favorite"}
+  compose.onNodeWithText("Каталог").performClick()
+  clickWhenEnabled("Полный профиль")
+  clickWhenEnabled("Страница автора")
+  waitFor("author page"){compose.onAllNodesWithText("Студия Север").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Подписчиков: 4 · лайков: 7 · персонажей: 1").assertExists()
+  screenshot("32-author-page")
  }
  @Test fun matureSectionNeedsExplicitAdultConfirmation(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")

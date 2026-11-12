@@ -310,6 +310,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         activeTab = tab
         if (loading) { pendingTabRefresh = tab; return }
         when (tab) {
+            NovaTab.HOME -> refreshDiscover()
             NovaTab.CATALOG -> refreshCatalog()
             NovaTab.CHATS -> refreshChats()
             NovaTab.CREATE -> refreshOwned()
@@ -492,8 +493,30 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshOwned() {
-        execute { owned = service().myCharacters(authorization()).items }
+        execute { owned = service().myCharacters(authorization()).items
+            creatorStats = runCatching { service().creatorStats(authorization()) }.getOrNull()?.takeIf { it.totals != null && it.items != null } }
     }
+    // Discovery: personal deck, themed shelves, public author pages, share links.
+    var recommended by mutableStateOf<List<NovaCharacter>>(emptyList())
+    var shelves by mutableStateOf<List<Shelf>>(emptyList())
+    var authorPage by mutableStateOf<AuthorPage?>(null)
+    var creatorStats by mutableStateOf<CreatorStats?>(null)
+    var pendingLinkCharacterId by mutableStateOf<String?>(null)
+    fun refreshDiscover() {
+        viewModelScope.launch {
+            runCatching { service().recommended(authorization()).items }.onSuccess { recommended = it }
+            runCatching { service().shelves(authorization()).collections.orEmpty() }.onSuccess { shelves = it }
+        }
+    }
+    /** Right swipe keeps the character in favourites; either way the next card comes up. */
+    fun swipeRecommendation(c: NovaCharacter, liked: Boolean) {
+        recommended = recommended.filter { it.id != c.id }
+        if (liked) viewModelScope.launch { runCatching { service().addFavorite(authorization(), c.id) }.onSuccess { notification = "Добавлено в избранное" } }
+        if (recommended.isEmpty()) refreshDiscover()
+    }
+    fun openAuthor(id: String) { execute { authorPage = service().author(authorization(), id) } }
+    fun shareLink(characterId: String): String = serverUrl.trim().trimEnd('/') + "/c/" + characterId
+    fun openPendingLink() { val id = pendingLinkCharacterId ?: return; if (accessToken == null || loading) return; pendingLinkCharacterId = null; showCharacterProfile(id) }
 
     // Editor draft: saved on the phone while typing, restored after the app is closed or killed.
     private fun draftMap(): Map<String, String> = mapOf("name" to draftName, "greeting" to draftGreeting, "category" to draftCategory,

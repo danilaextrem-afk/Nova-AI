@@ -90,6 +90,9 @@ private val EN_PATTERNS: List<Pair<Regex, (List<String>) -> String>> = listOf(
     Regex("Не удалось войти \\(код (\\d+)\\)\\. Попробуй ещё раз\\.") to { g -> "Could not sign in (code ${g[1]}). Try again." },
     Regex("Групповая сцена · персонажей: (\\d+)") to { g -> "Group scene · characters: ${g[1]}" },
     Regex("Ответ пришёл за (\\d+) с") to { g -> "Reply arrived in ${g[1]} s" },
+    Regex("Свайп вправо — в избранное, влево — пропустить\\. Осталось: (\\d+)") to { g -> "Swipe right to favourite, left to skip. Left: ${g[1]}" },
+    Regex("Подписчиков: (\\d+) · лайков: (\\d+) · персонажей: (\\d+)") to { g -> "Followers: ${g[1]} · likes: ${g[2]} · characters: ${g[3]}" },
+    Regex("Подписчиков: (\\d+) · лайков: (\\d+) · историй: (\\d+) · в избранном: (\\d+)") to { g -> "Followers: ${g[1]} · likes: ${g[2]} · stories: ${g[3]} · favourites: ${g[4]}" },
     Regex("(\\d+) Токены") to { g -> "${g[1]} Tokens" },
     Regex("◈ (\\d+) Токены") to { g -> "◈ ${g[1]} Tokens" },
 )
@@ -229,6 +232,14 @@ private val EN: Map<String, String> = mapOf(
     "Редактирование сохранённого персонажа" to "Editing a saved character", "Предпросмотр" to "Preview", "Очистить черновик" to "Clear draft",
     "Черновик сохраняется на телефоне автоматически." to "The draft is saved on this phone automatically.",
     "Повторить с тем же описанием" to "Draw again with the same description",
+    // Discovery and authors
+    "ПОДБОРКА ДЛЯ ТЕБЯ" to "PICKED FOR YOU", "Похоже на твои истории" to "Like your stories", "Новинка" to "New", "Популярное" to "Popular",
+    "Новинки" to "New arrivals", "Пропустить" to "Skip", "О персонаже" to "About", "♥ Нравится" to "♥ Like", "Добавлено в избранное" to "Added to favourites",
+    "АВТОР ПЕРСОНАЖЕЙ" to "CHARACTER AUTHOR", "Страница автора" to "Author page", "Поделиться ссылкой" to "Share link",
+    "СТАТИСТИКА АВТОРА" to "AUTHOR STATS", "Опубликован" to "Published", "На модерации" to "Under review", "Отклонён модерацией" to "Rejected by moderation",
+    "Скрыт" to "Hidden", "Личный черновик" to "Private draft",
+    "♥ лайки · ✎ истории других людей · ★ в избранном · 💬 комментарии. Тексты чужих переписок автору недоступны." to
+        "♥ likes · ✎ other people's stories · ★ favourites · 💬 comments. Authors never see the text of other people's chats.",
     // Voice
     "Голосовой разговор" to "Voice conversation", "ГОЛОСОВОЙ РАЗГОВОР" to "VOICE CONVERSATION", "Нужен доступ к микрофону" to "Microphone access is needed",
     "Слушаю тебя…" to "Listening…", "Персонаж думает…" to "The character is thinking…", "Персонаж говорит" to "The character is speaking",

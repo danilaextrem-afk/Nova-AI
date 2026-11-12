@@ -59,9 +59,12 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         NovaLang.load(this)
+        val linked = intent?.data?.takeIf { it.pathSegments.size == 2 && it.pathSegments[0] == "c" }?.lastPathSegment
+            ?.takeIf { Regex("[0-9a-fA-F-]{36}").matches(it) }
         setContent {
             NovaTheme {
                 val model: NovaViewModel = viewModel()
+                LaunchedEffect(linked) { if (linked != null) model.pendingLinkCharacterId = linked }
                 NovaApp(model)
             }
         }
@@ -329,6 +332,8 @@ private fun HomeScreen(model: NovaViewModel) {
         Text("Опиши картинку словами — AI нарисует её за полминуты. Несколько штук в день бесплатно.",color=NovaDesign.Muted)
         Button(onClick={model.openArt()},modifier=Modifier.fillMaxWidth()){Text("Открыть AI Арт")}
     }
+    RecommendationDeck(model)
+    DiscoverShelves(model)
     GuestCastPreview()
 
 }
@@ -381,6 +386,10 @@ private fun CatalogScreen(model: NovaViewModel) {
         Text("Попробуй другой запрос или создай своего героя.", color = NovaDesign.Muted, style = MaterialTheme.typography.bodySmall)
     }
     CharacterProfileSheet(model)
+    AuthorDialog(model)
+    // A shared link (…/c/<id>) opens that character once the user is signed in.
+    LaunchedEffect(model.pendingLinkCharacterId, model.accessToken, model.loading) { model.openPendingLink() }
+    LaunchedEffect(model.accessToken) { if (model.accessToken != null) model.refreshDiscover() }
     model.catalog.forEach { character -> CharacterCard(model, character) }
 }
 
@@ -479,9 +488,13 @@ private fun CharacterProfileSheet(model: NovaViewModel) {
                         OutlinedButton(onClick = { model.addScenario(c.id) }, enabled = !model.loading) { Text("Добавить сценарий") }
                     }
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (publication != null && !c.mature) { val ctx = LocalContext.current
+                            TextButton(onClick = { ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, c.name + " — NOVA AI\n" + model.shareLink(c.id)) }, c.name)) }) { Text("Поделиться ссылкой") } }
                         TextButton(onClick = { model.cloneCharacter(c.id) }, enabled = !model.loading) { Text("Создать свою версию") }
                         TextButton(onClick = { model.openArt(listOfNotNull(c.name, c.appearance?.takeIf { it.isNotBlank() } ?: c.biography).joinToString(", ")) }) { Text("Нарисовать арт") }
                         owner?.let { creator ->
+                            TextButton(onClick = { model.openAuthor(creator) }, enabled = !model.loading) { Text("Страница автора") }
                             TextButton(onClick = { model.follow(creator, true) }, enabled = !model.loading) { Text("Подписаться на автора") }
                             TextButton(onClick = { model.follow(creator, false) }, enabled = !model.loading) { Text("Отписаться") }
                         }
@@ -583,6 +596,7 @@ private fun CreateScreen(model: NovaViewModel) {
             }
             if (model.draftTags.isNotBlank()) androidx.compose.material3.Text("#" + model.draftTags.split(',').map { it.trim() }.filter { it.isNotBlank() }.joinToString("  #"), color = NovaDesign.Muted)
         } })
+    CreatorStatsCard(model)
     Text("Мои персонажи", style = MaterialTheme.typography.titleLarge)
     OutlinedButton(onClick = { model.refreshOwned() }, enabled = !model.loading) {
         Text("Обновить")
