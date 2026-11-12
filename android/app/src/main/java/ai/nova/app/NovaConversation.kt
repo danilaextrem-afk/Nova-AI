@@ -30,7 +30,7 @@ import androidx.compose.material.icons.filled.Stop
  var heardId by remember(chat.id){mutableStateOf(model.chatMessages.lastOrNull()?.id)}
  LaunchedEffect(model.chatMessages.lastOrNull()?.id){
   val last=model.chatMessages.lastOrNull()?:return@LaunchedEffect
-  if(last.id!=heardId){val prev=heardId;heardId=last.id;if(prev!=null&&voice.autoRead&&last.role!="user")voice.speak(last.id,last.content,chat.characterId)}
+  if(last.id!=heardId){val prev=heardId;heardId=last.id;if(prev!=null&&voice.autoRead&&last.role!="user")voice.speak(last.id,last.content,chat.characterId,NovaLang.code)}
  }
  DisposableEffect(chat.id){onDispose{voice.stop()}}
  LaunchedEffect(model.chatMessages.size,model.streamingText?.length){
@@ -72,7 +72,7 @@ import androidx.compose.material.icons.filled.Stop
     }
     FlowRow(verticalArrangement=Arrangement.Center){
      if(mine)TextButton(onClick={model.startEditMessage(message)},enabled=!model.loading){Text("Изменить",fontSize=11.sp)}
-     if(!mine)TextButton(onClick={if(voice.speakingId==message.id)voice.stop() else voice.speak(message.id,message.content,chat.characterId)},enabled=voice.ready){
+     if(!mine)TextButton(onClick={if(voice.speakingId==message.id)voice.stop() else voice.speak(message.id,message.content,chat.characterId,NovaLang.code)},enabled=voice.ready){
       Text(if(voice.speakingId==message.id)"■ Стоп" else "▶ Слушать",fontSize=11.sp)}
      if(!mine&&model.chatMessages.lastOrNull()?.id==message.id)TextButton(onClick={model.regenerate(message)},enabled=!model.loading){Text(if(model.premiumChatSelected)"Другой ответ · ${model.aiStatus?.premiumPriceTokens?:5} ◈" else "Другой ответ",fontSize=11.sp)}
      Box{
@@ -112,7 +112,7 @@ import androidx.compose.material.icons.filled.Stop
     if(model.streamingText!=null)FilledTonalIconButton(onClick={model.stopReply()},modifier=Modifier.size(54.dp)){
      Icon(Icons.Default.Stop,contentDescription="Остановить ответ")
     } else FilledIconButton(onClick={keyboard?.hide();model.sendChatMessage()},enabled=!model.loading&&model.chatInput.isNotBlank(),modifier=Modifier.size(54.dp)){
-     Icon(Icons.AutoMirrored.Filled.Send,contentDescription=sendLabel)
+     Icon(Icons.AutoMirrored.Filled.Send,contentDescription=tr(sendLabel))
     }
    }
    if(!imeOpen&&model.premiumChatSelected)Text("Premium: ${model.aiStatus?.premiumPriceTokens?:5} ◈ спишутся только за успешный ответ",style=MaterialTheme.typography.labelSmall,color=NovaDesign.Muted)

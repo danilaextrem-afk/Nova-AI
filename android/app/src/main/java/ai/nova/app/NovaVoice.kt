@@ -86,7 +86,7 @@ fun VoiceSettings(voice: NovaVoice, characterId: String, sample: String) {
     Text("Скорость: " + String.format(Locale.US, "%.1f×", p.rate), style = MaterialTheme.typography.bodySmall)
     Slider(value = p.rate, onValueChange = { p = p.copy(rate = it) }, valueRange = 0.6f..1.6f,
         onValueChangeFinished = { voice.saveProfile(characterId, p) })
-    TextButton(onClick = { voice.saveProfile(characterId, p); voice.speak("sample", sample, characterId) }, enabled = voice.ready) { Text("Прослушать голос") }
+    TextButton(onClick = { voice.saveProfile(characterId, p); voice.speak("sample", tr(sample), characterId, NovaLang.code) }, enabled = voice.ready) { Text("Прослушать голос") }
     if (!voice.ready) Text("Голосовой движок телефона ещё загружается или не установлен (Настройки → Синтез речи).", style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted)
     Spacer(Modifier.height(8.dp))
 }

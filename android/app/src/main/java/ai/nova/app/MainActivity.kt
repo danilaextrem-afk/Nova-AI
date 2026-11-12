@@ -56,6 +56,7 @@ private val NovaColors = darkColorScheme(
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        NovaLang.load(this)
         setContent {
             NovaTheme {
                 val model: NovaViewModel = viewModel()
@@ -156,6 +157,17 @@ private fun TokenPill(model: NovaViewModel) {
     }
 }
 
+/** RU / EN interface switch; the choice is remembered on this phone. */
+@Composable
+private fun LanguageSwitch() {
+    val context = LocalContext.current
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Язык приложения", style = MaterialTheme.typography.labelMedium, color = NovaDesign.Muted)
+        FilterChip(selected = NovaLang.code == "ru", onClick = { NovaLang.set(context, "ru") }, label = { Text("Русский") })
+        FilterChip(selected = NovaLang.code == "en", onClick = { NovaLang.set(context, "en") }, label = { Text("English") })
+    }
+}
+
 @Composable
 private fun LoginScreen(model: NovaViewModel) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -170,6 +182,7 @@ private fun LoginScreen(model: NovaViewModel) {
             .imePadding().statusBarsPadding().navigationBarsPadding().padding(horizontal = 22.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
+        LanguageSwitch()
         NovaWordmark()
         NovaEditorialHero("Ближе, чем\nвоображение.", "Персонажи. Разговоры. Твоя история.", eyebrow = "ДОБРО ПОЖАЛОВАТЬ")
         NovaCard {
@@ -257,7 +270,7 @@ private fun StatusMessage(model: NovaViewModel) {
 }
 
 @Composable
-private fun NovaCard(content: @Composable ColumnScope.() -> Unit) {
+fun NovaCard(content: @Composable ColumnScope.() -> Unit) {
     Card(
         shape = RoundedCornerShape(26.dp),
         border = BorderStroke(1.dp,NovaDesign.Border),
@@ -577,6 +590,7 @@ private fun AccountScreen(model: NovaViewModel) {
             "Сессия и неотправленный текст зашифрованы на устройстве. Чаты и память хранятся в твоём аккаунте.",
             color = Color.LightGray, style = MaterialTheme.typography.bodySmall
         )
+        LanguageSwitch()
         MatureSettings(model)
         OutlinedButton(onClick = { model.logout() }) { Text("Выйти из аккаунта") }
         OutlinedButton(onClick={model.exportAccount()},enabled=!model.loading){Text("Экспортировать мои данные")}
