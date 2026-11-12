@@ -526,7 +526,7 @@ private fun ChatsScreen(model: NovaViewModel) {
             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 NovaPortrait(chat.characterId, chat.characterName ?: chat.title ?: "NOVA", Modifier.size(58.dp).clip(CircleShape), model.chatPortraitUrl(chat.characterId))
                 Column(Modifier.weight(1f)) {
-                    Text(chat.characterName ?: chat.title ?: "AI-персонаж", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text((if (!chat.participantIds.isNullOrEmpty()) chat.title else null) ?: chat.characterName ?: chat.title ?: "AI-персонаж", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(if ((chat.participantIds ?: emptyList()).isNotEmpty()) "Групповая история" else "Продолжить разговор",
                         style = MaterialTheme.typography.bodySmall, color = NovaDesign.Muted)
                 }

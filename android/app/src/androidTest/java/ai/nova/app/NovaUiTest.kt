@@ -300,6 +300,7 @@ class NovaUiTest {
   waitFor("home"){compose.onAllNodesWithText("Чаты").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Чаты").performClick()
   waitFor("chat list"){compose.onAllNodesWithText("Аврора Вейл, Кай Номад").fetchSemanticsNodes().isNotEmpty()}
+  waitFor("idle"){var busy=true;compose.runOnIdle{busy=ViewModelProvider(compose.activity)[NovaViewModel::class.java].loading};!busy}
   compose.onNodeWithText("Аврора Вейл, Кай Номад").performClick()
   waitFor("second speaker"){compose.onAllNodesWithText("КАЙ НОМАД").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("АВРОРА ВЕЙЛ").assertExists()
