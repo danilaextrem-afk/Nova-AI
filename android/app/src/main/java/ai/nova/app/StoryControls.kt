@@ -9,6 +9,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material3.*
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Mic
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -22,15 +24,18 @@ import java.util.Locale
     DisposableEffect(tts) { onDispose {tts.stop();tts.shutdown()} }
     TextButton(onClick={tts.language=Locale.forLanguageTag("ru-RU");tts.speak(text,TextToSpeech.QUEUE_FLUSH,null,"nova-message")},enabled=ready) {Text("Озвучить")}
 }
-@Composable fun DictationButton(model:NovaViewModel) {
+@Composable fun DictationButton(model: NovaViewModel, compact: Boolean = false) {
     val launcher=rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
         result.data?.getStringArrayListExtra(RecognizerIntent.EXTRA_RESULTS)?.firstOrNull()?.let {model.updateChatInput(it)}
     }
-    TextButton(onClick={runCatching {launcher.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+    val dictate: () -> Unit = { runCatching {launcher.launch(Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
         putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL,RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
         putExtra(RecognizerIntent.EXTRA_LANGUAGE,if(NovaLang.code=="en")"en-US" else "ru-RU")
         putExtra(RecognizerIntent.EXTRA_PROMPT,"Диктовка сообщения — текст можно изменить до отправки")
-    })}.onFailure {model.showNotice("На устройстве нет службы распознавания речи")} }) {Text("Диктовать сообщение")}
+    })}.onFailure {model.showNotice("На устройстве нет службы распознавания речи")} }
+    if (compact) IconButton(onClick = dictate) {
+        Icon(Icons.Default.Mic, contentDescription = tr("Диктовать сообщение"))
+    } else TextButton(onClick = dictate) { Text("Диктовать сообщение") }
 }
 @Composable fun StoryControls(model:NovaViewModel) {
     var expanded by remember {mutableStateOf(false)}
@@ -45,7 +50,7 @@ import java.util.Locale
         OutlinedTextField(value=model.playerPersona,onValueChange={model.playerPersona=it},label={Text("Имя, роль и факты о герое")},modifier=Modifier.fillMaxWidth())
         OutlinedTextField(value=model.storyScenario,onValueChange={model.storyScenario=it},label={Text("Сценарий / мир")},modifier=Modifier.fillMaxWidth())
         Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-            listOf("concise" to "Кратко","balanced" to "Сбалансированно","story" to "Подробно").forEach {(value,label)->FilterChip(selected=model.responseStyle==value,onClick={model.responseStyle=value},label={Text(label)})}
+            listOf("concise" to "Кратко","balanced" to "Обычно","detailed" to "Подробно","story" to "Сюжет").forEach {(value,label)->FilterChip(selected=model.responseStyle==value,onClick={model.responseStyle=value},label={Text(label)})}
         }
         Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
             listOf("friendly" to "Дружелюбно","dramatic" to "Драматично","humorous" to "С юмором","calm" to "Спокойно").forEach {(value,label)->FilterChip(selected=model.storyTone==value,onClick={model.storyTone=value},label={Text(label)})}

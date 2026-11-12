@@ -38,15 +38,17 @@ describe('Group chat orchestration',()=>{
   const u=await user();const [a,b,c]=await Promise.all(['Аврора','Борис','Вера'].map(n=>character(u,n)));
   const created=await app.inject({method:'POST',url:'/v1/chats',headers:auth(u),payload:{characterId:a.id,participantIds:[b.id,c.id]}});
   const chatId=created.json().chat.id;
-  const calls=provider(system=>{const m=system.match(/You write ONLY as (\S+):/);return (m?m[1]+': реплика от '+m[1]:'solo');});
+  const calls=provider((_system, body) => { const name = JSON.parse(body.messages[1].content).activeCharacter.name; return name + ': реплика от ' + name; });
   const send=(content:string,requestId=randomUUID())=>app.inject({method:'POST',url:`/v1/chats/${chatId}/messages`,headers:auth(u),payload:{content,requestId}});
   const rid=randomUUID();const first=await send('Привет всем',rid);expect(first.statusCode,first.body).toBe(200);
   expect(calls.length).toBe(2); // Free tier: two speakers per turn, not the whole cast.
   expect(first.json().assistantMessage).toMatchObject({speakerName:'Аврора',content:'реплика от Аврора'});
   expect(first.json().extraMessages.map((m:any)=>m.speakerName)).toEqual(['Борис']);
   // The second speaker saw the first one's line and only its own character sheet.
-  expect(JSON.stringify(calls[1].messages)).toContain('[Аврора]: реплика от Аврора');
-  expect(calls[1].messages[0].content).toContain('You are: {"name":"Борис"');
+  const context = JSON.parse(calls[1].messages[1].content);
+  expect(context.earlierReplies).toEqual([{ name: 'Аврора', text: 'реплика от Аврора' }]);
+  expect(context.activeCharacter.name).toBe('Борис');
+  expect(calls[1].messages[0].content).not.toContain('Аврора');
   // Replay of the same request returns the same turn and calls nothing.
   const replay=await send('Привет всем',rid);expect(replay.json().duplicate).toBe(true);expect(replay.json().extraMessages.length).toBe(1);expect(calls.length).toBe(2);
   const second=await send('И что дальше?');
@@ -99,6 +101,29 @@ describe('Story memory',()=>{
   expect((await db.characterMemory.findMany({where:{userId:u,characterId:c.id}})).map(m=>m.content)).toEqual(['Игрок любит шторма']);
   expect(await extractMemories(db,chat.id,u)).toBe(0);expect(calls.length).toBe(1);
  });
+ it('persists the rolling summary and supplies it in a subsequent request', async () => {
+  const uid = await user();
+  const lead = await character(uid, 'Аврора');
+  const thread = await db.chat.create({ data: { userId: uid, characterId: lead.id } });
+  await db.message.createMany({ data: Array.from({ length: EXTRACT_EVERY_MESSAGES }, (_, index) => ({
+   chatId: thread.id, role: index % 2 ? 'assistant' : 'user', content: 'Улика ' + index,
+  })) });
+  provider(() => JSON.stringify({ summary: 'Аврора нашла медный ключ в вазе.' }));
+  await extractMemories(db, thread.id, uid);
+  const stored = await db.chat.findUniqueOrThrow({ where: { id: thread.id } });
+  expect(stored.summaryThrough).toBeGreaterThan(0);
+  expect(stored.summaryThrough).toBe(stored.memoryThrough);
+  expect(await db.memory.findFirst({ where: { chatId: thread.id, kind: 'SUMMARY' } }))
+   .toMatchObject({ source: 'auto', content: 'Аврора нашла медный ключ в вазе.' });
+
+  const calls = provider(() => 'Ключ был в вазе.');
+  const response = await app.inject({
+   method: 'POST', url: `/v1/chats/${thread.id}/messages`, headers: auth(uid),
+   payload: { requestId: randomUUID(), content: 'Где был ключ?' },
+  });
+  expect(response.statusCode, response.body).toBe(200);
+  expect(JSON.parse(calls[0].messages[1].content).storySoFar).toBe('Аврора нашла медный ключ в вазе.');
+ });
  it('uses character memory in later chats of the same user only, and lets the user edit and delete it',async()=>{
   const u=await user();const stranger=await user();const c=await character(u,'Аврора');
   await db.character.update({where:{id:c.id},data:{publication:{create:{status:'PUBLISHED'}}}}).catch(()=>{});
@@ -111,7 +136,7 @@ describe('Story memory',()=>{
   const calls=provider(()=>'Ответ');
   const chatId=(await app.inject({method:'POST',url:'/v1/chats',headers:auth(u),payload:{characterId:c.id}})).json().chat.id;
   await app.inject({method:'POST',url:`/v1/chats/${chatId}/messages`,headers:auth(u),payload:{content:'Пойдём на крышу',requestId:randomUUID()}});
-  expect(calls[0].messages[0].content).toContain('Игрок боится высоты');
+  expect(calls[0].messages[1].content).toContain('Игрок боится высоты');
   expect((await mem(u,'PATCH','/'+id,{content:'Игрок больше не боится высоты',pinned:true})).statusCode).toBe(200);
   expect((await mem(u)).json().items[0]).toMatchObject({content:'Игрок больше не боится высоты',pinned:true});
   expect((await mem(u,'DELETE','/'+id)).statusCode).toBe(204);expect((await mem(u)).json().items).toEqual([]);

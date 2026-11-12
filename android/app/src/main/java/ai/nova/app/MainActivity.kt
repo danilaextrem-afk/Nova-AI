@@ -59,10 +59,13 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         NovaLang.load(this)
+        val linked = intent?.data?.takeIf { it.pathSegments.size == 2 && it.pathSegments[0] == "c" }?.lastPathSegment
+            ?.takeIf { Regex("[0-9a-fA-F-]{36}").matches(it) }
         setContent {
             NovaTheme {
                 val model: NovaViewModel = viewModel()
-                NovaApp(model)
+                LaunchedEffect(linked) { if (linked != null) model.pendingLinkCharacterId = linked }
+                CompositionLocalProvider(LocalPortraitAccount provides model) { NovaApp(model) }
             }
         }
     }
@@ -145,6 +148,11 @@ private fun NovaApp(model: NovaViewModel) {
                 NovaTab.ART -> ArtScreen(model)
             }
             Spacer(Modifier.height(8.dp))
+            // Shown from any tab: profile and author pages, shared links (…/c/<id>), the personal feed.
+            CharacterProfileSheet(model)
+            AuthorDialog(model)
+            LaunchedEffect(model.pendingLinkCharacterId, model.accessToken, model.loading) { model.openPendingLink() }
+            LaunchedEffect(model.accessToken) { if (model.accessToken != null) model.refreshDiscover() }
         }
     }
 }
@@ -312,10 +320,12 @@ private fun SectionHeader(title: String, subtitle: String) {
 
 @Composable
 private fun HomeScreen(model: NovaViewModel) {
-    NovaEyebrow("ДЛЯ ТЕБЯ")
-    Text("У каждой встречи\nесть продолжение.",style=MaterialTheme.typography.headlineLarge)
-    NovaEditorialHero("Найди свою\nисторию","Детективы, мечтатели и герои новых миров.")
-    Button(onClick={model.changeTab(NovaTab.CATALOG)},modifier=Modifier.fillMaxWidth().height(54.dp)){Text("Исследовать каталог")}
+    NovaEditorialHero("Найди свою\nисторию", "Детективы, мечтатели и герои новых миров.", height = 244.dp)
+    Button(onClick = { model.changeTab(NovaTab.CATALOG) }, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+        Text("Исследовать каталог")
+    }
+    RecommendationDeck(model)
+    DiscoverShelves(model)
     NovaCard {
         NovaEyebrow("ТВОЯ ВООБРАЖАЕМАЯ ВСЕЛЕННАЯ")
         Text("Кем будет следующий герой?",style=MaterialTheme.typography.titleLarge)
@@ -380,7 +390,6 @@ private fun CatalogScreen(model: NovaViewModel) {
         Text("Опубликованных персонажей пока нет.")
         Text("Попробуй другой запрос или создай своего героя.", color = NovaDesign.Muted, style = MaterialTheme.typography.bodySmall)
     }
-    CharacterProfileSheet(model)
     model.catalog.forEach { character -> CharacterCard(model, character) }
 }
 
@@ -478,7 +487,13 @@ private fun CharacterProfileSheet(model: NovaViewModel) {
                         OutlinedTextField(value = model.scenarioText, onValueChange = { model.scenarioText = it.take(2000) }, label = { Text("Мир и завязка сценария") }, minLines = 2, modifier = Modifier.fillMaxWidth())
                         OutlinedButton(onClick = { model.addScenario(c.id) }, enabled = !model.loading) { Text("Добавить сценарий") }
                     }
+                    if (publication != null) owner?.let { creator ->
+                        OutlinedButton(onClick = { model.openAuthor(creator) }, enabled = !model.loading, modifier = Modifier.fillMaxWidth()) { Text("Страница автора") }
+                    }
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                        if (publication != null && !c.mature) { val ctx = LocalContext.current
+                            TextButton(onClick = { ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"
+                                putExtra(Intent.EXTRA_TEXT, c.name + " — NOVA AI\n" + model.shareLink(c.id)) }, c.name)) }) { Text("Поделиться ссылкой") } }
                         TextButton(onClick = { model.cloneCharacter(c.id) }, enabled = !model.loading) { Text("Создать свою версию") }
                         TextButton(onClick = { model.openArt(listOfNotNull(c.name, c.appearance?.takeIf { it.isNotBlank() } ?: c.biography).joinToString(", ")) }) { Text("Нарисовать арт") }
                         owner?.let { creator ->
@@ -524,7 +539,7 @@ private fun ChatsScreen(model: NovaViewModel) {
         Card(onClick = { if (!model.loading) model.openChat(chat) }, shape = RoundedCornerShape(22.dp), border = BorderStroke(1.dp, NovaDesign.Border),
             colors = CardDefaults.cardColors(containerColor = CardSurface), modifier = Modifier.fillMaxWidth()) {
             Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-                NovaPortrait(chat.characterId, chat.characterName ?: chat.title ?: "NOVA", Modifier.size(58.dp).clip(CircleShape), model.chatPortraitUrl(chat.characterId))
+                NovaPortrait(chat.characterId, chat.characterName ?: chat.title ?: "NOVA", Modifier.size(58.dp).clip(CircleShape), chat.characterAvatarUrl ?: model.chatPortraitUrl(chat.characterId))
                 Column(Modifier.weight(1f)) {
                     Text((if (!chat.participantIds.isNullOrEmpty()) chat.title else null) ?: chat.characterName ?: chat.title ?: "AI-персонаж", style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(if ((chat.participantIds ?: emptyList()).isNotEmpty()) "Групповая история" else "Продолжить разговор",
@@ -538,51 +553,8 @@ private fun ChatsScreen(model: NovaViewModel) {
 
 @Composable
 private fun CreateScreen(model: NovaViewModel) {
-    SectionHeader("Создать героя", "Персонаж сохраняется в твоей библиотеке")
-    // Autosave: the unfinished character survives closing the app.
-    LaunchedEffect(model.draftSignature) { kotlinx.coroutines.delay(500); model.persistDraft() }
-    var preview by remember { mutableStateOf(false) }
-    NovaCard {
-        if (model.editingCharacterId != null) Text("Редактирование сохранённого персонажа", color = NovaDesign.Rose, style = MaterialTheme.typography.labelMedium)
-        OutlinedTextField(
-            value = model.draftName, onValueChange = { model.draftName = it },
-            label = { Text("Имя персонажа") }, modifier = Modifier.fillMaxWidth()
-        )
-        OutlinedTextField(
-            value = model.draftCategory, onValueChange = { model.draftCategory = it },
-            label = { Text("Категория") }, modifier = Modifier.fillMaxWidth()
-        )
-        OutlinedTextField(
-            value = model.draftGreeting, onValueChange = { model.draftGreeting = it },
-            label = { Text("Первое сообщение персонажа") },
-            minLines = 3, modifier = Modifier.fillMaxWidth()
-        )
-        CreatorFields(model)
-        Button(
-            onClick = { model.createCharacter() },
-            modifier = Modifier.fillMaxWidth(),
-            enabled = !model.loading
-        ) { Text("Сохранить персонажа") }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = { preview = true }, enabled = model.draftName.isNotBlank()) { Text("Предпросмотр") }
-            if (model.draftHasContent) TextButton(onClick = { model.clearDraft() }) { Text("Очистить черновик") }
-        }
-        Text("Черновик сохраняется на телефоне автоматически.", style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted)
-    }
-    if (preview) AlertDialog(onDismissRequest = { preview = false }, confirmButton = { TextButton(onClick = { preview = false }) { Text("Закрыть") } },
-        title = { androidx.compose.material3.Text(model.draftName.trim()) },
-        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            NovaEyebrow(model.draftCategory.ifBlank { "Приключения" })
-            NovaEyebrow("ПЕРВОЕ СООБЩЕНИЕ")
-            androidx.compose.material3.Text(model.draftGreeting.ifBlank { "—" })
-            listOf("Биография" to model.draftBiography, "Характер" to model.draftPersonality, "Внешность" to model.draftAppearance,
-                "Интересы" to model.draftInterests, "Предыстория" to model.draftBackstory, "Манера речи" to model.draftSpeechStyle,
-                "Сценарий" to model.draftScenario).filter { it.second.isNotBlank() }.forEach { (label, value) ->
-                Text(label, style = MaterialTheme.typography.labelMedium, color = NovaDesign.Lavender)
-                androidx.compose.material3.Text(value)
-            }
-            if (model.draftTags.isNotBlank()) androidx.compose.material3.Text("#" + model.draftTags.split(',').map { it.trim() }.filter { it.isNotBlank() }.joinToString("  #"), color = NovaDesign.Muted)
-        } })
+    CharacterEditor(model)
+    CreatorStatsCard(model)
     Text("Мои персонажи", style = MaterialTheme.typography.titleLarge)
     OutlinedButton(onClick = { model.refreshOwned() }, enabled = !model.loading) {
         Text("Обновить")

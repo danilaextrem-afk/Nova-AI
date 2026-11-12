@@ -7,14 +7,14 @@ import {registerChatRoutes} from '../src/chatRoutes.js';
 import {registerStoryRoutes} from '../src/storyRoutes.js';
 import {completeAiChat,retryAfterMs,modelPool,quotaKey} from '../src/aiGateway.js';
 import {credit,balance,debit} from '../src/ledger.js';
-const db=new PrismaClient();const app=Fastify();let userId:string;let other:string;let characterId:string;let chatId:string;
+const db=new PrismaClient();const app=Fastify();let drainChatJobs: () => Promise<void>;let userId:string;let other:string;let characterId:string;let chatId:string;
 const model=(provider:string,tier='free',extras:any={})=>({provider,tier,model:provider==='openrouter'?'openrouter/free':'test-'+tier,approved:true,rpm:10000,rpd:10000,tpm:10000000,tpd:100000000,inputUsdPerMillion:0,outputUsdPerMillion:0,dailyBudgetMicros:0,...extras});
 const ok=(text='Проверенный ответ тестового провайдера')=>new Response(JSON.stringify({choices:[{message:{content:text}}],usage:{prompt_tokens:30,completion_tokens:15}}),{status:200,headers:{'Content-Type':'application/json'}});
 const auth=(uid=userId)=>({authorization:'Bearer '+app.jwt.sign({sub:uid})});
 const send=(content:string,requestId=randomUUID(),tier='free',expectedPriceTokens=5)=>app.inject({method:'POST',url:`/v1/chats/${chatId}/messages`,headers:auth(),payload:{content,requestId,tier,expectedPriceTokens}});
 beforeAll(async()=>{
  await app.register(jwt,{secret:'integration-tests-only-not-for-production'});app.decorate('auth',async(req:any,reply:any)=>{try{await req.jwtVerify()}catch{return reply.code(401).send({error:'UNAUTHORIZED'})}});
- await registerChatRoutes(app,db);await registerStoryRoutes(app,db);await app.ready();
+ drainChatJobs = await registerChatRoutes(app,db);await registerStoryRoutes(app,db);await app.ready();
  userId=(await db.user.create({data:{email:randomUUID()+'@test.invalid',passwordHash:'test'}})).id;
  other=(await db.user.create({data:{email:randomUUID()+'@test.invalid',passwordHash:'test'}})).id;
  characterId=(await db.character.create({data:{ownerId:userId,name:'Взрослый тестовый герой',greeting:'Привет',category:'Приключения',tags:[]}})).id;
@@ -25,7 +25,7 @@ beforeEach(async()=>{
  await db.aiAttempt.deleteMany();await db.aiProviderState.deleteMany();
  chatId=(await db.chat.create({data:{userId,characterId}})).id;
 });
-afterEach(()=>{vi.unstubAllGlobals();vi.unstubAllEnvs()});
+afterEach(async () => { await drainChatJobs(); vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 afterAll(async()=>{await app.close();await db.user.deleteMany({where:{id:{in:[userId,other]}}});await db.$disconnect()});
 describe('PostgreSQL router and persisted chat invariants (HTTP fixtures, not live AI)',()=>{
  it('100 consecutive Free turns have no token debit and history pages include the latest answer',async()=>{
@@ -38,10 +38,11 @@ describe('PostgreSQL router and persisted chat invariants (HTTP fixtures, not li
   expect(second.json().items).toHaveLength(50);expect(second.json().items.at(-1).sequence).toBeLessThan(first.json().items[0].sequence);
  });
  it.each([429,503,'timeout'])('fails over to an independent provider after %s with unchanged messages',async(failure)=>{
+  const requestId = randomUUID();
   let first:any;const mock=vi.fn(async(url:string,init:any)=>{const body=JSON.parse(init.body);if(url.includes('groq')){first=body.messages;if(failure==='timeout')throw new DOMException('timed out','TimeoutError');return new Response('',{status:failure as number,headers:{'Retry-After':'60'}})}expect(body.messages).toEqual(first);return ok('Резервный ответ')});
-  vi.stubGlobal('fetch',mock);const result=await send('Продолжи');expect(result.statusCode,result.body).toBe(200);
+  vi.stubGlobal('fetch',mock);const result=await send('Продолжи', requestId);expect(result.statusCode,result.body).toBe(200);
   expect(mock).toHaveBeenCalledTimes(2);expect((await db.aiProviderState.findUnique({where:{key:quotaKey({provider:'groq',model:'test-free'})}}))!.retryAt!.getTime()).toBeGreaterThan(Date.now());
-  const attempts=await db.aiAttempt.findMany({orderBy:{createdAt:'asc'}});expect(attempts.map(x=>x.status)).toEqual(['FAILED','SUCCEEDED']);
+  const attempts=await db.aiAttempt.findMany({where:{requestId},orderBy:{createdAt:'asc'}});expect(attempts.map(x=>x.status)).toEqual(['FAILED','SUCCEEDED']);
  });
  it('preserves failed user text, charges nothing, and retries the same request ID',async()=>{
   vi.stubGlobal('fetch',vi.fn(async()=>new Response('',{status:429})));const id=randomUUID();const before=await balance(db,userId);
@@ -67,7 +68,7 @@ describe('PostgreSQL router and persisted chat invariants (HTTP fixtures, not li
  it('scopes editable pinned memories to the caller and branch timeline',async()=>{
   const r=await app.inject({method:'POST',url:`/v1/chats/${chatId}/memories`,headers:auth(),payload:{content:'Маяк на острове',pinned:true}});expect(r.statusCode).toBe(200);
   const id=r.json().memory.id;const denied=await app.inject({method:'DELETE',url:`/v1/chats/${chatId}/memories/${id}`,headers:auth(other)});expect(denied.statusCode).toBe(404);
-  vi.stubGlobal('fetch',vi.fn(async(_url:string,init:any)=>{expect(JSON.parse(init.body).messages[0].content).toContain('Маяк на острове');return ok()}));
+  vi.stubGlobal('fetch',vi.fn(async(_url:string,init:any)=>{expect(JSON.parse(init.body).messages[1].content).toContain('Маяк на острове');return ok()}));
   const answer=await send('Где маяк?');const branch=await app.inject({method:'POST',url:`/v1/chats/${chatId}/branch`,headers:auth(),payload:{messageId:answer.json().assistantMessage.id}});
   expect(branch.statusCode,branch.body).toBe(201);expect(branch.json().chat.id).not.toBe(chatId);
   const copied=await db.memory.findMany({where:{chatId:branch.json().chat.id}});expect(copied.map(x=>x.content)).toContain('Маяк на острове');

@@ -108,6 +108,9 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var matureSection by mutableStateOf(false)
     var draftMature by mutableStateOf(false)
+    var draftAge by mutableStateOf<Int?>(null)
+    var draftGender by mutableStateOf<String?>(null)
+    var draftTraits by mutableStateOf<List<String>>(emptyList())
     fun selectMatureSection(on: Boolean) { matureSection = on && showMature; refreshCatalog() }
     fun updateShowMature(on: Boolean) {
         execute {
@@ -144,8 +147,14 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         val refresh = store.get("refresh")
                         val next = refresh?.let { runCatching { refreshApi.refreshSync(RefreshBody(it)).execute().body() }.getOrNull() }
-                        if (next == null) null else {
-                            store.put("access", next.accessToken); store.put("refresh", next.refreshToken)
+                        if (next == null || store.get("refresh") != refresh) null else {
+                            store.put("access", next.accessToken)
+                            store.put("refresh", next.refreshToken)
+                            viewModelScope.launch {
+                                if (accessToken != null && store.get("access") == next.accessToken) {
+                                    accessToken = next.accessToken
+                                }
+                            }
                             response.request.newBuilder().header("Authorization", "Bearer " + next.accessToken).build()
                         }
                     }
@@ -310,6 +319,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         activeTab = tab
         if (loading) { pendingTabRefresh = tab; return }
         when (tab) {
+            NovaTab.HOME -> refreshDiscover()
             NovaTab.CATALOG -> refreshCatalog()
             NovaTab.CHATS -> refreshChats()
             NovaTab.CREATE -> refreshOwned()
@@ -375,6 +385,17 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun portraitAuthorization(url: String): String? {
+        val image = runCatching { java.net.URI(url) }.getOrNull() ?: return null
+        val server = runCatching { java.net.URI(serverUrl) }.getOrNull() ?: return null
+        val sameOrigin = image.scheme == server.scheme && image.host != null &&
+            image.host.equals(server.host, ignoreCase = true) && image.port == server.port
+        if (!sameOrigin || image.userInfo != null || image.query != null ||
+            !Regex("/media/[0-9a-f-]{36}\\.jpg").matches(image.path.orEmpty())) return null
+        if (image.scheme != "https" && !(BuildConfig.DEBUG && image.host in setOf("127.0.0.1", "10.0.2.2", "localhost"))) return null
+        return (store.get("access") ?: accessToken)?.let { "Bearer $it" }
+    }
+
     fun chatPortraitUrl(characterId:String):String? =
         catalog.firstOrNull{it.id==characterId}?.avatarUrl ?: owned.firstOrNull{it.id==characterId}?.avatarUrl ?: store.get("portrait-$characterId")
     fun startStudioChat(hero:StudioHero) {
@@ -393,10 +414,10 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         execute {
             val api = service()
             val created = api.createChat(authorization(), NovaCreateChatBody(character.id, groupIds.filter { it != character.id }.take(4), if (scenario == null) storyScenario else "", playerPersona, scenario?.id))
-            activeChat = created.chat
+            activeChat = created.chat.copy(characterAvatarUrl = created.chat.characterAvatarUrl ?: character.avatarUrl)
             chatGreeting = created.greeting?.takeIf { it.isNotBlank() } ?: character.greeting
             profileCharacter = null; characterMemories = emptyList(); memories = emptyList()
-            store.put("chat", gson.toJson(created.chat))
+            store.put("chat", gson.toJson(activeChat))
             chatMessages = emptyList()
             chatInput = ""
             activeTab = NovaTab.CHATS
@@ -492,17 +513,40 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun refreshOwned() {
-        execute { owned = service().myCharacters(authorization()).items }
+        execute { owned = service().myCharacters(authorization()).items
+            creatorStats = runCatching { service().creatorStats(authorization()) }.getOrNull()?.takeIf { it.totals != null && it.items != null } }
     }
+    // Discovery: personal deck, themed shelves, public author pages, share links.
+    var recommended by mutableStateOf<List<NovaCharacter>>(emptyList())
+    var shelves by mutableStateOf<List<Shelf>>(emptyList())
+    var authorPage by mutableStateOf<AuthorPage?>(null)
+    var creatorStats by mutableStateOf<CreatorStats?>(null)
+    var pendingLinkCharacterId by mutableStateOf<String?>(null)
+    fun refreshDiscover() {
+        viewModelScope.launch {
+            runCatching { service().recommended(authorization()).items }.onSuccess { recommended = it }
+            runCatching { service().shelves(authorization()).collections.orEmpty() }.onSuccess { shelves = it }
+        }
+    }
+    /** Right swipe keeps the character in favourites; either way the next card comes up. */
+    fun swipeRecommendation(c: NovaCharacter, liked: Boolean) {
+        recommended = recommended.filter { it.id != c.id }
+        if (liked) viewModelScope.launch { runCatching { service().addFavorite(authorization(), c.id) }.onSuccess { notification = "Добавлено в избранное" } }
+        if (recommended.isEmpty()) refreshDiscover()
+    }
+    fun openAuthor(id: String) { execute { authorPage = service().author(authorization(), id) } }
+    fun shareLink(characterId: String): String = serverUrl.trim().trimEnd('/') + "/c/" + characterId
+    fun openPendingLink() { val id = pendingLinkCharacterId ?: return; if (accessToken == null || loading) return; pendingLinkCharacterId = null; showCharacterProfile(id) }
 
     // Editor draft: saved on the phone while typing, restored after the app is closed or killed.
     private fun draftMap(): Map<String, String> = mapOf("name" to draftName, "greeting" to draftGreeting, "category" to draftCategory,
         "biography" to draftBiography, "personality" to draftPersonality, "appearance" to draftAppearance, "interests" to draftInterests,
         "backstory" to draftBackstory, "speechStyle" to draftSpeechStyle, "scenario" to draftScenario, "avatar" to draftAvatar,
-        "tags" to draftTags, "language" to draftLanguage, "mature" to draftMature.toString(), "editing" to editingCharacterId.orEmpty())
+        "tags" to draftTags, "language" to draftLanguage, "mature" to draftMature.toString(), "editing" to editingCharacterId.orEmpty(),
+        "age" to (draftAge?.toString() ?: ""), "gender" to draftGender.orEmpty(), "traits" to draftTraits.joinToString("\u0002"))
     val draftSignature: String get() = draftMap().values.joinToString("\u0001")
     val draftHasContent: Boolean get() = listOf(draftName, draftGreeting, draftBiography, draftPersonality, draftAppearance, draftInterests,
-        draftBackstory, draftSpeechStyle, draftScenario, draftTags).any { it.isNotBlank() }
+        draftBackstory, draftSpeechStyle, draftScenario, draftTags, draftAvatar).any { it.isNotBlank() } || draftTraits.isNotEmpty() || draftAge != null
     fun persistDraft() { if (accessToken != null) store.put("characterDraft", if (draftHasContent) gson.toJson(draftMap()) else "") }
     private fun restoreDraft() {
         val saved = runCatching { gson.fromJson(store.get("characterDraft"), Map::class.java) }.getOrNull() ?: return
@@ -512,29 +556,191 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         draftBackstory = v("backstory"); draftSpeechStyle = v("speechStyle"); draftScenario = v("scenario"); draftAvatar = v("avatar")
         draftTags = v("tags"); draftLanguage = v("language").ifBlank { "ru" }; draftMature = v("mature") == "true"
         editingCharacterId = v("editing").ifBlank { null }
+        draftAge = v("age").toIntOrNull()?.takeIf { it >= 18 }; draftGender = v("gender").ifBlank { null }
+        draftTraits = v("traits").split('\u0002').filter { it.isNotBlank() }
     }
     fun clearDraft() {
         draftName = ""; draftGreeting = ""; draftCategory = "fantasy"; draftBiography = ""; draftPersonality = ""; draftAppearance = ""
         draftInterests = ""; draftBackstory = ""; draftSpeechStyle = ""; draftScenario = ""; draftAvatar = ""; draftTags = ""
-        draftLanguage = "ru"; draftMature = false; editingCharacterId = null
+        draftLanguage = "ru"; draftMature = false; editingCharacterId = null; draftAge = null; draftGender = null; draftTraits = emptyList()
+        fieldUndo = emptyMap(); cardUndo = null; cardSuggestion = null; fieldSuggestion = null
         store.put("characterDraft", "")
     }
+    /** Which required parts are still missing, in the order they appear in the editor. */
+    fun missingForSave(): List<String> = listOfNotNull(
+        "имя".takeIf { draftName.isBlank() }, "возраст".takeIf { draftAge == null }, "пол".takeIf { draftGender == null },
+        "первое сообщение".takeIf { draftGreeting.isBlank() })
+    var lastCreated by mutableStateOf<NovaCharacter?>(null)
     fun createCharacter() {
-        if (draftName.isBlank() || draftGreeting.isBlank()) {
-            error = "Заполни имя и приветствие персонажа"
-            return
-        }
+        val missing = missingForSave()
+        if (missing.isNotEmpty()) { error = "Чтобы сохранить, заполни: " + missing.joinToString(", "); return }
         execute {
-            val draft = CharacterDraft(name=draftName.trim(), greeting=draftGreeting.trim(), category=draftCategory.trim().ifBlank { "Приключения" },
-                tags=draftTags.split(',').map { it.trim() }.filter { it.isNotBlank() }.take(10), language=draftLanguage,
-                biography=draftBiography, personality=draftPersonality, appearance=draftAppearance, interests=draftInterests,
-                backstory=draftBackstory, speechStyle=draftSpeechStyle, scenario=draftScenario, avatarUrl=draftAvatar.takeIf { it.isNotBlank() }, mature=draftMature)
+            val draft = CharacterDraft(name=draftName.trim(), greeting=draftGreeting.trim(), category=draftCategory.trim().ifBlank { "Приключения" }.take(50),
+                tags=draftTags.split(',').map { it.trim().removePrefix("#").take(40) }.filter { it.isNotBlank() }.take(10), language=draftLanguage,
+                biography=draftBiography.take(3000), personality=draftPersonality.take(1500), appearance=draftAppearance.take(1000), interests=draftInterests.take(500),
+                backstory=draftBackstory.take(3000), speechStyle=draftSpeechStyle.take(500), scenario=draftScenario.take(2000),
+                avatarUrl=draftAvatar.takeIf { it.startsWith("https://") }, mature=draftMature,
+                age=draftAge, gender=draftGender, traits=draftTraits.map { it.take(30) }.take(12))
             val editing = editingCharacterId
-            if (editing == null) service().createCharacter(authorization(), draft) else service().editCharacter(authorization(), editing, draft)
+            val saved = if (editing == null) service().createCharacter(authorization(), draft).character else { service().editCharacter(authorization(), editing, draft); null }
             editingCharacterId = null
             owned = service().myCharacters(authorization()).items
+            lastCreated = saved ?: owned.firstOrNull { it.id == editing }
             clearDraft()
-            notification = "Персонаж создан и сохранён"
+            notification = if (editing == null) "Персонаж создан и сохранён" else "Изменения сохранены"
+        }
+    }
+
+    // ---- Smart creator: AI suggestions never overwrite the user's text without an explicit tap. ----
+    data class FieldSuggestion(val field: String, val action: String, val variants: List<String>)
+    var cardSuggestion by mutableStateOf<AssistCard?>(null)
+    var cardNeeds by mutableStateOf<List<String>>(emptyList())
+    var fieldSuggestion by mutableStateOf<FieldSuggestion?>(null)
+    var assistBusy by mutableStateOf<String?>(null) // "card" or a field key while the AI works
+    var lastIdea by mutableStateOf("")
+    var fieldUndo by mutableStateOf<Map<String, String>>(emptyMap()) // field -> text before the last accepted suggestion
+    var cardUndo by mutableStateOf<Map<String, String>?>(null)        // whole card before "apply to the whole card"
+    val cardFields = listOf("name", "biography", "personality", "interests", "appearance", "speechStyle", "backstory", "scenario", "greeting")
+    fun draftField(key: String): String = when (key) {
+        "name" -> draftName; "biography" -> draftBiography; "personality" -> draftPersonality; "interests" -> draftInterests
+        "appearance" -> draftAppearance; "speechStyle" -> draftSpeechStyle; "backstory" -> draftBackstory; "scenario" -> draftScenario
+        "greeting" -> draftGreeting; "tags" -> draftTags; "category" -> draftCategory; "traits" -> draftTraits.joinToString("\u0002"); else -> "" }
+    fun setDraftField(key: String, value: String) { when (key) {
+        "name" -> draftName = value; "biography" -> draftBiography = value; "personality" -> draftPersonality = value; "interests" -> draftInterests = value
+        "appearance" -> draftAppearance = value; "speechStyle" -> draftSpeechStyle = value; "backstory" -> draftBackstory = value
+        "scenario" -> draftScenario = value; "greeting" -> draftGreeting = value; "tags" -> draftTags = value; "category" -> draftCategory = value
+        "traits" -> draftTraits = value.split('\u0002').filter { it.isNotBlank() } } }
+    private fun currentCard() = AssistCurrent(name = draftName.trim().ifBlank { null }, age = draftAge, gender = draftGender,
+        traits = draftTraits.takeIf { it.isNotEmpty() }, biography = draftBiography.ifBlank { null }, personality = draftPersonality.ifBlank { null },
+        interests = draftInterests.ifBlank { null }, appearance = draftAppearance.ifBlank { null }, speechStyle = draftSpeechStyle.ifBlank { null },
+        backstory = draftBackstory.ifBlank { null }, scenario = draftScenario.ifBlank { null }, greeting = draftGreeting.ifBlank { null },
+        category = draftCategory.ifBlank { null }?.takeIf { it != "fantasy" }, tags = draftTags.split(',').map { it.trim() }.filter { it.isNotBlank() }.takeIf { it.isNotEmpty() })
+    private fun assistErrorText(e: HttpException): String {
+        val code = runCatching { gson.fromJson(e.response()?.errorBody()?.string(), Map::class.java)["error"] as? String }.getOrNull()
+        return when (code) {
+            "CREATOR_REQUEST_REJECTED" -> "AI не создаёт несовершеннолетних и откровенных персонажей. Измени описание."
+            "CREATOR_RESULT_REJECTED" -> "AI предложил неподходящий текст. Нажми «Другой вариант»."
+            "CREATOR_DAILY_LIMIT" -> "На сегодня подсказки AI закончились. Завтра будут снова — а поля можно заполнить и вручную."
+            "FIELD_EMPTY" -> "В поле пока нет текста. Выбери «Написать с нуля»."
+            "AI_BAD_FORMAT" -> "AI ответил неразборчиво. Попробуй ещё раз."
+            "INVALID_ASSIST_INPUT" -> "Опиши идею хотя бы парой слов (до 500 символов)."
+            else -> if (e.code() == 429) "AI сейчас занят. Подожди минуту и попробуй снова." else "AI временно недоступен. Твой текст не изменён — попробуй чуть позже."
+        }
+    }
+    private fun assistCall(target: String, request: AssistRequest, onResult: (AssistResponse) -> Unit) {
+        if (assistBusy != null) return
+        assistBusy = target; error = null
+        viewModelScope.launch {
+            try { onResult(service().assist(authorization(), request)) }
+            catch (e: HttpException) { error = assistErrorText(e); if (e.code() == 401) accessToken = null }
+            catch (e: java.io.IOException) { error = "Нет связи с сервером NOVA. Твой текст не изменён." }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { error = "AI временно недоступен. Твой текст не изменён." }
+            finally { assistBusy = null }
+        }
+    }
+    fun assistFull(idea: String) {
+        val text = idea.trim()
+        if (text.length < 3) { error = "Опиши идею хотя бы парой слов"; return }
+        lastIdea = text
+        assistCall("card", AssistRequest("full", idea = text, current = currentCard(), language = NovaLang.code)) { r ->
+            cardSuggestion = r.card; cardNeeds = r.needs.orEmpty() }
+    }
+    fun assistField(field: String, action: String) {
+        assistCall(field, AssistRequest("field", field = field, action = action, current = currentCard(), language = NovaLang.code)) { r ->
+            fieldSuggestion = r.variants?.takeIf { it.isNotEmpty() }?.let { FieldSuggestion(field, action, it) } }
+    }
+    /** "Accept" (possibly after editing the suggested text): the previous text is kept for one-tap undo. */
+    fun acceptField(field: String, text: String) {
+        fieldUndo = fieldUndo + (field to draftField(field)); setDraftField(field, text.trim()); fieldSuggestion = null
+    }
+    fun undoField(field: String) { fieldUndo[field]?.let { setDraftField(field, it) }; fieldUndo = fieldUndo - field }
+    fun applyCard() {
+        val c = cardSuggestion ?: return
+        cardUndo = (cardFields + listOf("tags", "category", "traits")).associateWith { draftField(it) }
+        for (k in cardFields) { val v = when (k) { "name" -> c.name; "biography" -> c.biography; "personality" -> c.personality; "interests" -> c.interests
+            "appearance" -> c.appearance; "speechStyle" -> c.speechStyle; "backstory" -> c.backstory; "scenario" -> c.scenario; else -> c.greeting }
+            if (v.isNotBlank()) setDraftField(k, v) }
+        c.tags?.takeIf { it.isNotEmpty() }?.let { draftTags = it.joinToString(", ") }
+        c.category?.takeIf { it.isNotBlank() }?.let { draftCategory = it }
+        if (draftTraits.isEmpty()) c.traits?.let { draftTraits = it.take(6) }
+        cardSuggestion = null; fieldUndo = emptyMap()
+        notification = if (cardNeeds.isNotEmpty()) "Карточка заполнена. Выбери возраст и пол — AI их не выбирает за тебя." else "Карточка заполнена. Проверь и поправь любые поля."
+    }
+    fun undoCard() { cardUndo?.forEach { (k, v) -> setDraftField(k, v) }; cardUndo = null }
+
+    // ---- Character portrait: own photo (with consent), AI portrait, or a ready avatar. ----
+    var avatarBusy by mutableStateOf(false)
+    /** Shrinks to at most 512 px JPEG on the phone; only that small file is uploaded, never to an AI provider. */
+    private fun toAvatarJpeg(bitmap: android.graphics.Bitmap): ByteArray {
+        val scale = minOf(1f, 512f / maxOf(bitmap.width, bitmap.height))
+        val sized = if (scale < 1f) android.graphics.Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt().coerceAtLeast(1), (bitmap.height * scale).toInt().coerceAtLeast(1), true) else bitmap
+        var quality = 88
+        while (true) {
+            val out = java.io.ByteArrayOutputStream(); sized.compress(android.graphics.Bitmap.CompressFormat.JPEG, quality, out)
+            if (out.size() <= 190_000 || quality <= 40) return out.toByteArray()
+            quality -= 12
+        }
+    }
+    suspend fun uploadAvatarBitmap(bitmap: android.graphics.Bitmap, source: String): String {
+        val jpeg = withContext(Dispatchers.Default) { toAvatarJpeg(bitmap) }
+        val result = service().uploadAvatar(authorization(), AvatarUpload(android.util.Base64.encodeToString(jpeg, android.util.Base64.NO_WRAP), source, true))
+        draftAvatar = result.url
+        persistDraft()
+        return result.url
+    }
+    fun uploadCroppedPortrait(bitmap: android.graphics.Bitmap, crop: androidx.compose.ui.unit.IntRect) {
+        if (avatarBusy) return
+        avatarBusy = true
+        error = null
+        viewModelScope.launch {
+            try {
+                val portrait = withContext(Dispatchers.Default) {
+                    android.graphics.Bitmap.createBitmap(bitmap, crop.left, crop.top, crop.width, crop.height)
+                }
+                uploadAvatarBitmap(portrait, "upload")
+                persistDraft()
+                notification = "Фото персонажа сохранено"
+            } catch (e: HttpException) {
+                error = when (e.code()) {
+                    413 -> "Фото слишком большое. Выбери другое."
+                    409 -> "Достигнут лимит портретов. Освободи место и попробуй снова."
+                    else -> "Не удалось сохранить фото. Попробуй ещё раз."
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                error = "Не удалось сохранить фото. Проверь подключение и попробуй снова."
+            } finally {
+                avatarBusy = false
+            }
+        }
+    }
+
+    /** Uses the AI Art allowance (3 free a day) with a prompt built from the card's appearance. */
+    fun avatarFromAi() {
+        if (avatarBusy) return
+        val looks = listOfNotNull(draftName.trim().ifBlank { null }, draftAge?.let { "$it лет" },
+            when (draftGender) { "female" -> "женщина"; "male" -> "мужчина"; else -> null }, draftAppearance.trim().ifBlank { null }).joinToString(", ")
+        if (draftAppearance.isBlank()) { error = "Сначала опиши внешность (или заполни карточку с AI) — по ней рисуется портрет."; return }
+        avatarBusy = true; error = null
+        viewModelScope.launch {
+            try {
+                val art = service().createArt(authorization(), ArtRequest(("Портрет взрослого персонажа: $looks").take(600), "portrait", java.util.UUID.randomUUID().toString()))
+                val bytes = android.util.Base64.decode(requireNotNull(art.image), android.util.Base64.DEFAULT)
+                val bitmap = withContext(Dispatchers.Default) { android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) } ?: throw IllegalStateException()
+                uploadAvatarBitmap(bitmap, "ai")
+                notification = if (art.chargedTokens > 0) "Портрет готов · списано ${art.chargedTokens} ◈" else "Портрет готов! Бесплатных картинок сегодня: ${art.freeLeft}"
+            } catch (e: HttpException) {
+                val code = runCatching { gson.fromJson(e.response()?.errorBody()?.string(), Map::class.java)["error"] as? String }.getOrNull()
+                error = when (code) {
+                    "ART_PROMPT_REJECTED" -> "По такому описанию портрет нарисовать нельзя. Измени внешность в карточке."
+                    "INSUFFICIENT_TOKENS" -> "Бесплатные картинки на сегодня закончились, а токенов не хватает. Выбери фото или готовый аватар."
+                    else -> "Портрет сейчас не нарисовать. Попробуй позже или выбери фото."
+                }
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { error = "Портрет сейчас не нарисовать. Попробуй позже или выбери фото." }
+            finally { avatarBusy = false }
         }
     }
 
@@ -677,6 +883,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         draftBiography=c.biography.orEmpty(); draftPersonality=c.personality.orEmpty(); draftAppearance=c.appearance.orEmpty()
         draftInterests=c.interests.orEmpty(); draftBackstory=c.backstory.orEmpty(); draftSpeechStyle=c.speechStyle.orEmpty()
         draftScenario=c.scenario.orEmpty(); draftAvatar=c.avatarUrl.orEmpty(); draftTags=c.tags.joinToString(", "); draftLanguage=c.language; draftMature=c.mature
+        draftAge=c.age; draftGender=c.gender; draftTraits=c.traits.orEmpty(); fieldUndo=emptyMap(); cardUndo=null
         activeTab=NovaTab.CREATE
     } }
     fun publishCharacter(id: String) { execute { service().publish(authorization(),id); notification="Персонаж отправлен на модерацию" } }

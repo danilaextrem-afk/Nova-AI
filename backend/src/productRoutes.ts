@@ -30,7 +30,7 @@ export async function registerProductRoutes(app:FastifyInstance,db:PrismaClient)
   if(req.body?.confirmation!=='DELETE')return reply.code(400).send({error:'CONFIRMATION_REQUIRED'});
   await db.$transaction(async tx=>{
    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${req.user.sub} FOR UPDATE`;
-   await tx.chat.deleteMany({where:{userId:req.user.sub}});await tx.characterMemory.deleteMany({where:{userId:req.user.sub}});await tx.character.deleteMany({where:{ownerId:req.user.sub}});
+   await tx.chat.deleteMany({where:{userId:req.user.sub}});await tx.characterMemory.deleteMany({where:{userId:req.user.sub}});await tx.media.deleteMany({where:{ownerId:req.user.sub}});await tx.character.deleteMany({where:{ownerId:req.user.sub}});
    await tx.socialComment.deleteMany({where:{userId:req.user.sub}});await tx.creatorFollow.deleteMany({where:{OR:[{followerId:req.user.sub},{creatorId:req.user.sub}]}});
    await tx.report.deleteMany({where:{reporterId:req.user.sub}});
    await tx.userBlock.deleteMany({where:{OR:[{blockerId:req.user.sub},{blockedId:req.user.sub}]}});

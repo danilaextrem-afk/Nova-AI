@@ -114,7 +114,7 @@ describe('real AI character chat gateway', () => {
     process.env.AI_MODEL = 'openai/gpt-oss-20b';
     const mock = vi.fn(async (_url: string, init: any) => {
       const request = JSON.parse(init.body);
-      expect(request.messages[0].content).toContain('Test Librarian');
+      expect(JSON.parse(request.messages[1].content).activeCharacter.name).toBe('Test Librarian');
       expect(request.messages.at(-1).content).toBe('What book should I read?');
       return {
         ok: true, status: 200,

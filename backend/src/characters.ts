@@ -22,6 +22,10 @@ const characterInput = z.object({
   avatarUrl: z.string().url().startsWith('https://').max(2048).nullable().optional(),
   // Adult audience (18+): romance and mature drama between adult characters, never sexually explicit.
   mature: z.boolean().default(false),
+  // Characters are always adults; age and gender are the author's explicit choice.
+  age: z.number().int().min(18).max(120).nullable().optional(),
+  gender: z.enum(['female', 'male', 'other']).nullable().optional(),
+  traits: z.array(z.string().trim().min(1).max(30)).max(12).optional(),
 }).strict();
 
 const updateInput = characterInput.partial().refine(
@@ -35,7 +39,7 @@ const pageQuery = z.object({
 });
 const publicSelection = {
   id: true, name: true, appearance: true, biography: true, personality: true,
-  greeting: true, category: true, tags: true, language: true, avatarUrl: true, mature: true,
+  greeting: true, category: true, tags: true, language: true, avatarUrl: true, mature: true, age: true, gender: true, traits: true,
   createdAt: true, publication:{select:{id:true,likesCount:true}}, ownerId:true, owner: { select: { profile: { select: { displayName: true } } } },
 } satisfies Prisma.CharacterSelect;
 
@@ -198,6 +202,7 @@ export async function registerCharacterRoutes(app: FastifyInstance, db: PrismaCl
         personality: source.personality, interests: source.interests,
         backstory: source.backstory, speechStyle: source.speechStyle,
         scenario: source.scenario, avatarUrl: source.avatarUrl,
+        age: source.age, gender: source.gender, traits: source.traits, mature: source.mature,
         isHidden: true, isLibrary: false,
       },
     });

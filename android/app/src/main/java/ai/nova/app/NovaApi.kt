@@ -20,7 +20,8 @@ data class CharacterDraft(
     val appearance: String = "", val biography: String = "", val personality: String = "",
     val interests: String = "", val backstory: String = "", val speechStyle: String = "",
     val scenario: String = "", val avatarUrl: String? = null,
-    val mature: Boolean = false
+    val mature: Boolean = false,
+    val age: Int? = null, val gender: String? = null, val traits: List<String> = emptyList()
 )
 data class NovaCharacter(
     val id: String,
@@ -32,8 +33,23 @@ data class NovaCharacter(
     val biography: String? = null, val appearance: String? = null, val personality: String? = null,
     val interests: String? = null, val backstory: String? = null, val speechStyle: String? = null,
     val scenario: String? = null, val language: String = "ru", val ownerId: String? = null, val publication: PublicationInfo? = null,
-    val mature: Boolean = false
+    val mature: Boolean = false,
+    val age: Int? = null, val gender: String? = null, val traits: List<String>? = null,
+    val reason: String? = null // Recommendation feed: TASTE | NEW | POPULAR
 )
+/** Smart creator: the current card is sent as context; the server returns a suggestion and never saves it. */
+data class AssistCurrent(val name: String? = null, val age: Int? = null, val gender: String? = null, val traits: List<String>? = null,
+    val biography: String? = null, val personality: String? = null, val interests: String? = null, val appearance: String? = null,
+    val speechStyle: String? = null, val backstory: String? = null, val scenario: String? = null, val greeting: String? = null,
+    val category: String? = null, val tags: List<String>? = null)
+data class AssistRequest(val mode: String, val idea: String? = null, val field: String? = null, val action: String? = null,
+    val current: AssistCurrent = AssistCurrent(), val language: String = "ru")
+data class AssistCard(val name: String = "", val biography: String = "", val personality: String = "", val interests: String = "",
+    val appearance: String = "", val speechStyle: String = "", val backstory: String = "", val scenario: String = "", val greeting: String = "",
+    val tags: List<String>? = null, val traits: List<String>? = null, val category: String? = null)
+data class AssistResponse(val card: AssistCard? = null, val variants: List<String>? = null, val needs: List<String>? = null)
+data class AvatarUpload(val data: String, val source: String, val rightsConfirmed: Boolean = true)
+data class AvatarResult(val id: String, val url: String)
 data class ArtStatus(val configured: Boolean = false, val freePerDay: Int = 0, val usedToday: Int = 0, val freeLeft: Int = 0, val priceTokens: Int = 0)
 data class ArtRequest(val prompt: String, val style: String, val requestId: String)
 data class ArtResult(val image: String? = null, val mime: String? = null, val prompt: String? = null, val chargedTokens: Int = 0, val freeLeft: Int = 0)
@@ -62,11 +78,19 @@ data class NovaChat(
     // Nullable on purpose: Gson ignores Kotlin defaults, and a server/fixture that omits a field would
     // otherwise put null into a non-null property and crash later (seen in UI tests on chat.copy()).
     val characterName: String? = null, val persona: String? = null, val scenario: String? = null,
-    val responseStyle: String? = null, val tone: String? = null, val participantIds: List<String>? = null
+    val responseStyle: String? = null, val tone: String? = null, val participantIds: List<String>? = null,
+    val characterAvatarUrl: String? = null
 )
 data class NovaChatsResponse(val items: List<NovaChat> = emptyList())
 data class NovaCreateChatBody(val characterId: String, val participantIds: List<String> = emptyList(), val scenario: String = "", val persona: String = "", val scenarioId: String? = null)
 data class NovaChatResponse(val chat: NovaChat, val greeting: String? = null)
+data class Shelf(val key: String, val title: String, val items: List<NovaCharacter> = emptyList())
+data class ShelvesResponse(val collections: List<Shelf>? = null)
+data class AuthorPage(val id: String, val displayName: String, val bio: String? = null, val followers: Int = 0, val isFollowing: Boolean = false,
+    val likes: Int = 0, val characters: List<NovaCharacter> = emptyList())
+data class CreatorTotals(val characters: Int = 0, val likes: Int = 0, val stories: Int = 0, val favorites: Int = 0)
+data class CreatorStatItem(val id: String, val name: String, val status: String? = null, val likes: Int = 0, val stories: Int = 0, val favorites: Int = 0, val comments: Int = 0)
+data class CreatorStats(val followers: Int = 0, val totals: CreatorTotals? = null, val items: List<CreatorStatItem>? = null)
 data class ChatCastBody(val participantIds: List<String>)
 data class CharacterMemoryItem(val id: String, val content: String, val pinned: Boolean = false, val source: String? = null)
 data class CharacterMemoryPage(val items: List<CharacterMemoryItem> = emptyList())
@@ -78,7 +102,8 @@ data class NovaChatMessage(
     val id: String, val role: String, val content: String,
     val createdAt: String? = null, val sequence: Int = 0, val pinned: Boolean = false,
     val alternatives: List<String>? = null, // Gson ignores Kotlin defaults: absent field stays null.
-    val speakerName: String? = null // Group chats: which character wrote the reply.
+    val speakerName: String? = null,
+    val speakerId: String? = null
 )
 data class NovaChatMessagesResponse(val items: List<NovaChatMessage> = emptyList(), val nextBefore: Int? = null)
 // Exactly one of content / regenerateMessageId is sent; Gson omits nulls.
@@ -141,6 +166,12 @@ interface NovaApi {
     @GET("v1/characters/{id}/memories") suspend fun characterMemories(@Header("Authorization") bearer: String, @Path("id") id: String): CharacterMemoryPage
     @POST("v1/characters/{id}/memories") suspend fun addCharacterMemory(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: CharacterMemoryBody)
     @DELETE("v1/characters/{id}/memories/{memoryId}") suspend fun deleteCharacterMemory(@Header("Authorization") bearer: String, @Path("id") id: String, @Path("memoryId") memoryId: String): retrofit2.Response<Unit>
+    @POST("v1/characters/assist") suspend fun assist(@Header("Authorization") bearer: String, @Body body: AssistRequest): AssistResponse
+    @POST("v1/media/avatar") suspend fun uploadAvatar(@Header("Authorization") bearer: String, @Body body: AvatarUpload): AvatarResult
+    @GET("v1/discover/recommended") suspend fun recommended(@Header("Authorization") bearer: String): CharacterPage
+    @GET("v1/discover/collections") suspend fun shelves(@Header("Authorization") bearer: String): ShelvesResponse
+    @GET("v1/creators/{id}") suspend fun author(@Header("Authorization") bearer: String, @Path("id") id: String): AuthorPage
+    @GET("v1/me/creator-stats") suspend fun creatorStats(@Header("Authorization") bearer: String): CreatorStats
     @GET("v1/characters/{id}/scenarios") suspend fun scenarios(@Header("Authorization") bearer: String, @Path("id") id: String): ScenarioPage
     @POST("v1/characters/{id}/scenarios") suspend fun addScenario(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: ScenarioBody)
     @DELETE("v1/characters/{id}/scenarios/{scenarioId}") suspend fun deleteScenario(@Header("Authorization") bearer: String, @Path("id") id: String, @Path("scenarioId") scenarioId: String): retrofit2.Response<Unit>

@@ -3,6 +3,7 @@ package ai.nova.app
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.interaction.collectIsDraggedAsState
 import androidx.compose.foundation.lazy.*
 import androidx.compose.foundation.shape.*
 import androidx.compose.material3.*
@@ -17,6 +18,9 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.Stop
 import androidx.compose.material.icons.filled.Call
+import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.ui.text.style.TextOverflow
 
 @OptIn(ExperimentalLayoutApi::class)
 /** Presentation only: all requests, streaming, persistence and charging remain in the existing model. */
@@ -26,28 +30,48 @@ import androidx.compose.material.icons.filled.Call
  var settings by remember(chat.id){mutableStateOf(false)}
  var deleting by remember{mutableStateOf(false)}
  val list=rememberLazyListState()
+ val dragging by list.interactionSource.collectIsDraggedAsState()
+ var followLatest by remember(chat.id) { mutableStateOf(true) }
+ LaunchedEffect(dragging) {
+  if (dragging) followLatest = false
+  else if (!list.canScrollForward) followLatest = true
+ }
  val voice=rememberNovaVoice()
  var call by remember(chat.id){mutableStateOf(false)}
  // Auto-read only replies that arrive while the chat is open, never the history shown on opening.
  var heardId by remember(chat.id){mutableStateOf(model.chatMessages.lastOrNull()?.id)}
  LaunchedEffect(model.chatMessages.lastOrNull()?.id){
   val last=model.chatMessages.lastOrNull()?:return@LaunchedEffect
-  if(last.id!=heardId){val prev=heardId;heardId=last.id;if(prev!=null&&!call&&voice.autoRead&&last.role!="user")voice.speak(last.id,last.content,chat.characterId,NovaLang.code)}
+  if(last.id!=heardId){val prev=heardId;heardId=last.id;if(prev!=null&&!call&&voice.autoRead&&last.role!="user")voice.speak(last.id,last.content,last.speakerId ?: chat.characterId,NovaLang.code)}
  }
  DisposableEffect(chat.id){onDispose{voice.stop()}}
- LaunchedEffect(model.chatMessages.size,model.streamingText?.length){
-  if(list.layoutInfo.totalItemsCount>0)list.scrollToItem(list.layoutInfo.totalItemsCount-1)
+ LaunchedEffect(chat.id, model.chatMessages.lastOrNull()?.id, model.streamingText?.length, followLatest) {
+  val lastItem = list.layoutInfo.totalItemsCount - 1
+  if (followLatest && lastItem >= 0) list.scrollToItem(lastItem)
  }
  Surface(color=NovaDesign.Surface){
-  Row(Modifier.fillMaxWidth().padding(horizontal=8.dp,vertical=6.dp),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(10.dp)){
-   TextButton(onClick={model.closeChat()},enabled=!model.loading,contentPadding=PaddingValues(4.dp)){Text("Назад")}
-   NovaPortrait(chat.characterId,chat.characterName?:chat.title?:"NOVA",Modifier.size(44.dp).clip(CircleShape),model.chatPortraitUrl(chat.characterId))
-   Column(Modifier.weight(1f)){
-    Text(chat.characterName?:chat.title?:"Твоя история",style=MaterialTheme.typography.titleMedium,maxLines=1)
-    Text(if(chat.participantIds.isNullOrEmpty())"Вымышленный AI-персонаж" else "Групповая сцена · персонажей: ${chat.participantIds.size+1}",style=MaterialTheme.typography.labelSmall,color=NovaDesign.Muted)
+  Row(
+   Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp),
+   verticalAlignment = Alignment.CenterVertically,
+   horizontalArrangement = Arrangement.spacedBy(4.dp),
+  ) {
+   IconButton(onClick = { model.closeChat() }, enabled = !model.loading) {
+    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = tr("Назад"))
    }
-   IconButton(onClick={voice.stop();call=true}){Icon(Icons.Default.Call,contentDescription=tr("Голосовой разговор"))}
-   TextButton(onClick={settings=true},contentPadding=PaddingValues(4.dp)){Text("Ещё")}
+   val name = chat.characterName ?: chat.title ?: "Твоя история"
+   NovaPortrait(chat.characterId, name, Modifier.size(36.dp).clip(CircleShape),
+    chat.characterAvatarUrl ?: model.chatPortraitUrl(chat.characterId))
+   Column(Modifier.weight(1f).padding(horizontal = 4.dp)) {
+    Text(name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+    Text(if (chat.participantIds.isNullOrEmpty()) "AI-персонаж" else "Группа · ${chat.participantIds.size + 1}",
+     style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+   }
+   IconButton(onClick = { voice.stop(); call = true }) {
+    Icon(Icons.Default.Call, contentDescription = tr("Голосовой разговор"))
+   }
+   IconButton(onClick = { settings = true }) {
+    Icon(Icons.Default.MoreVert, contentDescription = tr("Ещё"))
+   }
   }
  }
  LazyColumn(state=list,modifier=Modifier.weight(1f).fillMaxWidth(),contentPadding=PaddingValues(14.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
@@ -83,7 +107,7 @@ import androidx.compose.material.icons.filled.Call
     }
     FlowRow(verticalArrangement=Arrangement.Center){
      if(mine)TextButton(onClick={model.startEditMessage(message)},enabled=!model.loading){Text("Изменить",fontSize=11.sp)}
-     if(!mine)TextButton(onClick={if(voice.speakingId==message.id)voice.stop() else voice.speak(message.id,message.content,chat.characterId,NovaLang.code)},enabled=voice.ready){
+     if(!mine)TextButton(onClick={if(voice.speakingId==message.id)voice.stop() else voice.speak(message.id,message.content,message.speakerId ?: chat.characterId,NovaLang.code)},enabled=voice.ready){
       Text(if(voice.speakingId==message.id)"■ Стоп" else "▶ Слушать",fontSize=11.sp)}
      if(!mine&&model.chatMessages.lastOrNull()?.id==message.id)TextButton(onClick={model.regenerate(message)},enabled=!model.loading){Text(if(model.premiumChatSelected)"Другой ответ · ${model.aiStatus?.premiumPriceTokens?:5} ◈" else "Другой ответ",fontSize=11.sp)}
      Box{
@@ -112,9 +136,9 @@ import androidx.compose.material.icons.filled.Call
  Surface(color=NovaDesign.Surface,shadowElevation=12.dp){
   Column(Modifier.fillMaxWidth().padding(horizontal=12.dp,vertical=8.dp),verticalArrangement=Arrangement.spacedBy(6.dp)){
    if(!imeOpen)Row(Modifier.horizontalScroll(rememberScrollState()),verticalAlignment=Alignment.CenterVertically,horizontalArrangement=Arrangement.spacedBy(8.dp)){
-    FilterChip(selected=!model.premiumChatSelected,onClick={model.premiumChatSelected=false},label={Text("Обычный · бесплатно",fontSize=11.sp)})
+    FilterChip(selected=!model.premiumChatSelected,onClick={model.premiumChatSelected=false},label={Text("Бесплатно",fontSize=11.sp)})
     FilterChip(selected=model.premiumChatSelected,onClick={model.premiumChatSelected=true},enabled=model.aiStatus?.premiumConfigured==true,label={Text("Premium · ${model.aiStatus?.premiumPriceTokens?:5} ◈",fontSize=11.sp)})
-    DictationButton(model)
+    DictationButton(model, compact = true)
    }
    Row(Modifier.fillMaxWidth(),verticalAlignment=Alignment.Bottom,horizontalArrangement=Arrangement.spacedBy(8.dp)){
     OutlinedTextField(value=model.chatInput,onValueChange={model.updateChatInput(it)},label={Text("Напиши сообщение")},
@@ -122,11 +146,11 @@ import androidx.compose.material.icons.filled.Call
     val sendLabel=if(model.premiumChatSelected)"Отправить · ${model.aiStatus?.premiumPriceTokens?:5} ◈" else "Отправить бесплатно"
     if(model.streamingText!=null)FilledTonalIconButton(onClick={model.stopReply()},modifier=Modifier.size(54.dp)){
      Icon(Icons.Default.Stop,contentDescription="Остановить ответ")
-    } else FilledIconButton(onClick={keyboard?.hide();model.sendChatMessage()},enabled=!model.loading&&model.chatInput.isNotBlank(),modifier=Modifier.size(54.dp)){
+    } else FilledIconButton(onClick={followLatest=true;keyboard?.hide();model.sendChatMessage()},enabled=!model.loading&&model.chatInput.isNotBlank(),modifier=Modifier.size(54.dp)){
      Icon(Icons.AutoMirrored.Filled.Send,contentDescription=tr(sendLabel))
     }
    }
-   if(!imeOpen&&model.premiumChatSelected)Text("Premium: ${model.aiStatus?.premiumPriceTokens?:5} ◈ спишутся только за успешный ответ",style=MaterialTheme.typography.labelSmall,color=NovaDesign.Muted)
+   if(model.premiumChatSelected)Text("Premium: ${model.aiStatus?.premiumPriceTokens?:5} ◈ спишутся только за успешный ответ",style=MaterialTheme.typography.labelSmall,color=NovaDesign.Muted)
   }
  }
  if(call)VoiceCallDialog(model,voice){call=false}

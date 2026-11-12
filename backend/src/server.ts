@@ -18,6 +18,8 @@ import { registerAdminRoutes } from './adminRoutes.js';
 import { registerChatRoutes } from './chatRoutes.js';
 import { registerRewardRoutes } from './rewardRoutes.js';
 import { registerArtRoutes } from './artRoutes.js';
+import { registerDiscoverRoutes } from './discoverRoutes.js';
+import { registerCreatorRoutes } from './creatorAssist.js';
 import { seedStarterCast } from './starterCast.js';
 
 declare module 'fastify' {
@@ -271,13 +273,15 @@ app.get('/v1/ads/ssv', async (req, reply) => {
 });
 
 await registerCharacterRoutes(app, db);
-await registerChatRoutes(app, db);
+const drainChatJobs = await registerChatRoutes(app, db);
 await registerStoryRoutes(app,db);
 await registerSocialRoutes(app,db);
 await registerProductRoutes(app,db);
 await registerAdminRoutes(app,db);
 await registerRewardRoutes(app,db);
 await registerArtRoutes(app,db);
+await registerDiscoverRoutes(app,db);
+await registerCreatorRoutes(app,db);
 
 for (const [sku, tokens] of Object.entries(PRODUCT_SEED)) {
   await db.paymentProduct.upsert({ where: { sku }, create: { sku, tokens }, update: {} });
@@ -285,6 +289,6 @@ for (const [sku, tokens] of Object.entries(PRODUCT_SEED)) {
 
 await seedStarterCast(db);
 
-app.addHook('onClose',async()=>{await db.$disconnect();});
+app.addHook('onClose', async () => { await drainChatJobs(); await db.$disconnect(); });
 return app;
 }
