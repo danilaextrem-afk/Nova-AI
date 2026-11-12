@@ -54,6 +54,8 @@ internal fun CatalogScreen(model: NovaViewModel) {
         }
     }
     model.catalog.forEach { character -> key(character.id) { CharacterCard(model, character) } }
+    if (model.catalogNextCursor != null) OutlinedButton(onClick = model::loadMoreCatalog,
+        enabled = !model.loading, modifier = Modifier.fillMaxWidth()) { Text("Показать ещё") }
 }
 
 @Composable
@@ -91,6 +93,15 @@ private fun CatalogFilters(model: NovaViewModel) {
         Text(if (filtersExpanded) "Скрыть фильтры" else "Категория и тег")
     }
     if (filtersExpanded) NovaCard {
+        val categories = model.shelves.filter { it.key.startsWith("genre:") }.map { it.title }.distinct()
+        if (categories.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            categories.forEach { category ->
+                FilterChip(selected = model.catalogCategory == category, enabled = !model.loading,
+                    onClick = { model.catalogCategory = if (model.catalogCategory == category) "" else category },
+                    label = { Text(category) })
+            }
+        }
         OutlinedTextField(value = model.catalogCategory, onValueChange = { model.catalogCategory = it.take(50) },
             label = { Text("Категория") }, modifier = Modifier.fillMaxWidth(), singleLine = true)
         OutlinedTextField(value = model.catalogTag, onValueChange = { model.catalogTag = it.take(40) },

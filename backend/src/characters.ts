@@ -150,9 +150,19 @@ export async function registerCharacterRoutes(app: FastifyInstance, db: PrismaCl
     if (!params.success) return reply.code(400).send({ error: 'INVALID_ID' });
     const character = await db.character.findFirst({
       where: { id: params.data.id, ...visibleTo(req.user.sub, await showsMature(db, req.user.sub)) },
+      include: {
+        favorites: { where: { userId: req.user.sub }, select: { userId: true }, take: 1 },
+        publication: { select: {
+          id: true, status: true, likesCount: true,
+          likes: { where: { userId: req.user.sub }, select: { userId: true }, take: 1 },
+        } },
+      },
     });
     if (!character) return reply.code(404).send({ error: 'NOT_FOUND' });
-    return { character };
+    const {publication, favorites, ...card} = character;
+    return { character: {...card, isFavorite: favorites.length > 0, publication: publication?.status === 'PUBLISHED' ? {
+      id: publication.id, likesCount: publication.likesCount, likedByMe: publication.likes.length > 0,
+    } : null} };
   });
 
   app.patch('/v1/characters/:id', protectedRoute, async (req: any, reply) => {

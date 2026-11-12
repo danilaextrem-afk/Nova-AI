@@ -30,7 +30,7 @@ internal fun CharacterProfileSheet(model: NovaViewModel) {
     val entry = model.catalog.firstOrNull { it.id == c.id }
     val publication = c.publication ?: entry?.publication
     val owner = entry?.ownerId ?: c.ownerId
-    val favorite = model.favorites.any { it.id == c.id }
+    val favorite = c.isFavorite ?: model.favorites.any { it.id == c.id }
     var portraitOpen by remember(c.id) { mutableStateOf(false) }
     if (portraitOpen) Dialog(onDismissRequest = { portraitOpen = false },
         properties = DialogProperties(usePlatformDefaultWidth = false)) {
@@ -47,7 +47,7 @@ internal fun CharacterProfileSheet(model: NovaViewModel) {
     Dialog(onDismissRequest = { model.profileCharacter = null },
         properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = NovaDesign.Ink) {
-            Column(Modifier.verticalScroll(rememberScrollState()).navigationBarsPadding()) {
+            Column(Modifier.navigationBarsPadding().imePadding().verticalScroll(rememberScrollState())) {
                 Box(Modifier.fillMaxWidth().height(360.dp)) {
                     NovaPortrait(c.id, c.name, Modifier.fillMaxSize(), c.avatarUrl ?: entry?.avatarUrl)
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0x66100B18), Color.Transparent, Color(0xFA0C0B14)))))
@@ -132,13 +132,31 @@ internal fun CharacterProfileSheet(model: NovaViewModel) {
                             model.comments.forEach { cm ->
                                 NovaCard {
                                     Text(cm.user?.profile?.displayName ?: "Участник", style = MaterialTheme.typography.labelLarge)
+                                    if (cm.parentId != null) {
+                                        val name = cm.parent?.user?.profile?.displayName
+                                        Text(name?.let { "В ответ на комментарий: $it" } ?: "Ответ на комментарий",
+                                            color = NovaDesign.Lavender, style = MaterialTheme.typography.bodySmall)
+                                    }
                                     Text(cm.content + if (cm.status == "PENDING_REVIEW") " · На модерации" else "",
                                         style = MaterialTheme.typography.bodyMedium)
+                                    if (model.commentRepliesSupported && cm.parentId == null && cm.status == "PUBLISHED") {
+                                        TextButton(onClick = { model.commentReplyTo = cm }, enabled = !model.loading) { Text("Ответить") }
+                                    }
+                                }
+                            }
+                            model.commentReplyTo?.let { parent ->
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Text(parent.content, Modifier.weight(1f), maxLines = 2, overflow = TextOverflow.Ellipsis,
+                                        color = NovaDesign.Lavender, style = MaterialTheme.typography.bodySmall)
+                                    IconButton(onClick = { model.commentReplyTo = null }) {
+                                        Icon(Icons.Default.Close, contentDescription = "Отменить ответ")
+                                    }
                                 }
                             }
                             OutlinedTextField(value = model.commentInput, onValueChange = { model.commentInput = it.take(1000) },
-                                label = { Text("Комментарий") }, modifier = Modifier.fillMaxWidth(), maxLines = 4)
-                            Button(onClick = { model.sendComment() }, enabled = !model.loading && model.commentInput.isNotBlank()) { Text("Отправить комментарий") }
+                                label = { Text(if (model.commentReplyTo == null) "Комментарий" else "Ответ на комментарий") },
+                                modifier = Modifier.fillMaxWidth(), maxLines = 4)
+                            Button(onClick = { model.sendComment() }, enabled = !model.loading && model.commentInput.isNotBlank()) { Text(if (model.commentReplyTo == null) "Отправить комментарий" else "Отправить ответ") }
                         }
                     }
                     if (publication != null) ModerationActions(model, "PUBLICATION", publication.id, owner?.takeUnless { mine })

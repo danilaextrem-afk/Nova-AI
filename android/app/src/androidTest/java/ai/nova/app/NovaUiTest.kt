@@ -20,6 +20,10 @@ class NovaUiTest {
  @Volatile private var studioDraft:String?=null
  @Volatile private var sent=false
  @Volatile private var commentSent=false
+ @Volatile private var productMode=false
+ @Volatile private var replyBody:String?=null
+ private val rootComment="20000000-0000-4000-8000-000000000001"
+ private val nextCharacter="00000000-0000-4000-8000-000000000102"
  @Volatile private var regenerated=false
  @Volatile private var streamCalls=0
  @Volatile private var streamFailure=false
@@ -67,6 +71,10 @@ class NovaUiTest {
     r.path=="/v1/me" -> """{"id":"me","email":"adult@example.test","profile":{"showMature":$showMature}}"""
     r.path=="/v1/me/content-settings" -> {val b=r.body.clone().readUtf8();showMature=b.contains("\"showMature\":true")&&b.contains("\"confirmAdult\":true");"""{"showMature":$showMature}"""}
     r.path?.startsWith("/v1/characters/catalog")==true && r.path!!.contains("section=mature") -> """{"items":[{"id":"00000000-0000-4000-8000-000000000199","name":"Северина Лис","greeting":"Добрый вечер.","category":"Романтика","tags":[],"mature":true}]}"""
+    productMode && r.path?.startsWith("/v1/characters/catalog")==true && r.requestUrl?.queryParameter("cursor")==character ->
+     """{"items":[{"id":"$nextCharacter","name":"Лея Винтер","greeting":"Привет","category":"Фэнтези","tags":[]}]}"""
+    productMode && r.path?.startsWith("/v1/characters/catalog")==true ->
+     """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет","category":"Приключения","tags":[],"ownerId":"fixture-creator","publication":{"id":"fixture-publication"}}],"nextCursor":"$character"}"""
     r.path?.startsWith("/v1/characters/catalog")==true -> """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет, исследователь!","category":"Приключения","tags":[],"ownerId":"fixture-creator","publication":{"id":"fixture-publication","likesCount":0}}]}"""
     groupMode && r.path=="/v1/chats" && r.method=="GET" -> """{"items":[{"id":"$chat","characterId":"$character","title":"Аврора Вейл, Кай Номад","characterName":"Аврора Вейл","participantIds":["00000000-0000-4000-8000-000000000107"]}]}"""
     groupMode && r.path?.startsWith("/v1/chats/$chat/messages")==true && r.method=="GET" -> """{"items":[{"id":"u","role":"user","content":"Привет всем","sequence":1},{"id":"a","role":"assistant","content":"*улыбается* Рада **встрече**!","sequence":2,"speakerName":"Аврора Вейл"},{"id":"b","role":"assistant","content":"Я тоже здесь.","sequence":3,"speakerName":"Кай Номад"}]}"""
@@ -91,6 +99,13 @@ class NovaUiTest {
     r.path=="/v1/chats/$chat/messages" && regenerated -> """{"items":[{"id":"u","role":"user","content":"$userText","sequence":1},{"id":"a","role":"assistant","content":"Новая версия ответа","sequence":2,"alternatives":["Тестовый ответ сервера"]}]}"""
     r.path=="/v1/chats/$chat/messages" -> if(sent) """{"items":[{"id":"u","role":"user","content":"Привет","sequence":1},{"id":"a","role":"assistant","content":"Тестовый ответ сервера","sequence":2}]}""" else """{"items":[]}"""
     r.path=="/v1/chats/$chat/memories" -> """{"items":[]}"""
+    productMode && r.path=="/v1/publications/fixture-publication/comments" && r.method=="POST" ->
+     {replyBody=r.body.readUtf8(); "{}"}
+    productMode && r.path=="/v1/publications/fixture-publication/comments" -> {
+     val root="""{"id":"$rootComment","content":"Первый комментарий","status":"PUBLISHED","user":{"profile":{"displayName":"Автор истории"}}}"""
+     val extra=if(replyBody!=null) """,{"id":"reply","parentId":"$rootComment","content":"Хочу продолжение","status":"PENDING_REVIEW"}""" else ""
+     """{"repliesSupported":true,"items":[$root$extra]}"""
+    }
     r.path=="/v1/publications/fixture-publication/comments" && r.method=="POST" -> {commentSent=true;"{}"}
     r.path=="/v1/publications/fixture-publication/comments" -> if(commentSent) """{"items":[{"id":"comment","content":"Интересная история","status":"PENDING_REVIEW"}]}""" else """{"items":[]}"""
     r.path=="/v1/auth/logout" -> "{}"
@@ -217,6 +232,32 @@ class NovaUiTest {
   compose.waitUntil(20000){compose.onAllNodesWithText("Интересная история · На модерации").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Интересная история · На модерации").reveal().assertExists()
   screenshot("04-comment-pending")
+ }
+ @Test fun productCatalogPaginatesAndRepliesToTheSelectedComment(){
+  productMode=true
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  waitFor("recent stories"){compose.onAllNodesWithText("Продолжить историю").fetchSemanticsNodes().isNotEmpty()}
+  screenshot("34-product-home")
+  compose.onNodeWithText("Каталог").performClick()
+  clickWhenEnabled("Показать ещё")
+  waitFor("next catalog page"){compose.onAllNodesWithText("Лея Винтер").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Лея Винтер").reveal()
+  screenshot("35-catalog-pagination")
+  val profiles=compose.onAllNodes(hasText("Полный профиль") and isEnabled())
+  profiles[0].reveal().performClick()
+  clickWhenEnabled("Открыть портрет")
+  clickWhenEnabled("Закрыть портрет")
+  clickWhenEnabled("Обсуждение")
+  clickWhenEnabled("Ответить")
+  compose.onNodeWithText("Ответ на комментарий").reveal().performTextInput("Хочу продолжение")
+  clickWhenEnabled("Отправить ответ")
+  waitFor("published reply draft"){compose.onAllNodesWithText("Хочу продолжение · На модерации").fetchSemanticsNodes().isNotEmpty()}
+  val request=com.google.gson.JsonParser.parseString(replyBody).asJsonObject
+  assertEquals(rootComment,request.get("parentId").asString)
+  compose.onNodeWithText("Хочу продолжение · На модерации").reveal()
+  screenshot("36-product-reply")
  }
  @Test fun sessionStoreEncryptsAndReadsAcrossInstances(){
   val a=SessionStore(compose.activity);a.put("secret-test","never-plaintext-123")

@@ -31,6 +31,9 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     var adultConfirmed by mutableStateOf(false)
     var comments by mutableStateOf<List<SocialComment>>(emptyList())
     var commentInput by mutableStateOf("")
+    var commentReplyTo by mutableStateOf<SocialComment?>(null)
+    var commentRepliesSupported by mutableStateOf(false)
+        private set
     var selectedPublication by mutableStateOf<String?>(null)
     var favorites by mutableStateOf<List<NovaCharacter>>(emptyList())
     var memories by mutableStateOf<List<MemoryItem>>(emptyList())
@@ -342,6 +345,13 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var catalogFailed by mutableStateOf(false)
         private set
+    var catalogNextCursor by mutableStateOf<String?>(null)
+        private set
+
+    private data class CatalogFilter(
+        val query: String?, val category: String?, val tag: String?, val sort: String, val section: String
+    )
+    private var loadedCatalogFilter: CatalogFilter? = null
 
     internal fun selectCatalogView(view: CatalogView) {
         if (catalogView != view) catalog = emptyList()
@@ -349,24 +359,38 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         refreshCatalog()
     }
 
-    fun refreshCatalog() {
+    fun refreshCatalog() = fetchCatalog(append = false)
+    fun loadMoreCatalog() = fetchCatalog(append = true)
+
+    private fun fetchCatalog(append: Boolean) {
+        val cursor = if (append) catalogNextCursor ?: return else null
+        val filter = if (append) loadedCatalogFilter ?: return else CatalogFilter(
+            catalogQuery.trim().ifEmpty { null },
+            catalogCategory.trim().ifEmpty { null },
+            catalogTag.trim().ifEmpty { null },
+            catalogSort,
+            if (matureSection && showMature) "mature" else "general"
+        )
         execute {
+            if (!append) catalogNextCursor = null
             catalogFailed = false
             try {
                 val api = service()
                 val bearer = authorization()
-                catalog = when (catalogView) {
-                    CatalogView.PUBLIC -> api.catalog(
-                        bearer = bearer,
-                        query = catalogQuery.trim().ifEmpty { null },
-                        category = catalogCategory.trim().ifEmpty { null },
-                        tag = catalogTag.trim().ifEmpty { null },
-                        sort = catalogSort,
-                        section = if (matureSection && showMature) "mature" else "general"
-                    ).items
-                    CatalogView.FAVORITES -> api.favorites(bearer).items.map { it.character }.also { favorites = it }
-                    CatalogView.FOLLOWING -> api.following(bearer).items
+                val page = when (catalogView) {
+                    CatalogView.PUBLIC -> api.catalog(bearer, filter.query, filter.category, filter.tag, filter.sort,
+                        filter.section, cursor)
+                    CatalogView.FAVORITES -> api.favorites(bearer, cursor).let { page ->
+                        CharacterPage(page.items.map { it.character }, page.nextCursor)
+                    }
+                    CatalogView.FOLLOWING -> api.following(bearer).let { page ->
+                        page.copy(items = page.items.filter { showMature || !it.mature })
+                    }
                 }
+                catalog = if (append) (catalog + page.items).distinctBy { it.id } else page.items
+                if (catalogView == CatalogView.FAVORITES) favorites = catalog
+                catalogNextCursor = page.nextCursor?.takeUnless { it == cursor }
+                loadedCatalogFilter = filter
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (e: HttpException) {
@@ -424,13 +448,17 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         selectedPublication = null
         comments = emptyList()
         commentInput = ""
+        commentReplyTo = null
+        commentRepliesSupported = false
         scenarios = emptyList()
-        try {
-            favorites = api.favorites(bearer).items.map { it.character }
-        } catch (cancelled: CancellationException) {
-            throw cancelled
-        } catch (_: Exception) {
-            // Keep the last server-confirmed favorite state when this optional request fails.
+        if (character.isFavorite == null) {
+            try {
+                favorites = api.favorites(bearer).items.map { it.character }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                // Keep the last server-confirmed favorite state when this optional request fails.
+            }
         }
         profileCharacter = character
     }
@@ -846,6 +874,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     fun addFavorite(id: String) {
         execute {
             service().addFavorite(authorization(), id)
+            profileCharacter?.takeIf { it.id == id }?.let { profileCharacter = it.copy(isFavorite = true) }
             (profileCharacter?.takeIf { it.id == id } ?: catalog.firstOrNull { it.id == id })?.let { character ->
                 favorites = (favorites + character).distinctBy { it.id }
             }
@@ -969,6 +998,8 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         catalog = emptyList()
         catalogView = CatalogView.PUBLIC
         catalogFailed = false
+        catalogNextCursor = null
+        loadedCatalogFilter = null
         catalogQuery = ""
         catalogCategory = ""
         catalogTag = ""
@@ -1002,6 +1033,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     fun removeFavorite(id: String) { execute {
         service().removeFavorite(authorization(), id)
         favorites = favorites.filterNot { it.id == id }
+        profileCharacter?.takeIf { it.id == id }?.let { profileCharacter = it.copy(isFavorite = false) }
         if (catalogView == CatalogView.FAVORITES) catalog = catalog.filterNot { it.id == id }
         notification = "Персонаж убран из избранного"
     } }
@@ -1126,14 +1158,15 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     } }
 
     private var likedPublications by mutableStateOf<Set<String>>(emptySet())
-    fun isPublicationLiked(id: String) = id in likedPublications
+    fun isPublicationLiked(id: String): Boolean =
+        id in likedPublications || profileCharacter?.publication?.takeIf { it.id == id }?.likedByMe == true
 
     fun like(id: String) { execute {
         val api = service()
         val bearer = authorization()
         api.like(bearer, id)
         likedPublications = likedPublications + id
-        profileCharacter?.takeIf { it.publication?.id == id }?.let { character ->
+        profileCharacter?.let { character ->
             val updated = api.character(bearer, character.id).character
             if (profileCharacter?.id == character.id) profileCharacter = updated
         }
@@ -1156,8 +1189,28 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         notification = "Автор заблокирован"
     } }
 
-    fun openComments(id:String) {execute {selectedPublication=id;comments=service().comments(authorization(),id).items} }
-    fun sendComment() {val id=selectedPublication?:return;execute {service().comment(authorization(),id,mapOf("content" to commentInput));commentInput="";comments=service().comments(authorization(),id).items;notification="Комментарий отправлен на модерацию"} }
+    fun openComments(id: String) { execute {
+        val page = service().comments(authorization(), id)
+        selectedPublication = id
+        comments = page.items
+        commentRepliesSupported = page.repliesSupported
+    } }
+
+    fun sendComment() {
+        val publicationId = selectedPublication ?: return
+        val content = commentInput.trim().take(1000)
+        if (content.isEmpty()) return
+        val parentId = commentReplyTo?.id?.takeIf { commentRepliesSupported }
+        execute {
+            val api = service()
+            val bearer = authorization()
+            api.comment(bearer, publicationId, CommentRequest(content, parentId))
+            commentInput = ""
+            commentReplyTo = null
+            comments = api.comments(bearer, publicationId).items
+            notification = "Комментарий отправлен на модерацию"
+        }
+    }
     fun fictionalScene(kind:String) {updateChatInput("Напиши $kind нашего персонажа. Начни с пометки «Вымышленная сцена». Это художественное произведение, а не реальные мысли или данные человека.");sendChatMessage()}
 
 }

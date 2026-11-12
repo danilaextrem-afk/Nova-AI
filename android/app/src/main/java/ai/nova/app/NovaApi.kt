@@ -35,6 +35,7 @@ data class NovaCharacter(
     val scenario: String? = null, val language: String = "ru", val ownerId: String? = null, val publication: PublicationInfo? = null,
     val mature: Boolean = false,
     val age: Int? = null, val gender: String? = null, val traits: List<String>? = null,
+    val isFavorite: Boolean? = null,
     val reason: String? = null // Recommendation feed: TASTE | NEW | POPULAR
 )
 /** Smart creator: the current card is sent as context; the server returns a suggestion and never saves it. */
@@ -126,11 +127,16 @@ data class NovaAiStatus(
     val tokenBalance: Int = 0
 )
 
-data class PublicationInfo(val id: String, val likesCount: Int = 0)
+data class PublicationInfo(val id: String, val likesCount: Int = 0, val likedByMe: Boolean? = null)
 data class CommentProfile(val displayName: String? = null)
 data class CommentUser(val profile: CommentProfile? = null)
-data class SocialComment(val id: String, val content: String, val status: String, val user: CommentUser? = null)
-data class CommentPage(val items: List<SocialComment> = emptyList())
+data class CommentParent(val user: CommentUser? = null)
+data class SocialComment(
+    val id: String, val content: String, val status: String, val user: CommentUser? = null,
+    val parentId: String? = null, val parent: CommentParent? = null
+)
+data class CommentPage(val items: List<SocialComment> = emptyList(), val repliesSupported: Boolean = false)
+data class CommentRequest(val content: String, val parentId: String? = null)
 data class RefreshBody(val refreshToken: String)
 data class MemoryItem(val id: String, val content: String, val kind: String, val pinned: Boolean = false, val source: String? = null)
 data class MemoryPage(val items: List<MemoryItem> = emptyList())
@@ -138,7 +144,7 @@ data class MemoryBody(val content: String, val kind: String = "FACT", val pinned
 data class BranchBody(val messageId: String, val title: String = "Новая ветка")
 data class ChatSettings(val persona: String, val scenario: String, val responseStyle: String, val tone: String)
 data class FavoriteEntry(val character: NovaCharacter)
-data class FavoritePage(val items: List<FavoriteEntry> = emptyList())
+data class FavoritePage(val items: List<FavoriteEntry> = emptyList(), val nextCursor: String? = null)
 data class NovaNotification(val id: String, val title: String, val body: String, val readAt: String?)
 data class NotificationPage(val items: List<NovaNotification> = emptyList())
 data class ReportBody(val targetType: String, val targetId: String, val reason: String)
@@ -162,7 +168,10 @@ interface NovaApi {
     @retrofit2.http.PATCH("v1/characters/{id}") suspend fun editCharacter(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: CharacterDraft)
     @POST("v1/characters/{id}/publish") suspend fun publish(@Header("Authorization") bearer: String, @Path("id") id: String)
     @POST("v1/characters/{id}/clone") suspend fun clone(@Header("Authorization") bearer: String, @Path("id") id: String): CreatedCharacter
-    @GET("v1/characters/favorites") suspend fun favorites(@Header("Authorization") bearer: String): FavoritePage
+    @GET("v1/characters/favorites") suspend fun favorites(
+        @Header("Authorization") bearer: String,
+        @Query("cursor") cursor: String? = null
+    ): FavoritePage
     @DELETE("v1/characters/{id}/favorite") suspend fun removeFavorite(@Header("Authorization") bearer: String, @Path("id") id: String): FavoriteResult
     @retrofit2.http.PATCH("v1/chats/{id}") suspend fun saveCast(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: ChatCastBody)
     @GET("v1/characters/{id}/memories") suspend fun characterMemories(@Header("Authorization") bearer: String, @Path("id") id: String): CharacterMemoryPage
@@ -206,7 +215,8 @@ interface NovaApi {
         @Query("category") category: String? = null,
         @Query("tag") tag: String? = null,
         @Query("sort") sort: String = "recent",
-        @Query("section") section: String = "general"
+        @Query("section") section: String = "general",
+        @Query("cursor") cursor: String? = null
     ): CharacterPage
 
     @GET("v1/characters/mine")
