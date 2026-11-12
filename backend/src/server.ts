@@ -101,13 +101,31 @@ app.post('/v1/auth/register', { config: { rateLimit: { max: 10, timeWindow: '1 m
   return issueTokens(user.id);
 });
 
+// Per-account brute-force guard (the IP limit alone does not stop a distributed attack on one account):
+// 8 failed attempts per email within 15 minutes lock that email's login for the rest of the window.
+const failedLogins = new Map<string, { count: number; until: number }>();
+const LOGIN_WINDOW_MS = 15 * 60_000, LOGIN_MAX_FAILURES = 8;
+// Unknown emails still run one argon2 verification so response timing does not reveal registered accounts.
+const dummyHash = await argon2.hash(randomBytes(16).toString('hex'), { type: argon2.argon2id });
 app.post('/v1/auth/login', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
   const body = creds.safeParse(req.body);
   if (!body.success) return reply.code(400).send({ error: 'INVALID_INPUT' });
-  const user = await db.user.findUnique({ where: { email: body.data.email.toLowerCase() } });
-  if (!user || user.status !== 'ACTIVE' || !(await argon2.verify(user.passwordHash, body.data.password))) {
+  const email = body.data.email.toLowerCase();
+  const now = Date.now();
+  const entry = failedLogins.get(email);
+  if (entry && entry.until > now && entry.count >= LOGIN_MAX_FAILURES) {
+    reply.header('Retry-After', Math.ceil((entry.until - now) / 1000));
+    return reply.code(429).send({ error: 'TOO_MANY_LOGIN_ATTEMPTS' });
+  }
+  const user = await db.user.findUnique({ where: { email } });
+  const valid = await argon2.verify(user?.passwordHash ?? dummyHash, body.data.password).catch(() => false);
+  if (!user || user.status !== 'ACTIVE' || !valid) {
+    const current = entry && entry.until > now ? entry : { count: 0, until: now + LOGIN_WINDOW_MS };
+    current.count++; failedLogins.set(email, current);
+    if (failedLogins.size > 50_000) for (const [k, v] of failedLogins) if (v.until <= now) failedLogins.delete(k);
     return reply.code(401).send({ error: 'INVALID_CREDENTIALS' });
   }
+  failedLogins.delete(email);
   return issueTokens(user.id);
 });
 

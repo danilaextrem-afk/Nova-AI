@@ -231,7 +231,14 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             val api = service()
             if (createAccount && !adultConfirmed) throw IllegalArgumentException("Подтверди, что тебе исполнилось 18 лет")
             val credentials = Credentials(email.trim(), password, adultConfirmed)
-            val result = if (createAccount) api.register(credentials) else api.login(credentials)
+            val result = try { if (createAccount) api.register(credentials) else api.login(credentials) } catch (e: HttpException) {
+                throw IllegalStateException(when (e.code()) {
+                    401 -> "Неверный email или пароль"
+                    409 -> "Этот email уже зарегистрирован — войди в аккаунт"
+                    429 -> "Слишком много попыток входа. Подожди 15 минут и попробуй снова."
+                    else -> "Не удалось войти: HTTP " + e.code()
+                })
+            }
             accessToken = result.accessToken
             store.put("access", result.accessToken); store.put("refresh", result.refreshToken)
             store.put("server", serverUrl); store.put("email", email)

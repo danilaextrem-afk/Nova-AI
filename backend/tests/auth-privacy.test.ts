@@ -39,3 +39,14 @@ it('rejects unsigned and expired JWTs, including tokens with no issued-at claim'
  const unsigned=b64({alg:'none'})+'.'+b64({sub:userId,exp:9999999999})+'.';
  for(const token of [signed,unsigned])expect((await app.inject({url:'/v1/me',headers:{authorization:'Bearer '+token}})).statusCode).toBe(401);
 });
+it('locks one account after repeated wrong passwords without affecting the correct owner later, and hides unknown emails',async()=>{
+ const email=randomUUID()+'@test.invalid';
+ const reg=await app.inject({method:'POST',url:'/v1/auth/register',payload:{email,password:'right-password-123',adultConfirmed:true}});expect(reg.statusCode).toBe(200);
+ const created=(await db.user.findUnique({where:{email}}))!.id;
+ const unknown=await app.inject({method:'POST',url:'/v1/auth/login',payload:{email:randomUUID()+'@test.invalid',password:'whatever-123456'}});
+ expect(unknown.statusCode).toBe(401);expect(unknown.json().error).toBe('INVALID_CREDENTIALS');
+ for(let i=0;i<8;i++){const r=await app.inject({method:'POST',url:'/v1/auth/login',payload:{email,password:'wrong-password-'+i},remoteAddress:'198.51.100.'+i});expect(r.statusCode).toBe(401);}
+ const locked=await app.inject({method:'POST',url:'/v1/auth/login',payload:{email,password:'right-password-123'},remoteAddress:'203.0.113.9'});
+ expect(locked.statusCode).toBe(429);expect(locked.json().error).toBe('TOO_MANY_LOGIN_ATTEMPTS');
+ await db.user.delete({where:{id:created}});
+});
