@@ -30,6 +30,31 @@ it('rotates a refresh token once and revokes the family on concurrent reuse',asy
  const good=results.find(x=>x.statusCode===200)!.json();
  const reused=await app.inject({method:'POST',url:'/v1/auth/refresh',payload:{refreshToken:good.refreshToken}});expect(reused.statusCode).toBe(401);
 });
+// A real session row plus its access token, as sign-in issues them (no /login call: that route is rate limited).
+async function newSession(){
+ const {createHash,randomBytes}=await import('node:crypto');
+ const refreshToken=randomBytes(48).toString('base64url'),familyId=randomUUID();
+ await db.session.create({data:{userId,familyId,refreshTokenHash:createHash('sha256').update(refreshToken).digest('hex'),expiresAt:new Date(Date.now()+86400000)}});
+ return {accessToken:app.jwt.sign({sub:userId,fam:familyId}),refreshToken};
+}
+it('revokes the access token of a family as soon as its refresh token is reused',async()=>{
+ // The rotation test above reused a refresh token, which revoked that whole sign-in family.
+ expect((await app.inject({url:'/v1/me',headers:{authorization:'Bearer '+tokens.accessToken}})).statusCode).toBe(401);
+ tokens=await newSession();
+ expect((await app.inject({url:'/v1/me',headers:{authorization:'Bearer '+tokens.accessToken}})).statusCode).toBe(200);
+});
+it('logout ends every session at once: access tokens and refresh tokens stop working',async()=>{
+ const phone=await newSession(),tablet=await newSession();
+ const refreshed=(await app.inject({method:'POST',url:'/v1/auth/refresh',payload:{refreshToken:phone.refreshToken}})).json();
+ expect((await app.inject({url:'/v1/me',headers:{authorization:'Bearer '+refreshed.accessToken}})).statusCode).toBe(200);
+ expect((await app.inject({method:'POST',url:'/v1/auth/logout',headers:{authorization:'Bearer '+refreshed.accessToken}})).statusCode).toBe(200);
+ for(const token of [refreshed.accessToken,tablet.accessToken,tokens.accessToken])
+  expect((await app.inject({url:'/v1/wallet',headers:{authorization:'Bearer '+token}})).statusCode).toBe(401);
+ for(const refreshToken of [refreshed.refreshToken,tablet.refreshToken])
+  expect((await app.inject({method:'POST',url:'/v1/auth/refresh',payload:{refreshToken}})).statusCode).toBe(401);
+ tokens=await newSession();
+ expect((await app.inject({url:'/v1/wallet',headers:{authorization:'Bearer '+tokens.accessToken}})).statusCode).toBe(200);
+});
 it('does not expose secrets in data export and rejects a blocked user access token',async()=>{
  const result=await app.inject({url:'/v1/me/export',headers:{authorization:'Bearer '+tokens.accessToken}});
  expect(result.statusCode).toBe(200);expect(result.body).not.toContain('passwordHash');expect(result.body).not.toContain('refreshToken');
