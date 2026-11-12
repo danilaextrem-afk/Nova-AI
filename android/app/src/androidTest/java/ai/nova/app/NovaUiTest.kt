@@ -98,10 +98,15 @@ class NovaUiTest {
   }
  }
  private fun SemanticsNodeInteraction.reveal():SemanticsNodeInteraction {
-  try { performScrollTo() } catch (e:AssertionError) {
-   try { assertIsDisplayed() } catch (e2:AssertionError) { screenshot("failure-not-displayed"); throw AssertionError("Not displayed: "+runCatching{fetchSemanticsNode().config.toString()}.getOrDefault("?"),e2) }
+  // A screen may still be re-laying out after a background refresh, so retry briefly before failing.
+  var last:AssertionError?=null
+  repeat(10){
+   try { performScrollTo(); return this } catch (e:AssertionError) {
+    try { assertIsDisplayed(); return this } catch (e2:AssertionError) { last=e2 }
+   }
+   compose.waitForIdle();Thread.sleep(500)
   }
-  return this
+  screenshot("failure-not-displayed"); throw AssertionError("Not displayed: "+runCatching{fetchSemanticsNode().config.toString()}.getOrDefault("?"),last)
  }
  private fun clickWhenEnabled(text:String){
   // Matches a visible label or an icon button's accessible name (e.g. the round send button).
