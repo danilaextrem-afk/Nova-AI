@@ -277,7 +277,7 @@ fun CharacterEditor(model: NovaViewModel) {
         modifier = Modifier.fillMaxWidth().height(56.dp), shape = RoundedCornerShape(28.dp)) {
         Text(if (model.editingCharacterId == null) "✨ Создать персонажа" else "Сохранить изменения", fontWeight = FontWeight.SemiBold)
     }
-    if (missing.isNotEmpty()) androidx.compose.material3.Text(tr("Осталось заполнить: ") + missing.joinToString(", ") { tr(it) }, style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted)
+    if (missing.isNotEmpty() && model.lastCreated == null) androidx.compose.material3.Text(tr("Осталось заполнить: ") + missing.joinToString(", ") { tr(it) }, style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted)
     Text("После сохранения персонаж личный. Чтобы он появился в каталоге, отправь его на модерацию.", style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted)
     if (model.draftHasContent) TextButton(onClick = { model.clearDraft() }) { Text("Очистить черновик") }
     // Shown right under the save button, where the person is looking after tapping it.
