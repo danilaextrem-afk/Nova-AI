@@ -400,4 +400,8 @@ private val EN: Map<String, String> = mapOf(
     "Настройки истории сохранены" to "Story settings saved", "Жалоба отправлена" to "Report sent", "Новый Premium-ответ готов" to "New Premium reply ready",
     "Новый ответ готов" to "New reply ready", "Обращение сохранено" to "Message saved", "Подписка сохранена" to "Following",
     "Подписка отменена" to "Unfollowed", "Отметка сохранена" to "Saved", "Комментарий отправлен на модерацию" to "Comment sent for review",
+    "В телефоне не установлен русский голос. Установи его в настройках синтеза речи." to "No Russian voice is installed on this phone. Install one in the text-to-speech settings.",
+    "В телефоне не установлен английский голос. Установи его в настройках синтеза речи." to "No English voice is installed on this phone. Install one in the text-to-speech settings.",
+    "Не удалось озвучить ответ" to "Could not read the reply aloud", "Голосовой движок телефона ещё не готов" to "The phone's speech engine is not ready yet",
+    "Установить голос" to "Install voice", "Голос недоступен" to "Voice unavailable",
 )
