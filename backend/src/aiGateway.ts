@@ -82,7 +82,8 @@ export function aiSettings(tier: AiTier = 'free') {
 export const premiumReady = () => modelPool('premium').some(p =>
   !modelPool('free').some(f => p.model === f.model && p.provider === f.provider));
 /** Request for one provider. Gemini uses its native generateContent API; the rest are OpenAI-compatible. */
-export function providerRequest(m:Pick<ModelConfig,'provider'|'model'>,messages:AiMessage[],streaming:boolean,maxOutput:number){
+export function providerRequest(m:Pick<ModelConfig,'provider'|'model'>,messages:AiMessage[],streaming:boolean,maxOutput:number):
+  {url:string;headers:Record<string,string>;body:Record<string,unknown>}{
   const p=providers[m.provider];const key=process.env[p.keyEnv]||'';
   if(m.provider==='gemini'){
     const system=messages.filter(x=>x.role==='system').map(x=>x.content).join('\n\n');
@@ -97,7 +98,7 @@ export function providerRequest(m:Pick<ModelConfig,'provider'|'model'>,messages:
       body:{...(system?{systemInstruction:{parts:[{text:system}]}}:{}),contents,generationConfig:{temperature:0.8,maxOutputTokens:maxOutput+1024}}};
   }
   return {url:p.base+'/chat/completions',
-    headers:{Authorization:'Bearer '+key,'Content-Type':'application/json',...(m.provider==='openrouter'?{'X-Title':'NOVA AI'}:{})},
+    headers:{Authorization:'Bearer '+key,'Content-Type':'application/json',...(m.provider==='openrouter'?{'X-Title':'NOVA AI'}:{} as Record<string,string>)},
     body:{model:m.model,messages,stream:streaming,temperature:0.8,max_tokens:maxOutput,
       ...(streaming?{stream_options:{include_usage:true}}:{}),...(m.provider==='openrouter'?{provider:{data_collection:'deny'}}:{})}};
 }
