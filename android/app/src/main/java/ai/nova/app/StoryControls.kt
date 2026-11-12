@@ -45,7 +45,7 @@ import java.util.Locale
         OutlinedTextField(value=model.playerPersona,onValueChange={model.playerPersona=it},label={Text("Имя, роль и факты о герое")},modifier=Modifier.fillMaxWidth())
         OutlinedTextField(value=model.storyScenario,onValueChange={model.storyScenario=it},label={Text("Сценарий / мир")},modifier=Modifier.fillMaxWidth())
         Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
-            listOf("concise" to "Кратко","balanced" to "Сбалансированно","story" to "Подробно").forEach {(value,label)->FilterChip(selected=model.responseStyle==value,onClick={model.responseStyle=value},label={Text(label)})}
+            listOf("concise" to "Кратко","balanced" to "Обычно","detailed" to "Подробно","story" to "Сюжет").forEach {(value,label)->FilterChip(selected=model.responseStyle==value,onClick={model.responseStyle=value},label={Text(label)})}
         }
         Row(Modifier.horizontalScroll(rememberScrollState()),horizontalArrangement=Arrangement.spacedBy(6.dp)) {
             listOf("friendly" to "Дружелюбно","dramatic" to "Драматично","humorous" to "С юмором","calm" to "Спокойно").forEach {(value,label)->FilterChip(selected=model.storyTone==value,onClick={model.storyTone=value},label={Text(label)})}

@@ -202,6 +202,7 @@ export async function registerCharacterRoutes(app: FastifyInstance, db: PrismaCl
         personality: source.personality, interests: source.interests,
         backstory: source.backstory, speechStyle: source.speechStyle,
         scenario: source.scenario, avatarUrl: source.avatarUrl,
+        age: source.age, gender: source.gender, traits: source.traits, mature: source.mature,
         isHidden: true, isLibrary: false,
       },
     });

@@ -3,7 +3,7 @@ package ai.nova.app
 data class StudioHero(val key:Int,val name:String,val age:Int,val category:String,val biography:String,val personality:String,val greeting:String) {
  val id get()="studio-$key"
  val portraitUrl get()=StudioCast.assetBase+"/$key.webp"
- fun draft()=CharacterDraft(name=name,greeting=greeting,category=category,tags=listOf("NOVA Originals","18+", "studio-$key"),biography="$age лет. $biography",personality=personality,appearance="Оригинальная вымышленная совершеннолетняя женщина, $age лет.",scenario="Современная художественная история. Все участники совершеннолетние. Без откровенного сексуального контента.",avatarUrl=portraitUrl,mature=true)
+ fun draft()=CharacterDraft(name=name,greeting=greeting,category=category,tags=listOf("NOVA Originals","18+", "studio-$key"),biography="$age лет. $biography",personality=personality,appearance="Оригинальная вымышленная совершеннолетняя женщина, $age лет.",scenario="Современная художественная история. Все участники совершеннолетние. Без откровенного сексуального контента.",avatarUrl=portraitUrl,mature=true,age=age,gender="female")
 }
 object StudioCast {
  const val assetBase="https://raw.githubusercontent.com/danilaextrem-afk/Nova-AI/473668cfc02fcbb98de73f06a35b31926a9be44c/android/app/src/main/assets/portraits"

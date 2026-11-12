@@ -67,7 +67,7 @@ describe('PostgreSQL router and persisted chat invariants (HTTP fixtures, not li
  it('scopes editable pinned memories to the caller and branch timeline',async()=>{
   const r=await app.inject({method:'POST',url:`/v1/chats/${chatId}/memories`,headers:auth(),payload:{content:'Маяк на острове',pinned:true}});expect(r.statusCode).toBe(200);
   const id=r.json().memory.id;const denied=await app.inject({method:'DELETE',url:`/v1/chats/${chatId}/memories/${id}`,headers:auth(other)});expect(denied.statusCode).toBe(404);
-  vi.stubGlobal('fetch',vi.fn(async(_url:string,init:any)=>{expect(JSON.parse(init.body).messages[0].content).toContain('Маяк на острове');return ok()}));
+  vi.stubGlobal('fetch',vi.fn(async(_url:string,init:any)=>{expect(JSON.parse(init.body).messages[1].content).toContain('Маяк на острове');return ok()}));
   const answer=await send('Где маяк?');const branch=await app.inject({method:'POST',url:`/v1/chats/${chatId}/branch`,headers:auth(),payload:{messageId:answer.json().assistantMessage.id}});
   expect(branch.statusCode,branch.body).toBe(201);expect(branch.json().chat.id).not.toBe(chatId);
   const copied=await db.memory.findMany({where:{chatId:branch.json().chat.id}});expect(copied.map(x=>x.content)).toContain('Маяк на острове');

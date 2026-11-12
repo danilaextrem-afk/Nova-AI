@@ -128,10 +128,11 @@ export async function seedStarterCast(db: PrismaClient) {
   });
   for (const entry of STARTER_CAST) {
     const { id, gender, avatarStyle, tags, ...data } = entry;
+    const canonicalGender = gender === 'woman' ? 'female' : 'male';
     await db.character.upsert({
       where: { id },
-      create: { id, ...data, tags: [...tags], ownerId: system.id, isLibrary: true, isHidden: false },
-      update: {},
+      create: { id, ...data, gender: canonicalGender, tags: [...tags], ownerId: system.id, isLibrary: true, isHidden: false },
+      update: { gender: canonicalGender },
     });
     await db.publication.upsert({
       where: { characterId: id },

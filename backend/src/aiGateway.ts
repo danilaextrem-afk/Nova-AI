@@ -92,7 +92,7 @@ export function aiSettings(tier: AiTier = 'free') {
 export const premiumReady = () => modelPool('premium').some(p =>
   !modelPool('free').some(f => p.model === f.model && p.provider === f.provider));
 /** Request for one provider. Gemini uses its native generateContent API; the rest are OpenAI-compatible. */
-export function providerRequest(m:Pick<ModelConfig,'provider'|'model'>,messages:AiMessage[],streaming:boolean,maxOutput:number):
+export function providerRequest(m:Pick<ModelConfig,'provider'|'model'>,messages:AiMessage[],streaming:boolean,maxOutput:number,temperature=0.8):
   {url:string;headers:Record<string,string>;body:Record<string,unknown>}{
   const p=providers[m.provider];const key=process.env[p.keyEnv]||'';
   if(m.provider==='gemini'){
@@ -105,12 +105,12 @@ export function providerRequest(m:Pick<ModelConfig,'provider'|'model'>,messages:
     return {url:`${p.base}/models/${encodeURIComponent(m.model)}:${streaming?'streamGenerateContent?alt=sse':'generateContent'}`,
       headers:{'x-goog-api-key':key,'Content-Type':'application/json'},
       // Extra output room: thinking models spend part of the budget before the visible answer.
-      body:{...(system?{systemInstruction:{parts:[{text:system}]}}:{}),contents,generationConfig:{temperature:0.8,maxOutputTokens:maxOutput+1024}}};
+      body:{...(system?{systemInstruction:{parts:[{text:system}]}}:{}),contents,generationConfig:{temperature,maxOutputTokens:maxOutput+1024}}};
   }
   const base=m.provider==='cloudflare'?`${p.base}/${process.env.CLOUDFLARE_ACCOUNT_ID}/ai/v1`:p.base;
   return {url:base+'/chat/completions',
     headers:{Authorization:'Bearer '+key,'Content-Type':'application/json',...(m.provider==='openrouter'?{'X-Title':'NOVA AI'}:{} as Record<string,string>)},
-    body:{model:m.model,messages,stream:streaming,temperature:0.8,max_tokens:maxOutput,
+    body:{model:m.model,messages,stream:streaming,temperature,max_tokens:maxOutput,
       ...(streaming?{stream_options:{include_usage:true}}:{}),...(m.provider==='openrouter'?{provider:{data_collection:'deny'}}:{})}};
 }
 /** Maps a Gemini response or stream chunk onto the OpenAI-compatible shape the gateway already parses. */
@@ -152,7 +152,7 @@ const micros = (m:ModelConfig, input:number, output:number) => Math.ceil(input*m
 
 // Shared database reservations enforce provider quotas/budgets across server replicas.
 // Token estimation uses UTF-8 bytes as a conservative upper bound; includes output reservation.
-export type AiStreamOptions = { onDelta?: (text:string)=>void; signal?: AbortSignal; maxOutput?: number };
+export type AiStreamOptions = { onDelta?: (text:string)=>void; signal?: AbortSignal; maxOutput?: number; temperature?: number };
 export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', db?:PrismaClient, requestId?:string, opts:AiStreamOptions={}):Promise<AiCompletion> {
   const models = modelPool(tier).filter(m => tier !== 'premium' || !modelPool('free').some(f=>m.model===f.model&&m.provider===f.provider));
   if (!models.length) throw new AiProviderError('AI_NOT_CONFIGURED',503);
@@ -194,7 +194,7 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
       let retry=0; let code='AI_UPSTREAM_ERROR'; let status=502; let certainNoCharge=false; let emitted=false;
       const streaming=!!opts.onDelta;
       try {
-        const req=providerRequest(m,messages,streaming,maxOutput);
+        const req=providerRequest(m,messages,streaming,maxOutput,opts.temperature);
         const response=await fetch(req.url,{
           method:'POST',headers:req.headers,body:JSON.stringify(req.body),
           signal:AbortSignal.any([AbortSignal.timeout(Math.min(streaming?60000:30000,Math.max(1000,deadline-Date.now()))),

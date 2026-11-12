@@ -114,7 +114,7 @@ describe('Avatars and the finished character',()=>{
   const calls=provider('Я Рина, мне двадцать семь.');
   const r=await app.inject({method:'POST',url:`/v1/chats/${chat.id}/messages`,headers:headers(u),payload:{content:'Расскажи о себе',requestId:randomUUID()}});
   expect(r.statusCode,r.body).toBe(200);
-  const system=calls[0].messages[0].content;
+  const system=calls[0].messages[1].content;
   for(const part of ['"name":"Рина Огнева"','"age":27','"gender":"female"','Весёлая','Рыжие волосы','Карты, костры','дорожными словечками','портовом городе','Ночная заправка'])expect(system).toContain(part);
  });
 });
