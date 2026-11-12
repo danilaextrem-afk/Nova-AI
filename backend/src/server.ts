@@ -28,6 +28,15 @@ declare module 'fastify' {
   }
 }
 
+/** Header that carries the real client IP for rate limits. On Render (RENDER=true) the edge sets True-Client-IP,
+ *  so it is the default there: without it every user would share the proxy's IP and one login limit.
+ *  NOVA_CLIENT_IP_HEADER overrides it ("none" turns it off). */
+export function clientIpHeaderName(env: Record<string, string | undefined>): string {
+  const set = (env.NOVA_CLIENT_IP_HEADER || '').toLowerCase().trim();
+  if (set) return set === 'none' ? '' : set;
+  return env.RENDER === 'true' ? 'true-client-ip' : '';
+}
+
 export async function buildApp(db:PrismaClient = new PrismaClient()) {
 const app = Fastify({
   disableRequestLogging: true,
@@ -44,7 +53,7 @@ await app.register(helmet);
 // Behind Render (Cloudflare edge) every request arrives from the platform proxy, so the socket IP is shared by
 // all users. NOVA_CLIENT_IP_HEADER=true-client-ip keys rate limits on the edge-set client IP instead. Do not
 // use X-Forwarded-For for this: Render appends to it without stripping client-supplied values.
-const clientIpHeader = (process.env.NOVA_CLIENT_IP_HEADER || '').toLowerCase().trim();
+const clientIpHeader = clientIpHeaderName(process.env);
 const clientKey = (req: { headers: Record<string, unknown>; ip: string }) => {
   const raw = clientIpHeader ? req.headers[clientIpHeader] : undefined;
   const value = typeof raw === 'string' ? raw.split(',')[0].trim() : '';
