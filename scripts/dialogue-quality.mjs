@@ -61,11 +61,14 @@ async function chat(characterId, scenario = '', participantIds = []) {
 async function send(chatId, question, checkpoint) {
   const request = { content: question, tier: 'free', requestId: randomUUID() };
   let response;
+  const startedAt = Date.now();
+  const retries = [];
   for (let attempt = 0; attempt < 5; attempt++) {
     response = await call('POST', '/v1/chats/' + chatId + '/messages', request);
-    if (![429, 503].includes(response.status) ||
+    if (![429, 502, 503].includes(response.status) ||
         ['AI_NOT_CONFIGURED', 'PREMIUM_NOT_CONFIGURED', 'CHAT_STORAGE_FAILURE'].includes(response.body?.error)) break;
     if (attempt === 4) break;
+    retries.push({ status: response.status, error: response.body?.error });
     const seconds = Number(response.retryAfter);
     await sleep(Math.max(5000, Math.min(61000, seconds > 0 ? seconds * 1000 : 12000)));
   }
@@ -75,7 +78,7 @@ async function send(chatId, question, checkpoint) {
   if (body.tokensCharged !== 0) throw new Error('Free test turn charged NOVA Tokens');
   samples.push({
     checkpoint, question, text, inference: body.inference ?? null,
-    latencyMs: response.latencyMs, extra: body.extraMessages ?? [],
+    latencyMs: Date.now() - startedAt, retries, extra: body.extraMessages ?? [],
   });
   return { text, body };
 }

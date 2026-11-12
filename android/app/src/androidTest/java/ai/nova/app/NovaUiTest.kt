@@ -393,7 +393,7 @@ class NovaUiTest {
   val file = File(File(compose.activity.cacheDir, "portrait-camera").apply { mkdirs() }, "fixture.jpg")
   file.outputStream().use { assertTrue(photo.compress(Bitmap.CompressFormat.JPEG, 90, it)) }
   photo.recycle()
-  val uri = androidx.core.content.FileProvider.getUriForFile(compose.activity, compose.activity.packageName + ".portraits", file)
+  val uri = androidx.core.content.FileProvider.getUriForFile(compose.activity, compose.activity.packageName + ".files", file)
   compose.activity.contentResolver.openInputStream(uri).use { stream ->
    assertNotNull("The same FileProvider URI the app will receive must be readable", stream)
    assertEquals(0xff, stream!!.read())

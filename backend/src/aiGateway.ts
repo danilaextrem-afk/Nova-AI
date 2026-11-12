@@ -107,10 +107,12 @@ export function providerRequest(m:Pick<ModelConfig,'provider'|'model'>,messages:
       // Extra output room: thinking models spend part of the budget before the visible answer.
       body:{...(system?{systemInstruction:{parts:[{text:system}]}}:{}),contents,generationConfig:{temperature,maxOutputTokens:maxOutput+1024}}};
   }
+  const groqGptOss = m.provider === 'groq' && ['openai/gpt-oss-20b', 'openai/gpt-oss-120b'].includes(m.model);
   const base=m.provider==='cloudflare'?`${p.base}/${process.env.CLOUDFLARE_ACCOUNT_ID}/ai/v1`:p.base;
   return {url:base+'/chat/completions',
     headers:{Authorization:'Bearer '+key,'Content-Type':'application/json',...(m.provider==='openrouter'?{'X-Title':'NOVA AI'}:{} as Record<string,string>)},
     body:{model:m.model,messages,stream:streaming,temperature,max_tokens:maxOutput,
+      ...(groqGptOss ? { reasoning_effort: 'low', include_reasoning: false } : {}),
       ...(streaming?{stream_options:{include_usage:true}}:{}),...(m.provider==='openrouter'?{provider:{data_collection:'deny'}}:{})}};
 }
 /** Maps a Gemini response or stream chunk onto the OpenAI-compatible shape the gateway already parses. */

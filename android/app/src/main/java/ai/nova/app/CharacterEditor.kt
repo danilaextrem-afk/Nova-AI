@@ -34,7 +34,7 @@ private fun traitWord(stem: Pair<String, String>, gender: String?) = stem.first 
     stem.second == "ий" -> "ая"
     else -> "ая"
 }
-private val SCENES = listOf("Романтика", "Повседневное", "Ролевая игра", "Фэнтези", "Приключения")
+private val SCENES = listOf("Романтика", "Повседневное", "Ролевая игра", "Фэнтези", "Приключения", "Детектив", "Фантастика")
 private val FIELD_LABELS = mapOf("name" to "Имя", "biography" to "Описание персонажа", "personality" to "Характер подробно",
     "appearance" to "Внешность", "interests" to "Интересы", "speechStyle" to "Манера речи", "backstory" to "Предыстория",
     "scenario" to "Сценарий общения", "greeting" to "Первое сообщение")
@@ -185,7 +185,7 @@ fun CharacterEditor(model: NovaViewModel) {
                         val file = java.io.File(dir, "portrait.jpg")
                         if (file.exists()) file.delete()
                         check(file.createNewFile())
-                        val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".portraits", file)
+                        val uri = androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".files", file)
                         cameraUri = uri
                         camera.launch(uri)
                     }.onFailure { model.showNotice("Камера недоступна. Выбери фото из галереи.") }

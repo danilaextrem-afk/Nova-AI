@@ -30,10 +30,10 @@ export function estimatePrompt(messages: AiMessage[]): number {
 export function dialogueSettings(style: string, tone: string, tier: AiTier) {
   const premium = tier === 'premium';
   const styles = {
-    concise: { maxOutput: premium ? 520 : 240, length: 'One or two sentences. Answer first.' },
-    balanced: { maxOutput: premium ? 1600 : 420, length: premium ? 'Use richer continuity and natural detail where it helps.' : 'Usually one to three short paragraphs.' },
-    detailed: { maxOutput: premium ? 1900 : 650, length: 'Develop the reply with specific details and an unhurried pace.' },
-    story: { maxOutput: premium ? 2100 : 760, length: 'Write a short scene with grounded action and dialogue. Leave the next decision to the player.' },
+    concise: { maxOutput: premium ? 640 : 480, length: 'One or two sentences. Answer first.' },
+    balanced: { maxOutput: premium ? 1600 : 640, length: premium ? 'Use richer continuity and natural detail where it helps.' : 'Usually one to three short paragraphs.' },
+    detailed: { maxOutput: premium ? 1900 : 880, length: 'Develop the reply with specific details and an unhurried pace.' },
+    story: { maxOutput: premium ? 2100 : 1040, length: 'Write a short scene with grounded action and dialogue. Leave the next decision to the player.' },
   };
   const tones = {
     friendly: { temperature: 0.65, voice: 'Warm and direct.' },
