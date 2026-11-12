@@ -127,7 +127,9 @@ data class NovaAiStatus(
 )
 
 data class PublicationInfo(val id: String, val likesCount: Int = 0)
-data class SocialComment(val id: String, val content: String, val status: String)
+data class CommentProfile(val displayName: String? = null)
+data class CommentUser(val profile: CommentProfile? = null)
+data class SocialComment(val id: String, val content: String, val status: String, val user: CommentUser? = null)
 data class CommentPage(val items: List<SocialComment> = emptyList())
 data class RefreshBody(val refreshToken: String)
 data class MemoryItem(val id: String, val content: String, val kind: String, val pinned: Boolean = false, val source: String? = null)
@@ -183,6 +185,7 @@ interface NovaApi {
     @retrofit2.http.PATCH("v1/chats/{id}") suspend fun saveSettings(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: ChatSettings)
     @GET("v1/notifications") suspend fun notifications(@Header("Authorization") bearer: String): NotificationPage
     @PUT("v1/notifications/{id}/read") suspend fun readNotification(@Header("Authorization") bearer: String, @Path("id") id: String)
+    @PUT("v1/blocks/{id}") suspend fun block(@Header("Authorization") bearer: String, @Path("id") id: String)
     @POST("v1/reports") suspend fun report(@Header("Authorization") bearer: String, @Body body: ReportBody)
     @GET("v1/me/export") suspend fun export(@Header("Authorization") bearer: String): okhttp3.ResponseBody
     @retrofit2.http.HTTP(method="DELETE", path="v1/me", hasBody=true) suspend fun deleteAccount(@Header("Authorization") bearer: String, @Body body: Map<String,String>)

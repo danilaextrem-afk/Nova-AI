@@ -82,35 +82,6 @@ fun DiscoverShelves(model: NovaViewModel) {
     }
 }
 
-/** Public author page: published characters, followers and likes. */
-@Composable
-fun AuthorDialog(model: NovaViewModel) {
-    val a = model.authorPage ?: return
-    AlertDialog(onDismissRequest = { model.authorPage = null }, confirmButton = { TextButton(onClick = { model.authorPage = null }) { Text("Закрыть") } },
-        title = { androidx.compose.material3.Text(a.displayName) },
-        text = {
-            Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                NovaEyebrow("АВТОР ПЕРСОНАЖЕЙ")
-                a.bio?.takeIf { it.isNotBlank() }?.let { androidx.compose.material3.Text(it, style = MaterialTheme.typography.bodySmall) }
-                Text("Подписчиков: ${a.followers} · лайков: ${a.likes} · персонажей: ${a.characters.orEmpty().size}", color = NovaDesign.Muted, style = MaterialTheme.typography.labelMedium)
-                OutlinedButton(onClick = { model.follow(a.id, !a.isFollowing); model.authorPage = a.copy(isFollowing = !a.isFollowing, followers = a.followers + if (a.isFollowing) -1 else 1) },
-                    enabled = !model.loading) { Text(if (a.isFollowing) "Отписаться" else "Подписаться на автора") }
-                a.characters.orEmpty().forEach { c ->
-                    Surface(onClick = { model.authorPage = null; model.showCharacterProfile(c.id) }, shape = RoundedCornerShape(14.dp), color = NovaDesign.Surface,
-                        border = BorderStroke(1.dp, NovaDesign.Border), modifier = Modifier.fillMaxWidth()) {
-                        Row(Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                            NovaPortrait(c.id, c.name, Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)), c.avatarUrl)
-                            Column(Modifier.weight(1f)) {
-                                androidx.compose.material3.Text(c.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                                androidx.compose.material3.Text("♥ ${c.publication?.likesCount ?: 0} · ${c.category}", style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted)
-                            }
-                        }
-                    }
-                }
-            }
-        })
-}
-
 /** Author analytics on the Create tab: counts only. */
 @Composable
 fun CreatorStatsCard(model: NovaViewModel) {

@@ -123,7 +123,6 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             notification = if (showMature) "Раздел 18+ включён" else "Раздел 18+ скрыт"
         }
     }
-    fun loadContentSettings() { execute { showMature = runCatching { service().me(authorization()).profile?.showMature == true }.getOrDefault(false) } }
     var draftName by mutableStateOf("")
     var draftGreeting by mutableStateOf("")
     var draftCategory by mutableStateOf("fantasy")
@@ -411,7 +410,30 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         execute { inChatResults = service().chatMessages(authorization(), chat.id, null, q.take(100)).items }
     }
     var profileCharacter by mutableStateOf<NovaCharacter?>(null)
-    fun showCharacterProfile(id:String) {execute {profileCharacter=service().character(authorization(),id).character} }
+    fun showCharacterProfile(id: String) { execute { loadCharacterProfile(id) } }
+
+    fun openAuthorCharacter(id: String) { execute {
+        loadCharacterProfile(id)
+        authorPage = null
+    } }
+
+    private suspend fun loadCharacterProfile(id: String) {
+        val api = service()
+        val bearer = authorization()
+        val character = api.character(bearer, id).character
+        selectedPublication = null
+        comments = emptyList()
+        commentInput = ""
+        scenarios = emptyList()
+        try {
+            favorites = api.favorites(bearer).items.map { it.character }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Keep the last server-confirmed favorite state when this optional request fails.
+        }
+        profileCharacter = character
+    }
     fun hideCharacter(id:String) {execute {service().hideCharacter(authorization(),id);owned=service().myCharacters(authorization()).items;notification="Персонаж скрыт из каталога"} }
     fun refreshChats() {
         execute {
@@ -824,6 +846,9 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     fun addFavorite(id: String) {
         execute {
             service().addFavorite(authorization(), id)
+            (profileCharacter?.takeIf { it.id == id } ?: catalog.firstOrNull { it.id == id })?.let { character ->
+                favorites = (favorites + character).distinctBy { it.id }
+            }
             notification = "Персонаж добавлен в избранное"
         }
     }
@@ -843,6 +868,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             // Older servers have no reward routes: the wallet must still load.
             dailyBonus = runCatching { api.dailyBonus(authorization()) }.getOrNull()
             referral = runCatching { api.referrals(authorization()) }.getOrNull()
+            runCatching { api.aiStatus(authorization()) }.onSuccess { aiStatus = it }
         }
     }
     fun openArt(prompt: String? = null) {
@@ -929,6 +955,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         recentStories = emptyList()
         discoverFailed = false
         authorPage = null
+        likedPublications = emptySet()
         profileCharacter = null
         dailyBonus = null
         referral = null
@@ -946,6 +973,8 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         catalogCategory = ""
         catalogTag = ""
         catalogSort = "recent"
+        showMature = false
+        matureSection = false
         owned = emptyList()
         chats = emptyList()
         activeChat = null
@@ -970,7 +999,12 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     fun loadOlder() { val chat = activeChat ?: return; val before = nextBefore ?: return; execute {
         val page=service().chatMessages(authorization(),chat.id,before); chatMessages=page.items+chatMessages; nextBefore=page.nextBefore
     } }
-    fun removeFavorite(id: String) { execute { service().removeFavorite(authorization(),id); favorites=favorites.filter { it.id!=id }; catalog=catalog.filter { it.id!=id } } }
+    fun removeFavorite(id: String) { execute {
+        service().removeFavorite(authorization(), id)
+        favorites = favorites.filterNot { it.id == id }
+        if (catalogView == CatalogView.FAVORITES) catalog = catalog.filterNot { it.id == id }
+        notification = "Персонаж убран из избранного"
+    } }
     fun editCharacter(character: NovaCharacter) { execute {
         val c=service().character(authorization(),character.id).character
         editingCharacterId=c.id; draftName=c.name; draftGreeting=c.greeting; draftCategory=c.category
@@ -1035,7 +1069,23 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         activeChat=chat.copy(persona=playerPersona,scenario=storyScenario,responseStyle=responseStyle,tone=storyTone)
         store.put("chat",gson.toJson(activeChat));notification="Настройки истории сохранены"
     } }
-    fun refreshNotifications() {execute {notifications=service().notifications(authorization()).items} }
+    fun refreshNotifications() { execute {
+        val api = service()
+        val bearer = authorization()
+        loadAccountContentSettings(api, bearer)
+        notifications = api.notifications(bearer).items
+    } }
+
+    private suspend fun loadAccountContentSettings(api: NovaApi, bearer: String) {
+        try {
+            showMature = api.me(bearer).profile?.showMature == true
+            if (!showMature) matureSection = false
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Keep the last confirmed preference if settings are temporarily unavailable.
+        }
+    }
     fun readNotification(id:String) {execute {service().readNotification(authorization(),id);notifications=service().notifications(authorization()).items} }
     fun reportMessage(id:String) {execute {service().report(authorization(),ReportBody("MESSAGE",id,"Жалоба пользователя на ответ AI"));notification="Жалоба отправлена"} }
     /** New version of the latest AI reply. Free in free mode; Premium is charged once, only on success. */
@@ -1066,8 +1116,46 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     /** Auto-hide only the notice that was shown, never a newer one. */
     fun dismissNotice(text: String) { if (notification == text) notification = null }
 
-    fun follow(id:String,enabled:Boolean) {execute {if(enabled)service().follow(authorization(),id)else service().unfollow(authorization(),id);notification=if(enabled)"Подписка сохранена" else "Подписка отменена"} }
-    fun like(id:String) {execute {service().like(authorization(),id);notification="Отметка сохранена"} }
+    fun follow(id: String, enabled: Boolean) { execute {
+        val api = service()
+        val bearer = authorization()
+        if (enabled) api.follow(bearer, id) else api.unfollow(bearer, id)
+        if (authorPage?.id == id) authorPage = api.author(bearer, id)
+        if (!enabled && catalogView == CatalogView.FOLLOWING) catalog = catalog.filterNot { it.ownerId == id }
+        notification = if (enabled) "Подписка сохранена" else "Подписка отменена"
+    } }
+
+    private var likedPublications by mutableStateOf<Set<String>>(emptySet())
+    fun isPublicationLiked(id: String) = id in likedPublications
+
+    fun like(id: String) { execute {
+        val api = service()
+        val bearer = authorization()
+        api.like(bearer, id)
+        likedPublications = likedPublications + id
+        profileCharacter?.takeIf { it.publication?.id == id }?.let { character ->
+            val updated = api.character(bearer, character.id).character
+            if (profileCharacter?.id == character.id) profileCharacter = updated
+        }
+        notification = "Отметка сохранена"
+    } }
+
+    fun reportContent(type: String, id: String, reason: String) { execute {
+        service().report(authorization(), ReportBody(type, id, reason))
+        notification = "Жалоба отправлена"
+    } }
+
+    fun blockCreator(id: String) { execute {
+        service().block(authorization(), id)
+        authorPage = null
+        profileCharacter = null
+        catalog = catalog.filterNot { it.ownerId == id }
+        favorites = favorites.filterNot { it.ownerId == id }
+        recommended = recommended.filterNot { it.ownerId == id }
+        shelves = shelves.map { shelf -> shelf.copy(items = shelf.items.filterNot { it.ownerId == id }) }
+        notification = "Автор заблокирован"
+    } }
+
     fun openComments(id:String) {execute {selectedPublication=id;comments=service().comments(authorization(),id).items} }
     fun sendComment() {val id=selectedPublication?:return;execute {service().comment(authorization(),id,mapOf("content" to commentInput));commentInput="";comments=service().comments(authorization(),id).items;notification="Комментарий отправлен на модерацию"} }
     fun fictionalScene(kind:String) {updateChatInput("Напиши $kind нашего персонажа. Начни с пометки «Вымышленная сцена». Это художественное произведение, а не реальные мысли или данные человека.");sendChatMessage()}
