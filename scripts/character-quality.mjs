@@ -118,8 +118,11 @@ try {
   // The player's gender is never set here, so the characters must not guess it.
   const guessed = all.find(t => /ты\s+(?:\p{L}+\s+)?(запутала|пришла|сказала|устала|была|сделала|запутал|пришёл|пришел|устал|сказал)(?!\p{L})/iu.test(t));
   check('Does not guess the player gender', !guessed, guessed?.slice(0, 120) ?? '');
-  const markup = all.find(t => /\*\*|^\s*(#|\d+\.\s|[-•]\s)/mu.test(t));
-  check('No markdown headings, lists or bold', !markup, markup?.slice(0, 120) ?? '');
+  // The app renders **bold**, *actions* and turns list markers into bullets; headings and stray markup are the failure.
+  const markup = all.find(t => /^\s*#|\*\*\s|\s\*\*(?!\S)/mu.test(t));
+  check('No markdown headings or broken markup', !markup, markup?.slice(0, 120) ?? '');
+  const lists = all.filter(t => /^\s*(\d+\.|[-•])\s/mu.test(t)).length;
+  rows.push({ name: 'Replies with lists (shown as bullets)', result: 'INFO', detail: String(lists) });
   check('Says goodbye naturally', /до завтр|пока|жду|приходи|удач/i.test(replies[4]), replies[4].slice(0, 100));
 } catch (e) {
   check('Run completion', false, e.message);

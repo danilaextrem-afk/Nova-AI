@@ -74,9 +74,13 @@ describe('PostgreSQL router and persisted chat invariants (HTTP fixtures, not li
   const copied=await db.memory.findMany({where:{chatId:branch.json().chat.id}});expect(copied.map(x=>x.content)).toContain('Маяк на острове');
  });
  it('blocks provider quota oversubscription under concurrency',async()=>{
+  // Pin the clock to the start of a minute: crossing a minute boundary mid-test legitimately resets the rpm window.
+  vi.useFakeTimers({toFake:['Date'],now:Math.floor(Date.now()/60000)*60000+5000});
+  try{
   vi.stubEnv('NOVA_AI_MODELS_JSON',JSON.stringify([model('groq','free',{rpm:2,concurrency:2})]));vi.stubGlobal('fetch',vi.fn(async()=>{await new Promise(r=>setTimeout(r,25));return ok()}));
   const results=await Promise.allSettled(Array.from({length:12},()=>completeAiChat([{role:'system',content:'Fiction'},{role:'user',content:'Hello'}],'free',db)));
   expect(results.filter(x=>x.status==='fulfilled')).toHaveLength(2);expect(await db.aiAttempt.count()).toBe(2);
+  }finally{vi.useRealTimers();}
  });
  it('blocks paid calls above daily provider budget',async()=>{
   vi.stubEnv('NOVA_AI_MODELS_JSON',JSON.stringify([model('groq','premium',{inputUsdPerMillion:20,outputUsdPerMillion:80,dailyBudgetMicros:1})]));
@@ -96,18 +100,18 @@ describe('PostgreSQL router and persisted chat invariants (HTTP fixtures, not li
 describe('Default free pool (no NOVA_AI_MODELS_JSON; HTTP fixtures, not live AI)',()=>{
  beforeEach(()=>{vi.stubEnv('NOVA_AI_MODELS_JSON','');vi.stubEnv('AI_PROVIDER','groq');vi.stubEnv('AI_MODEL','');vi.stubEnv('NOVA_GROQ_FREE_MODELS','');vi.stubEnv('NOVA_OPENROUTER_FREE_MODELS','');vi.stubEnv('GEMINI_API_KEY','');vi.stubEnv('CLOUDFLARE_API_TOKEN','');vi.stubEnv('NOVA_PREMIUM_MODEL','')});
  it('uses separate per-model Groq quota buckets and falls through to the next Groq model',async()=>{
-  expect(modelPool('free').map(m=>m.provider+':'+m.model)).toEqual(['groq:openai/gpt-oss-20b','groq:openai/gpt-oss-120b','openrouter:deepseek/deepseek-v4-flash:free','openrouter:openrouter/free']);
+  expect(modelPool('free').map(m=>m.provider+':'+m.model)).toEqual(['groq:openai/gpt-oss-120b','groq:openai/gpt-oss-20b','openrouter:openrouter/free']);
   const day=new Date(new Date().toISOString().slice(0,10));
-  await db.aiProviderState.create({data:{key:'groq:openai/gpt-oss-20b',minuteAt:new Date(Math.floor(Date.now()/60000)*60000),dayAt:day,dayRequests:1000}});
+  await db.aiProviderState.create({data:{key:'groq:openai/gpt-oss-120b',minuteAt:new Date(Math.floor(Date.now()/60000)*60000),dayAt:day,dayRequests:1000}});
   const mock=vi.fn(async(_u:any,init:any)=>ok());vi.stubGlobal('fetch',mock);
   const r=await send('Привет');expect(r.statusCode,r.body).toBe(200);
-  expect(mock).toHaveBeenCalledTimes(1);expect(JSON.parse(mock.mock.calls[0][1].body).model).toBe('openai/gpt-oss-120b');
-  expect((await db.aiProviderState.findUnique({where:{key:'groq:openai/gpt-oss-120b'}}))!.dayRequests).toBe(1);
-  expect((await db.aiProviderState.findUnique({where:{key:'groq:openai/gpt-oss-20b'}}))!.dayRequests).toBe(1000);
+  expect(mock).toHaveBeenCalledTimes(1);expect(JSON.parse(mock.mock.calls[0][1].body).model).toBe('openai/gpt-oss-20b');
+  expect((await db.aiProviderState.findUnique({where:{key:'groq:openai/gpt-oss-20b'}}))!.dayRequests).toBe(1);
+  expect((await db.aiProviderState.findUnique({where:{key:'groq:openai/gpt-oss-120b'}}))!.dayRequests).toBe(1000);
  });
  it('never hands out the configured Premium model as Free',async()=>{
   vi.stubEnv('NOVA_PREMIUM_MODEL','openai/gpt-oss-120b');vi.stubEnv('NOVA_AI_DAILY_BUDGET_MICROS','100000');
-  expect(modelPool('free').map(m=>m.model)).toEqual(['openai/gpt-oss-20b','deepseek/deepseek-v4-flash:free','openrouter/free']);
+  expect(modelPool('free').map(m=>m.model)).toEqual(['openai/gpt-oss-20b','openrouter/free']);
   expect(modelPool('premium').map(m=>m.model)).toEqual(['openai/gpt-oss-120b']);
  });
 });

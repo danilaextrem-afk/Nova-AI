@@ -32,13 +32,14 @@ export function modelPool(tier: AiTier): ModelConfig[] {
     try { models = z.array(modelSchema).max(20).parse(JSON.parse(process.env.NOVA_AI_MODELS_JSON)); }
     catch { return []; } // Invalid deployment configuration fails closed.
   } else {
+    // 120b first: on live Russian checks (2026-11-12) 20b made spelling and agreement errors that 120b did not.
     // Official free-plan limits (console.groq.com/docs/rate-limits, checked 2026-11-11): Groq counts quotas
     // per model and organization, so each listed Groq model is an independent free bucket. OpenRouter's
     // openrouter/free router is the only OpenRouter free entry by default.
     const preferred = (process.env.AI_PROVIDER || 'groq') as AiProviderName;
     const groqModels = Array.from(new Set([
       ...(preferred === 'groq' && process.env.AI_MODEL?.trim() ? [process.env.AI_MODEL.trim()] : []),
-      ...(process.env.NOVA_GROQ_FREE_MODELS?.trim() || 'openai/gpt-oss-20b,openai/gpt-oss-120b').split(',').map(x => x.trim()).filter(Boolean),
+      ...(process.env.NOVA_GROQ_FREE_MODELS?.trim() || 'openai/gpt-oss-120b,openai/gpt-oss-20b').split(',').map(x => x.trim()).filter(Boolean),
     ])).filter(model => !((process.env.NOVA_PREMIUM_PROVIDER || 'groq') === 'groq' && model === process.env.NOVA_PREMIUM_MODEL?.trim()))
       .slice(0, 6); // A model sold as Premium is never also handed out as Free.
     const free = (provider: AiProviderName, model: string): ModelConfig => ({
@@ -52,7 +53,8 @@ export function modelPool(tier: AiTier): ModelConfig[] {
     // A removed model answers 404 and the gateway moves on to the next entry.
     const openrouter = Array.from(new Set([
       ...(preferred === 'openrouter' && process.env.AI_MODEL?.trim() ? [process.env.AI_MODEL.trim()] : []),
-      ...(process.env.NOVA_OPENROUTER_FREE_MODELS?.trim() || 'deepseek/deepseek-v4-flash:free,openrouter/free').split(',').map(x => x.trim()).filter(Boolean),
+      // deepseek-v4-flash:free was withdrawn (404 'unavailable for free', 2026-11-12).
+      ...(process.env.NOVA_OPENROUTER_FREE_MODELS?.trim() || 'openrouter/free').split(',').map(x => x.trim()).filter(Boolean),
     ])).slice(0, 4).map(model => free('openrouter', model));
     // Gemini (free tier) is a last resort and only with the owner's documented consent (NOVA_GEMINI_TERMS_REVIEWED):
     // Google may use free-tier prompts to improve its products. Conservative limits; the provider's 429 still rules.
