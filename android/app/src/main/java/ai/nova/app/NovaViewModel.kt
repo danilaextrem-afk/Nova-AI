@@ -630,7 +630,14 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         notification = null
         error = null
     }
-    fun logout() { execute { runCatching { service().logout(authorization()) }; clearAccount() } }
+    /** Sign-out never waits for (or is blocked by) another request: the phone forgets the session at once,
+     *  and the server session is revoked in the background. */
+    fun logout() {
+        val bearer = runCatching { authorization() }.getOrNull()
+        val api = runCatching { service() }.getOrNull()
+        clearAccount(); loading = false
+        if (bearer != null && api != null) viewModelScope.launch { runCatching { api.logout(bearer) } }
+    }
     fun loadOlder() { val chat = activeChat ?: return; val before = nextBefore ?: return; execute {
         val page=service().chatMessages(authorization(),chat.id,before); chatMessages=page.items+chatMessages; nextBefore=page.nextBefore
     } }

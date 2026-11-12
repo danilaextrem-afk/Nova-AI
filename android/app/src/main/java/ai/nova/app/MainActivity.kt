@@ -606,7 +606,7 @@ private fun AccountScreen(model: NovaViewModel) {
         model.exportText?.let { data->TextButton(onClick={context.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply {type="text/plain";putExtra(Intent.EXTRA_TEXT,data)},"Экспорт NOVA"))}){Text("Поделиться экспортом")} }
         var deleting by remember {mutableStateOf(false)}
         OutlinedButton(onClick={deleting=true}){Text("Удалить аккаунт")}
-        if(deleting)AlertDialog(onDismissRequest={deleting=false},title={Text("Удалить аккаунт и истории?")},text={Text("Чаты, память и персонажи будут удалены. Учёт покупок сохраняется для обработки возвратов.")},confirmButton={TextButton(onClick={deleting=false;model.deleteAccount()}){Text("Удалить навсегда")}},dismissButton={TextButton(onClick={deleting=false}){Text("Отмена")}})
+        if(deleting)AlertDialog(onDismissRequest={deleting=false},title={Text("Удалить аккаунт и истории?")},text={Text("Чаты, память и персонажи будут удалены. Учёт покупок сохраняется для обработки возвратов.")},confirmButton={TextButton(onClick={deleting=false;model.deleteAccount()},enabled=!model.loading){Text("Удалить навсегда")}},dismissButton={TextButton(onClick={deleting=false}){Text("Отмена")}})
         Text("Уведомления",style=MaterialTheme.typography.titleMedium)
         model.notifications.forEach {n-> Text(n.title+" · "+n.body);if(n.readAt==null)TextButton(onClick={model.readNotification(n.id)}){Text("Прочитано")} }
         OutlinedTextField(value=model.supportText,onValueChange={model.supportText=it},label={Text("Обращение в поддержку")},modifier=Modifier.fillMaxWidth())
