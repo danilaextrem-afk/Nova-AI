@@ -38,7 +38,16 @@ const app = Fastify({
 });
 
 await app.register(helmet);
-await app.register(rateLimit, { max: 120, timeWindow: '1 minute' });
+// Behind Render (Cloudflare edge) every request arrives from the platform proxy, so the socket IP is shared by
+// all users. NOVA_CLIENT_IP_HEADER=true-client-ip keys rate limits on the edge-set client IP instead. Do not
+// use X-Forwarded-For for this: Render appends to it without stripping client-supplied values.
+const clientIpHeader = (process.env.NOVA_CLIENT_IP_HEADER || '').toLowerCase().trim();
+const clientKey = (req: { headers: Record<string, unknown>; ip: string }) => {
+  const raw = clientIpHeader ? req.headers[clientIpHeader] : undefined;
+  const value = typeof raw === 'string' ? raw.split(',')[0].trim() : '';
+  return /^[0-9a-fA-F:.]{3,45}$/.test(value) ? value : req.ip;
+};
+await app.register(rateLimit, { max: 120, timeWindow: '1 minute', keyGenerator: clientKey });
 await app.register(jwt, { secret: config.jwtSecret, sign: { expiresIn: config.accessTtlSec, algorithm:'HS256' }, verify:{algorithms:['HS256']} });
 
 app.decorate('auth', async (req: any, reply: any) => {
@@ -69,7 +78,8 @@ async function issueTokens(userId: string, familyId: string = randomUUID()) {
 
 const creds = z.object({ email: z.string().email().max(254), password: z.string().min(10).max(128), adultConfirmed:z.boolean().optional() });
 
-app.get('/health', async () => ({ ok: true }));
+// Render sets RENDER_GIT_COMMIT; exposing the short SHA lets the live check confirm which build is serving.
+app.get('/health', async () => ({ ok: true, commit: (process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || null }));
 app.get('/ready',async(_req,reply)=>{try{await db.$queryRaw`SELECT 1`;return {ok:true};}catch{return reply.code(503).send({ok:false});}});
 app.setErrorHandler((error,req,reply)=>{
  const status=(error as any).statusCode;

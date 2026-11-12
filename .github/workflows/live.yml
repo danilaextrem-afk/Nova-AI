@@ -1,0 +1,38 @@
+name: Live check
+
+# Real end-to-end check of the deployed API (HTTPS, Neon PostgreSQL, live AI when a key is configured).
+# Render auto-deploys main; this waits until /health reports the pushed commit, then runs the scenario.
+on:
+  push:
+    branches: [main]
+    paths: ['backend/**', 'scripts/live-smoke.mjs', '.github/workflows/live.yml', 'android/nova-api-url.txt']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+concurrency:
+  group: nova-live-check
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run live scenario against the deployed API
+        run: |
+          URL="$(tr -d '[:space:]' < android/nova-api-url.txt)"
+          test -n "$URL"
+          EXPECT=""
+          if [ "$GITHUB_EVENT_NAME" = "push" ] && git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q '^backend/'; then EXPECT="$GITHUB_SHA"; fi
+          node scripts/live-smoke.mjs "$URL" "$EXPECT" | tee live-report.md
+          exit "${PIPESTATUS[0]}"
+      - name: Publish report
+        if: always()
+        run: test -f live-report.md && cat live-report.md >> "$GITHUB_STEP_SUMMARY" || true
