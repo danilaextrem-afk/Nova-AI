@@ -275,6 +275,7 @@ class NovaUiTest {
   compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("wrong-password-123")
   clickWhenEnabled("Войти")
   waitFor("login error"){compose.onAllNodesWithText("Неверный email или пароль. Если аккаунта ещё нет — нажми «Создать аккаунт».").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Неверный email или пароль. Если аккаунта ещё нет — нажми «Создать аккаунт».").assertIsDisplayed()
   screenshot("27-login-wrong-password")
   compose.onNodeWithText("Email").performTextClearance();compose.onNodeWithText("Email").performTextInput("taken@example.test")
   compose.onNode(isToggleable()).reveal().performClick()

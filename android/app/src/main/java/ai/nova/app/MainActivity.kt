@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.ScrollState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -170,6 +171,7 @@ private fun LanguageSwitch() {
     }
 }
 
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 private fun LoginScreen(model: NovaViewModel) {
     val keyboard = LocalSoftwareKeyboardController.current
@@ -226,8 +228,12 @@ private fun LoginScreen(model: NovaViewModel) {
             OutlinedButton(onClick = { keyboard?.hide(); model.signIn(true) }, modifier = Modifier.fillMaxWidth().height(52.dp), enabled = !model.loading) {
                 Text("Создать аккаунт")
             }
-            // Errors appear right under the buttons, where the person is looking.
-            StatusMessage(model)
+            // Errors appear right under the buttons and are scrolled into view, so they are never off-screen.
+            val errorSpot = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+            LaunchedEffect(model.error, model.emailError, model.passwordError, model.adultError) {
+                if (model.error != null || model.adultError != null) { kotlinx.coroutines.delay(150); errorSpot.bringIntoView() }
+            }
+            Column(Modifier.bringIntoViewRequester(errorSpot), verticalArrangement = Arrangement.spacedBy(8.dp)) { StatusMessage(model) }
             if (slow && model.loading) Text("Сервер просыпается после простоя — это может занять до минуты. Не закрывай приложение.",
                 style = MaterialTheme.typography.bodySmall, color = NovaDesign.Rose)
             Text("Сообщения обрабатывают сервер NOVA и внешние AI-провайдеры. Не указывай конфиденциальные данные.",
