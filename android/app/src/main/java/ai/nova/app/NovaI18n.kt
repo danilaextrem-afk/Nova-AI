@@ -226,6 +226,9 @@ private val EN: Map<String, String> = mapOf(
     "В сцене может быть до 5 персонажей" to "A scene can have up to 5 characters", "Персонаж вышел из сцены" to "The character left the scene",
     "Персонаж присоединился к сцене" to "The character joined the scene", "Заполни название и описание сценария" to "Fill in the scenario title and description",
     "Сценарий добавлен" to "Scenario added",
+    "Редактирование сохранённого персонажа" to "Editing a saved character", "Предпросмотр" to "Preview", "Очистить черновик" to "Clear draft",
+    "Черновик сохраняется на телефоне автоматически." to "The draft is saved on this phone automatically.",
+    "Повторить с тем же описанием" to "Draw again with the same description",
     // Voice
     "Голосовой разговор" to "Voice conversation", "ГОЛОСОВОЙ РАЗГОВОР" to "VOICE CONVERSATION", "Нужен доступ к микрофону" to "Microphone access is needed",
     "Слушаю тебя…" to "Listening…", "Персонаж думает…" to "The character is thinking…", "Персонаж говорит" to "The character is speaking",

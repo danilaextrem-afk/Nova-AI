@@ -122,6 +122,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     var draftCategory by mutableStateOf("fantasy")
 
     init {
+        restoreDraft()
         if (accessToken != null) {
             activeChat?.let { openChat(it) } ?: refreshCatalog()
         }
@@ -494,6 +495,30 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         execute { owned = service().myCharacters(authorization()).items }
     }
 
+    // Editor draft: saved on the phone while typing, restored after the app is closed or killed.
+    private fun draftMap(): Map<String, String> = mapOf("name" to draftName, "greeting" to draftGreeting, "category" to draftCategory,
+        "biography" to draftBiography, "personality" to draftPersonality, "appearance" to draftAppearance, "interests" to draftInterests,
+        "backstory" to draftBackstory, "speechStyle" to draftSpeechStyle, "scenario" to draftScenario, "avatar" to draftAvatar,
+        "tags" to draftTags, "language" to draftLanguage, "mature" to draftMature.toString(), "editing" to editingCharacterId.orEmpty())
+    val draftSignature: String get() = draftMap().values.joinToString("\u0001")
+    val draftHasContent: Boolean get() = listOf(draftName, draftGreeting, draftBiography, draftPersonality, draftAppearance, draftInterests,
+        draftBackstory, draftSpeechStyle, draftScenario, draftTags).any { it.isNotBlank() }
+    fun persistDraft() { if (accessToken != null) store.put("characterDraft", if (draftHasContent) gson.toJson(draftMap()) else "") }
+    private fun restoreDraft() {
+        val saved = runCatching { gson.fromJson(store.get("characterDraft"), Map::class.java) }.getOrNull() ?: return
+        fun v(k: String) = saved[k] as? String ?: ""
+        draftName = v("name"); draftGreeting = v("greeting"); draftCategory = v("category").ifBlank { "fantasy" }
+        draftBiography = v("biography"); draftPersonality = v("personality"); draftAppearance = v("appearance"); draftInterests = v("interests")
+        draftBackstory = v("backstory"); draftSpeechStyle = v("speechStyle"); draftScenario = v("scenario"); draftAvatar = v("avatar")
+        draftTags = v("tags"); draftLanguage = v("language").ifBlank { "ru" }; draftMature = v("mature") == "true"
+        editingCharacterId = v("editing").ifBlank { null }
+    }
+    fun clearDraft() {
+        draftName = ""; draftGreeting = ""; draftCategory = "fantasy"; draftBiography = ""; draftPersonality = ""; draftAppearance = ""
+        draftInterests = ""; draftBackstory = ""; draftSpeechStyle = ""; draftScenario = ""; draftAvatar = ""; draftTags = ""
+        draftLanguage = "ru"; draftMature = false; editingCharacterId = null
+        store.put("characterDraft", "")
+    }
     fun createCharacter() {
         if (draftName.isBlank() || draftGreeting.isBlank()) {
             error = "Заполни имя и приветствие персонажа"
@@ -508,8 +533,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             if (editing == null) service().createCharacter(authorization(), draft) else service().editCharacter(authorization(), editing, draft)
             editingCharacterId = null
             owned = service().myCharacters(authorization()).items
-            draftName = ""
-            draftGreeting = ""
+            clearDraft()
             notification = "Персонаж создан и сохранён"
         }
     }
