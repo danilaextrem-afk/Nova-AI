@@ -88,3 +88,13 @@ internal fun HomeScreen(model: NovaViewModel) {
         OutlinedButton(onClick = { model.openArt() }, modifier = Modifier.fillMaxWidth()) { Text("Открыть AI Арт") }
     }
 }
+
+internal fun productErrorMessage(message: String): String = when {
+    message.contains("HTTP 404", ignoreCase = true) -> "Этот материал больше недоступен."
+    message.contains("HTTP 403", ignoreCase = true) -> "У тебя нет доступа к этому действию."
+    message.contains("HTTP 429", ignoreCase = true) -> "Слишком много запросов. Попробуй чуть позже."
+    message.contains("HTTP", ignoreCase = true) -> "Сейчас не удалось выполнить запрос. Попробуй ещё раз."
+    listOf("timed out", "timeout", "unable to resolve", "failed to connect", "connection reset", "broken pipe")
+        .any { message.contains(it, ignoreCase = true) } -> "Нет связи с NOVA. Проверь интернет и попробуй снова."
+    else -> message
+}

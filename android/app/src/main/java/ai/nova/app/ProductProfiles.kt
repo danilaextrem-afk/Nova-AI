@@ -160,7 +160,7 @@ internal fun CharacterProfileSheet(model: NovaViewModel) {
                         }
                     }
                     if (publication != null) ModerationActions(model, "PUBLICATION", publication.id, owner?.takeUnless { mine })
-                    StatusMessage(model)
+                    StatusMessage(model, productUi = true)
                 }
             }
         }
@@ -247,7 +247,7 @@ internal fun AuthorDialog(model: NovaViewModel) {
                     }
                 }
                 if (!isSelf) ModerationActions(model, "USER", author.id, author.id)
-                StatusMessage(model)
+                StatusMessage(model, productUi = true)
             }
         }
     }

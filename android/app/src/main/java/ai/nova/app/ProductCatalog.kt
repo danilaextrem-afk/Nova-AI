@@ -148,4 +148,3 @@ private fun CharacterCard(model: NovaViewModel, character: NovaCharacter) {
         }
     }
 }
-

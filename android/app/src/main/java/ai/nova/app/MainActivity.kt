@@ -148,7 +148,7 @@ private fun NovaApp(model: NovaViewModel) {
                 .padding(horizontal = 18.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            StatusMessage(model)
+            StatusMessage(model, productUi = model.activeTab in setOf(NovaTab.HOME, NovaTab.CATALOG, NovaTab.WALLET, NovaTab.ACCOUNT))
             when (model.activeTab) {
                 NovaTab.HOME -> HomeScreen(model)
                 NovaTab.CATALOG -> CatalogScreen(model)
@@ -286,12 +286,12 @@ private fun GuestCastPreview() {
 }
 
 @Composable
-internal fun StatusMessage(model: NovaViewModel) {
+internal fun StatusMessage(model: NovaViewModel, productUi: Boolean = false) {
     if (model.loading) LinearProgressIndicator(modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(50)))
     model.error?.let { message ->
         Surface(color = Color(0xFF3A1F2A), shape = RoundedCornerShape(16.dp), border = BorderStroke(1.dp, Color(0xFF6B3446)), modifier = Modifier.fillMaxWidth()) {
             Row(Modifier.padding(start = 16.dp, top = 6.dp, bottom = 6.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text(message, color = Color(0xFFFFC2CF), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                Text(if (productUi) productErrorMessage(message) else message, color = Color(0xFFFFC2CF), style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                 TextButton(onClick = { model.dismissMessages() }) { Text("OK") }
             }
         }

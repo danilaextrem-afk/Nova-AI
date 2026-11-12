@@ -160,7 +160,9 @@ interface NovaApi {
     @DELETE("v1/creators/{id}/follow") suspend fun unfollow(@Header("Authorization") bearer: String, @Path("id") id: String)
     @PUT("v1/publications/{id}/like") suspend fun like(@Header("Authorization") bearer: String, @Path("id") id: String)
     @GET("v1/publications/{id}/comments") suspend fun comments(@Header("Authorization") bearer: String, @Path("id") id: String): CommentPage
-    @POST("v1/publications/{id}/comments") suspend fun comment(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: Map<String,String>)
+    @POST("v1/publications/{id}/comments") suspend fun comment(
+        @Header("Authorization") bearer: String, @Path("id") id: String, @Body body: CommentRequest
+    )
 
     @POST("v1/auth/refresh") fun refreshSync(@Body body: RefreshBody): retrofit2.Call<AuthTokens>
     @POST("v1/auth/logout") suspend fun logout(@Header("Authorization") bearer: String)

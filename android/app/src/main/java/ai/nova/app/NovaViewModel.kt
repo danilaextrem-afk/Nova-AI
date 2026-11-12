@@ -116,13 +116,15 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     var draftGender by mutableStateOf<String?>(null)
     var draftTraits by mutableStateOf<List<String>>(emptyList())
     fun selectMatureSection(on: Boolean) {
-        matureSection = on && showMature
+        val nextSection = on && showMature
+        if (matureSection != nextSection) catalog = emptyList()
+        matureSection = nextSection
         selectCatalogView(CatalogView.PUBLIC)
     }
     fun updateShowMature(on: Boolean) {
         execute {
             showMature = service().contentSettings(authorization(), ContentSettingsBody(on, if (on) true else null)).showMature
-            if (!showMature) matureSection = false
+            if (!showMature) hideMatureCollections()
             notification = if (showMature) "Раздел 18+ включён" else "Раздел 18+ скрыт"
         }
     }
@@ -625,8 +627,15 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 val api = service()
                 val bearer = authorization()
-                loadDiscoverPart { recommended = api.recommended(bearer).items.filterNot { it.id in seenRecommendations } }
-                loadDiscoverPart { shelves = api.shelves(bearer).collections.orEmpty() }
+                loadAccountContentSettings(api, bearer)
+                loadDiscoverPart {
+                    recommended = api.recommended(bearer).items.filter { it.id !in seenRecommendations && (showMature || !it.mature) }
+                }
+                loadDiscoverPart {
+                    shelves = api.shelves(bearer).collections.orEmpty().map { shelf ->
+                        shelf.copy(items = shelf.items.filter { showMature || !it.mature })
+                    }
+                }
                 loadDiscoverPart { recentStories = api.chats(bearer, null).items }
             } finally {
                 discoverLoading = false
@@ -1111,13 +1120,22 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     private suspend fun loadAccountContentSettings(api: NovaApi, bearer: String) {
         try {
             showMature = api.me(bearer).profile?.showMature == true
-            if (!showMature) matureSection = false
+            if (!showMature) hideMatureCollections()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) {
             // Keep the last confirmed preference if settings are temporarily unavailable.
         }
     }
+    private fun hideMatureCollections() {
+        if (matureSection) catalogNextCursor = null
+        matureSection = false
+        catalog = catalog.filterNot { it.mature }
+        favorites = favorites.filterNot { it.mature }
+        recommended = recommended.filterNot { it.mature }
+        shelves = shelves.map { shelf -> shelf.copy(items = shelf.items.filterNot { it.mature }) }
+    }
+
     fun readNotification(id:String) {execute {service().readNotification(authorization(),id);notifications=service().notifications(authorization()).items} }
     fun reportMessage(id:String) {execute {service().report(authorization(),ReportBody("MESSAGE",id,"Жалоба пользователя на ответ AI"));notification="Жалоба отправлена"} }
     /** New version of the latest AI reply. Free in free mode; Premium is charged once, only on success. */
