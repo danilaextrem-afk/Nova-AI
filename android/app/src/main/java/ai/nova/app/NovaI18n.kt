@@ -88,6 +88,7 @@ private val EN_PATTERNS: List<Pair<Regex, (List<String>) -> String>> = listOf(
     Regex("Символов: (\\d+) из минимум 10") to { g -> "Characters: ${g[1]} of at least 10" },
     Regex("Не удалось создать аккаунт \\(код (\\d+)\\)\\. Попробуй ещё раз\\.") to { g -> "Could not create the account (code ${g[1]}). Try again." },
     Regex("Не удалось войти \\(код (\\d+)\\)\\. Попробуй ещё раз\\.") to { g -> "Could not sign in (code ${g[1]}). Try again." },
+    Regex("Групповая сцена · персонажей: (\\d+)") to { g -> "Group scene · characters: ${g[1]}" },
     Regex("(\\d+) Токены") to { g -> "${g[1]} Tokens" },
     Regex("◈ (\\d+) Токены") to { g -> "◈ ${g[1]} Tokens" },
 )
@@ -204,6 +205,26 @@ private val EN: Map<String, String> = mapOf(
     "Записи используются только в этой переписке. Их можно исправить или удалить." to "Notes are used only in this conversation. You can edit or delete them.",
     "Открепить" to "Unpin", "Закрепить" to "Pin", "Важный факт или событие" to "Important fact or event", "Добавить воспоминание" to "Add memory",
     "Сохранить воспоминание" to "Save memory",
+    // Groups, lasting memory, scenarios
+    "Участники сцены" to "Scene cast",
+    "До 5 персонажей. Каждый отвечает своим голосом; за ход говорят двое (в Premium — трое): сначала те, к кому ты обратился по имени, затем те, кто дольше молчал." to
+        "Up to 5 characters. Each answers in their own voice; two speak per turn (three in Premium): first those you addressed by name, then whoever has been silent longest.",
+    "Убрать из сцены" to "Remove from scene", "Скрыть список" to "Hide list", "Пригласить персонажа" to "Invite a character",
+    "Что персонаж помнит о тебе" to "What the character remembers about you",
+    "Эти записи персонаж учитывает во всех твоих историях с ним. Их видишь только ты; автор персонажа и другие люди — нет." to
+        "The character uses these notes in all your stories with them. Only you can see them; the character's author and other people cannot.",
+    "Записано автоматически" to "Recorded automatically", "Забыть" to "Forget", "Что персонажу стоит помнить" to "What the character should remember",
+    "Запомнить" to "Remember",
+    "Записи используются только в этой переписке. Важные события, факты и отношения записываются автоматически каждые несколько ходов. Любую запись можно исправить или удалить." to
+        "Notes are used only in this conversation. Important events, facts and relationships are recorded automatically every few turns. Any note can be edited or deleted.",
+    "Событие · записано автоматически" to "Event · recorded automatically", "Отношения · записано автоматически" to "Relationship · recorded automatically",
+    "Факт · записано автоматически" to "Fact · recorded automatically", "Факт" to "Fact", "Отношения" to "Relationship", "Сводка истории" to "Story summary",
+    "Сводка истории · записано автоматически" to "Story summary · recorded automatically",
+    "Сценарии" to "Scenarios", "Начать этот сценарий" to "Start this scenario", "Название сценария" to "Scenario title",
+    "Мир и завязка сценария" to "World and opening of the scenario", "Добавить сценарий" to "Add scenario", "Профиль и сценарии" to "Profile and scenarios",
+    "В сцене может быть до 5 персонажей" to "A scene can have up to 5 characters", "Персонаж вышел из сцены" to "The character left the scene",
+    "Персонаж присоединился к сцене" to "The character joined the scene", "Заполни название и описание сценария" to "Fill in the scenario title and description",
+    "Сценарий добавлен" to "Scenario added",
     // Voice
     "ГОЛОС ПЕРСОНАЖА" to "CHARACTER VOICE", "Читать ответы вслух" to "Read replies aloud", "низкий" to "low", "высокий" to "high", "средний" to "medium",
     "Прослушать голос" to "Preview voice", "Привет! Так звучит мой голос." to "Hi! This is how my voice sounds.",

@@ -459,6 +459,25 @@ private fun CharacterProfileSheet(model: NovaViewModel) {
                         })
                         Text("Участник групповой истории (до 4)", style = MaterialTheme.typography.bodyMedium)
                     }
+                    // Author scenarios: the same character in different worlds, each as a separate story.
+                    LaunchedEffect(c.id) { model.loadScenarios(c.id) }
+                    val mine = model.owned.any { it.id == c.id }
+                    if (model.scenarios.isNotEmpty() || mine) Text("Сценарии", style = MaterialTheme.typography.titleMedium)
+                    model.scenarios.forEach { sc ->
+                        NovaCard {
+                            androidx.compose.material3.Text(sc.title, style = MaterialTheme.typography.titleSmall)
+                            androidx.compose.material3.Text(sc.scenario, style = MaterialTheme.typography.bodySmall, color = NovaDesign.Muted, maxLines = 4)
+                            Row {
+                                TextButton(onClick = { model.startChat(c, sc) }, enabled = !model.loading) { Text("Начать этот сценарий") }
+                                if (mine) TextButton(onClick = { model.deleteScenario(c.id, sc.id) }, enabled = !model.loading) { Text("Удалить") }
+                            }
+                        }
+                    }
+                    if (mine && model.scenarios.size < 8) {
+                        OutlinedTextField(value = model.scenarioTitle, onValueChange = { model.scenarioTitle = it.take(80) }, label = { Text("Название сценария") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                        OutlinedTextField(value = model.scenarioText, onValueChange = { model.scenarioText = it.take(2000) }, label = { Text("Мир и завязка сценария") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+                        OutlinedButton(onClick = { model.addScenario(c.id) }, enabled = !model.loading) { Text("Добавить сценарий") }
+                    }
                     Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(4.dp)) {
                         TextButton(onClick = { model.cloneCharacter(c.id) }, enabled = !model.loading) { Text("Создать свою версию") }
                         TextButton(onClick = { model.openArt(listOfNotNull(c.name, c.appearance?.takeIf { it.isNotBlank() } ?: c.biography).joinToString(", ")) }) { Text("Нарисовать арт") }
@@ -551,6 +570,7 @@ private fun CreateScreen(model: NovaViewModel) {
             Text(character.greeting)
             Button(onClick={model.startChat(character)},enabled=!model.loading){Text("Общаться")}
             OutlinedButton(onClick={model.editCharacter(character)},enabled=!model.loading){Text("Редактировать")}
+            OutlinedButton(onClick={model.showCharacterProfile(character.id)},enabled=!model.loading){Text("Профиль и сценарии")}
             OutlinedButton(onClick={model.hideCharacter(character.id)},enabled=!model.loading){Text("Скрыть из каталога")}
             OutlinedButton(onClick={model.publishCharacter(character.id)},enabled=!model.loading){Text("Отправить на модерацию")}
         }

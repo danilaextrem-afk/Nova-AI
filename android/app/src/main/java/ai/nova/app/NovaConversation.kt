@@ -42,7 +42,7 @@ import androidx.compose.material.icons.filled.Stop
    NovaPortrait(chat.characterId,chat.characterName?:chat.title?:"NOVA",Modifier.size(44.dp).clip(CircleShape),model.chatPortraitUrl(chat.characterId))
    Column(Modifier.weight(1f)){
     Text(chat.characterName?:chat.title?:"Твоя история",style=MaterialTheme.typography.titleMedium,maxLines=1)
-    Text("Вымышленный AI-персонаж",style=MaterialTheme.typography.labelSmall,color=NovaDesign.Muted)
+    Text(if(chat.participantIds.isNullOrEmpty())"Вымышленный AI-персонаж" else "Групповая сцена · персонажей: ${chat.participantIds.size+1}",style=MaterialTheme.typography.labelSmall,color=NovaDesign.Muted)
    }
    TextButton(onClick={settings=true},contentPadding=PaddingValues(4.dp)){Text("Ещё")}
   }
@@ -50,7 +50,15 @@ import androidx.compose.material.icons.filled.Stop
  LazyColumn(state=list,modifier=Modifier.weight(1f).fillMaxWidth(),contentPadding=PaddingValues(14.dp),verticalArrangement=Arrangement.spacedBy(12.dp)){
   item { Text("Это разговор с AI. Не отправляй конфиденциальные данные.",style=MaterialTheme.typography.bodySmall,color=NovaDesign.Muted) }
   if(model.nextBefore!=null)item{TextButton(onClick={model.loadOlder()},enabled=!model.loading){Text("Более ранние сообщения")}}
-  if(model.chatMessages.isEmpty())item{
+  if(model.chatMessages.isEmpty())model.chatGreeting?.let{hello->item{
+   Surface(color=NovaDesign.Surface,shape=RoundedCornerShape(22.dp),border=BorderStroke(1.dp,NovaDesign.Border)){
+    Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
+     Text((chat.characterName?:chat.title?:"NOVA").uppercase(),style=MaterialTheme.typography.labelSmall,color=NovaDesign.Rose)
+     androidx.compose.material3.Text(hello,style=MaterialTheme.typography.bodyLarge)
+    }
+   }
+  }}
+  if(model.chatMessages.isEmpty()&&model.chatGreeting==null)item{
    Column(Modifier.fillMaxWidth().padding(vertical=28.dp),horizontalAlignment=Alignment.CenterHorizontally,verticalArrangement=Arrangement.spacedBy(10.dp)){
     Text("Всё начинается\nс одного «привет».",style=MaterialTheme.typography.headlineMedium)
     Text("Выбери слова. Историю создадите вместе.",color=NovaDesign.Muted,style=MaterialTheme.typography.bodySmall)
@@ -65,7 +73,7 @@ import androidx.compose.material.icons.filled.Stop
      shape=RoundedCornerShape(topStart=22.dp,topEnd=22.dp,bottomEnd=if(mine)6.dp else 22.dp,bottomStart=if(mine)22.dp else 6.dp),
      border=BorderStroke(1.dp,if(mine)Color(0xFF604578)else NovaDesign.Border),modifier=Modifier.widthIn(max=520.dp).fillMaxWidth(if(mine)0.90f else 0.97f).animateContentSize()){
      Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
-      Text(if(mine)"ТЫ" else (chat.characterName?:chat.title?:"NOVA").uppercase(),style=MaterialTheme.typography.labelSmall,color=if(mine)NovaDesign.Lavender else NovaDesign.Rose)
+      Text(if(mine)"ТЫ" else (message.speakerName?:chat.characterName?:chat.title?:"NOVA").uppercase(),style=MaterialTheme.typography.labelSmall,color=if(mine)NovaDesign.Lavender else NovaDesign.Rose)
       Text(message.content,style=MaterialTheme.typography.bodyLarge)
       if(!message.alternatives.isNullOrEmpty())Text("Версия ${message.alternatives.size+1} · прежние сохранены",style=MaterialTheme.typography.labelSmall,color=NovaDesign.Muted)
      }
