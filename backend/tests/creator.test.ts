@@ -102,6 +102,14 @@ describe('Avatars and the finished character',()=>{
   expect(file.headers['cache-control']).toBe('private, no-store');
   expect(file.statusCode).toBe(200);expect(file.headers['content-type']).toBe('image/jpeg');expect(file.headers['x-content-type-options']).toBe('nosniff');
   expect(file.rawPayload.length).toBe(2000);
+  const reopened = await buildApp(new PrismaClient());
+  try {
+    const persisted = await reopened.inject({ url, headers: headers(u) });
+    expect(persisted.statusCode).toBe(200);
+    expect(persisted.rawPayload.equals(file.rawPayload)).toBe(true);
+  } finally {
+    await reopened.close();
+  }
   const published = await db.character.create({ data: { ownerId: u, name: 'Портрет', greeting: 'Привет', category: 'Тест',
     tags: [], avatarUrl: ok.json().url, publication: { create: { status: 'PUBLISHED' } } } });
   expect((await app.inject({ url })).statusCode).toBe(200);

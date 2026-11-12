@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
-import { completeAiChat } from './aiGateway.js';
+import { AiProviderError, completeAiChat } from './aiGateway.js';
 import { utf8Prefix } from './characterPrompt.js';
 
 /**
@@ -32,13 +32,19 @@ export function parseExtraction(text: string): Extraction | null {
 
 // Single flight per conversation on this worker. PostgreSQL commits the cursor with the notes.
 const activeExtractions = new Set<string>();
+const pausedExtractions = new Set<string>();
 
 /** Best-effort; an upstream failure leaves the range available for the next turn. */
 export async function extractMemories(db: PrismaClient, chatId: string, userId: string): Promise<number> {
-  if (activeExtractions.has(chatId)) return 0;
+  if (activeExtractions.has(chatId) || pausedExtractions.has(chatId)) return 0;
   activeExtractions.add(chatId);
   try {
     return await extractRange(db, chatId, userId);
+  } catch (error) {
+    const seconds = error instanceof AiProviderError ? error.retryAfter : 30;
+    pausedExtractions.add(chatId);
+    setTimeout(() => pausedExtractions.delete(chatId), Math.max(30000, Math.min(seconds * 1000, 300000))).unref();
+    throw error;
   } finally {
     activeExtractions.delete(chatId);
   }
@@ -69,7 +75,7 @@ async function extractRange(db: PrismaClient, chatId: string, userId: string): P
     }) },
   ], 'free', db, undefined, { maxOutput: 900, temperature: 0.25 });
   const parsed = parseExtraction(result.text);
-  if (!parsed) return 0;
+  if (!parsed) throw new AiProviderError("AI_BAD_MEMORY_FORMAT", 502);
   let written = 0;
   await db.$transaction(async tx => {
     const advanced = await tx.chat.updateMany({

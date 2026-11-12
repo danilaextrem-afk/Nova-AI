@@ -101,6 +101,29 @@ describe('Story memory',()=>{
   expect((await db.characterMemory.findMany({where:{userId:u,characterId:c.id}})).map(m=>m.content)).toEqual(['Игрок любит шторма']);
   expect(await extractMemories(db,chat.id,u)).toBe(0);expect(calls.length).toBe(1);
  });
+ it('persists the rolling summary and supplies it in a subsequent request', async () => {
+  const uid = await user();
+  const lead = await character(uid, 'Аврора');
+  const thread = await db.chat.create({ data: { userId: uid, characterId: lead.id } });
+  await db.message.createMany({ data: Array.from({ length: EXTRACT_EVERY_MESSAGES }, (_, index) => ({
+   chatId: thread.id, role: index % 2 ? 'assistant' : 'user', content: 'Улика ' + index,
+  })) });
+  provider(() => JSON.stringify({ summary: 'Аврора нашла медный ключ в вазе.' }));
+  await extractMemories(db, thread.id, uid);
+  const stored = await db.chat.findUniqueOrThrow({ where: { id: thread.id } });
+  expect(stored.summaryThrough).toBeGreaterThan(0);
+  expect(stored.summaryThrough).toBe(stored.memoryThrough);
+  expect(await db.memory.findFirst({ where: { chatId: thread.id, kind: 'SUMMARY' } }))
+   .toMatchObject({ source: 'auto', content: 'Аврора нашла медный ключ в вазе.' });
+
+  const calls = provider(() => 'Ключ был в вазе.');
+  const response = await app.inject({
+   method: 'POST', url: `/v1/chats/${thread.id}/messages`, headers: auth(uid),
+   payload: { requestId: randomUUID(), content: 'Где был ключ?' },
+  });
+  expect(response.statusCode, response.body).toBe(200);
+  expect(JSON.parse(calls[0].messages[1].content).storySoFar).toBe('Аврора нашла медный ключ в вазе.');
+ });
  it('uses character memory in later chats of the same user only, and lets the user edit and delete it',async()=>{
   const u=await user();const stranger=await user();const c=await character(u,'Аврора');
   await db.character.update({where:{id:c.id},data:{publication:{create:{status:'PUBLISHED'}}}}).catch(()=>{});
