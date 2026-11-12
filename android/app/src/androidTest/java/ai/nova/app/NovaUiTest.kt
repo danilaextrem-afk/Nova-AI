@@ -324,10 +324,43 @@ class NovaUiTest {
   screenshot("28-group-scene")
   compose.onNodeWithContentDescription("Голосовой разговор").performClick()
   waitFor("voice screen"){compose.onAllNodesWithText("ГОЛОСОВОЙ РАЗГОВОР").fetchSemanticsNodes().isNotEmpty()}
-  // The emulator has no granted microphone: the screen must explain instead of silently failing.
-  assertTrue(compose.onAllNodesWithText("Разрешить микрофон").fetchSemanticsNodes().isNotEmpty()||
-   compose.onAllNodesWithText("На телефоне нет службы распознавания речи").fetchSemanticsNodes().isNotEmpty())
+  // Either it asks for the microphone, explains what is missing, or (permission already granted by
+  // another test in this install) starts listening; it never fails silently.
+  waitFor("voice state"){listOf("Разрешить микрофон","На телефоне нет службы распознавания речи","Слушаю тебя…","Пауза")
+   .any{compose.onAllNodesWithText(it).fetchSemanticsNodes().isNotEmpty()}}
   screenshot("29-voice-conversation")
+  compose.onNodeWithText("Завершить разговор").performClick()
+  waitFor("voice closed"){compose.onAllNodesWithText("ГОЛОСОВОЙ РАЗГОВОР").fetchSemanticsNodes().isEmpty()}
+ }
+ /**
+  * Voice mode with the microphone permission granted, as on a phone after "Allow". Reports what this
+  * device really offers (speech recognition service, speech engine) instead of assuming it.
+  */
+ @Test fun voiceModeWithMicrophonePermissionListensOrExplainsWhatIsMissing(){
+  groupMode=true
+  val ctx=compose.activity
+  InstrumentationRegistry.getInstrumentation().uiAutomation.grantRuntimePermission(ctx.packageName,android.Manifest.permission.RECORD_AUDIO)
+  val recognizer=android.speech.SpeechRecognizer.isRecognitionAvailable(ctx)
+  val tts=java.util.concurrent.CountDownLatch(1);var ttsOk=false
+  compose.runOnUiThread{var engine:android.speech.tts.TextToSpeech?=null;engine=android.speech.tts.TextToSpeech(ctx){st->ttsOk=st==android.speech.tts.TextToSpeech.SUCCESS;engine?.shutdown();tts.countDown()}}
+  tts.await(10,java.util.concurrent.TimeUnit.SECONDS)
+  android.util.Log.i("NovaVoiceCheck","speechRecognizer=$recognizer textToSpeech=$ttsOk")
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  waitFor("home"){compose.onAllNodesWithText("Чаты").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Чаты").performClick()
+  waitFor("chat list"){compose.onAllNodesWithText("Аврора Вейл, Кай Номад").fetchSemanticsNodes().isNotEmpty()}
+  waitFor("idle"){!vm().loading}
+  compose.onNodeWithText("Аврора Вейл, Кай Номад").performClick()
+  waitFor("chat"){compose.onAllNodesWithContentDescription("Голосовой разговор").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithContentDescription("Голосовой разговор").performClick()
+  waitFor("voice screen"){compose.onAllNodesWithText("ГОЛОСОВОЙ РАЗГОВОР").fetchSemanticsNodes().isNotEmpty()}
+  // With the permission granted the app must never ask for it again.
+  assertTrue(compose.onAllNodesWithText("Разрешить микрофон").fetchSemanticsNodes().isEmpty())
+  if(recognizer) waitFor("listening or a clear recognition error"){listOf("Слушаю тебя…","Пауза").any{compose.onAllNodesWithText(it).fetchSemanticsNodes().isNotEmpty()}}
+  else compose.onNodeWithText("На телефоне нет службы распознавания речи").assertExists()
+  screenshot("39-voice-permission-granted")
   compose.onNodeWithText("Завершить разговор").performClick()
   waitFor("voice closed"){compose.onAllNodesWithText("ГОЛОСОВОЙ РАЗГОВОР").fetchSemanticsNodes().isEmpty()}
  }
@@ -414,6 +447,8 @@ class NovaUiTest {
      compose.onAllNodesWithText("Не удалось открыть изображение.", substring = true).fetchSemanticsNodes().isNotEmpty()
    }
    compose.onNodeWithText("Масштаб").assertExists()
+   // The consent checkbox sits right under the photo, visible without scrolling the dialog.
+   waitFor("consent visible"){runCatching{compose.onNode(isToggleable() and hasAnyAncestor(isDialog())).assertIsDisplayed()}.isSuccess}
    screenshot("38-portrait-crop")
    compose.onNode(isToggleable() and hasAnyAncestor(isDialog())).reveal().performClick()
    clickWhenEnabled("Сохранить портрет")
@@ -439,6 +474,8 @@ class NovaUiTest {
   assertEquals("Эй! Ты разбираешься в моторах?",saved.get("greeting").asString);assertEquals("https://example.test/media/m1.jpg",saved.get("avatarUrl").asString)
   assertEquals(2,saved.getAsJsonArray("traits").size())
   waitFor("ready card"){compose.onAllNodesWithText("ПЕРСОНАЖ ГОТОВ").fetchSemanticsNodes().isNotEmpty()}
+  // The confirmation must be on screen, not above the fold where the person cannot see it.
+  waitFor("ready card visible"){runCatching{compose.onNodeWithText("ПЕРСОНАЖ ГОТОВ").assertIsDisplayed()}.isSuccess}
   screenshot("37-character-ready")
   clickWhenEnabled("Начать чат")
   waitFor("chat opened"){compose.onAllNodesWithText("Напиши сообщение").fetchSemanticsNodes().isNotEmpty()}

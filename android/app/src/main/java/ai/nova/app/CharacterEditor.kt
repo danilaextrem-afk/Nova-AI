@@ -18,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -101,14 +102,14 @@ private fun SuggestionCard(model: NovaViewModel, key: String, s: NovaViewModel.F
                 label = { Text("Можно поправить перед тем, как принять") }, maxLines = 8)
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                 Button(onClick = { model.acceptField(key, edited) }, enabled = edited.isNotBlank()) { Text("Принять") }
-                TextButton(onClick = { model.assistField(key, s.action) }, enabled = model.assistBusy == null) { Text("Другой вариант") }
+                TextButton(onClick = { model.assistField(key, s.action) }, enabled = model.assistBusy == null) { Text("Ещё вариант", maxLines = 1) }
                 TextButton(onClick = { model.fieldSuggestion = null }) { Text("Отмена") }
             }
         }
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+@OptIn(ExperimentalLayoutApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun CharacterEditor(model: NovaViewModel) {
     var ideaOpen by remember { mutableStateOf(false) }
@@ -139,26 +140,15 @@ fun CharacterEditor(model: NovaViewModel) {
     }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri -> if (uri != null) consentUri = uri }
 
-    Text(if (model.editingCharacterId == null) "Создать персонажа" else "Редактировать персонажа", style = MaterialTheme.typography.headlineMedium)
-    Text("Уникальный AI-персонаж для общения, историй и ролевых сцен. Черновик сохраняется на телефоне автоматически.",
+    Text(if (model.editingCharacterId == null) "Создать персонажа" else "Редактировать персонажа", style = MaterialTheme.typography.headlineSmall)
+    Text("Черновик сохраняется на телефоне автоматически.",
         color = NovaDesign.Muted, style = MaterialTheme.typography.bodySmall)
-    model.lastCreated?.let { done ->
-        NovaCard {
-            NovaEyebrow("ПЕРСОНАЖ ГОТОВ")
-            androidx.compose.material3.Text(done.name, style = MaterialTheme.typography.titleLarge)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = { model.lastCreated = null; model.startChat(done) }, enabled = !model.loading) { Text("Начать чат") }
-                TextButton(onClick = { model.lastCreated = null }) { Text("Создать ещё") }
-            }
-        }
-    }
-
     // 1. One sentence -> a whole card.
     Surface(shape = RoundedCornerShape(24.dp), modifier = Modifier.fillMaxWidth()) {
         Box(Modifier.background(Brush.linearGradient(listOf(Color(0xFF5B3A8E), Color(0xFF2A1F40)))).padding(16.dp)) {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("Не знаешь, с чего начать?", style = MaterialTheme.typography.titleMedium, color = Color.White)
-                Text("Опиши идею одной фразой — AI предложит имя, характер, историю, сценарий и первое сообщение. Ты всё проверишь перед сохранением.",
+                Text("Одна фраза — и AI предложит всю карточку. Ты всё проверишь перед сохранением.",
                     style = MaterialTheme.typography.bodySmall, color = Color(0xFFE6DAFF))
                 Button(onClick = { ideaOpen = true }, enabled = model.assistBusy == null, modifier = Modifier.fillMaxWidth().height(52.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = NovaDesign.Lavender, contentColor = Color(0xFF1B1430))) {
@@ -290,6 +280,20 @@ fun CharacterEditor(model: NovaViewModel) {
     if (missing.isNotEmpty()) androidx.compose.material3.Text(tr("Осталось заполнить: ") + missing.joinToString(", ") { tr(it) }, style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted)
     Text("После сохранения персонаж личный. Чтобы он появился в каталоге, отправь его на модерацию.", style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted)
     if (model.draftHasContent) TextButton(onClick = { model.clearDraft() }) { Text("Очистить черновик") }
+    // Shown right under the save button, where the person is looking after tapping it.
+    model.lastCreated?.let { done ->
+        val readySpot = remember { androidx.compose.foundation.relocation.BringIntoViewRequester() }
+        LaunchedEffect(done.id) { kotlinx.coroutines.delay(150); readySpot.bringIntoView() }
+        Box(Modifier.bringIntoViewRequester(readySpot)) { NovaCard {
+            NovaEyebrow("ПЕРСОНАЖ ГОТОВ")
+            androidx.compose.material3.Text(done.name, style = MaterialTheme.typography.titleLarge)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = { model.lastCreated = null; model.startChat(done) }, enabled = !model.loading) { Text("Начать чат") }
+                TextButton(onClick = { model.lastCreated = null }) { Text("Создать ещё") }
+            }
+        } }
+    }
+
 
     if (ideaOpen) IdeaDialog(model) { ideaOpen = false }
     model.cardSuggestion?.let { CardPreviewDialog(model, it) }
@@ -351,7 +355,7 @@ private fun CardPreviewDialog(model: NovaViewModel, c: AssistCard) {
                     Button(onClick = { model.applyCard() }, modifier = Modifier.fillMaxWidth().height(52.dp)) { Text("Применить ко всей карточке") }
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         OutlinedButton(onClick = { model.cardSuggestion = null; model.assistFull(model.lastIdea) }, enabled = model.assistBusy == null, modifier = Modifier.weight(1f)) {
-                            if (model.assistBusy == "card") CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Другой вариант") }
+                            if (model.assistBusy == "card") CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) else Text("Ещё вариант", maxLines = 1) }
                         TextButton(onClick = { model.cardSuggestion = null }, modifier = Modifier.weight(1f)) { Text("Отмена") }
                     }
                 }

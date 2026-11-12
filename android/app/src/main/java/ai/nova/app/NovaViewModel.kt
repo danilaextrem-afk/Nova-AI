@@ -619,7 +619,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         val code = runCatching { gson.fromJson(e.response()?.errorBody()?.string(), Map::class.java)["error"] as? String }.getOrNull()
         return when (code) {
             "CREATOR_REQUEST_REJECTED" -> "AI не создаёт несовершеннолетних и откровенных персонажей. Измени описание."
-            "CREATOR_RESULT_REJECTED" -> "AI предложил неподходящий текст. Нажми «Другой вариант»."
+            "CREATOR_RESULT_REJECTED" -> "AI предложил неподходящий текст. Нажми «Ещё вариант»."
             "CREATOR_DAILY_LIMIT" -> "На сегодня подсказки AI закончились. Завтра будут снова — а поля можно заполнить и вручную."
             "FIELD_EMPTY" -> "В поле пока нет текста. Выбери «Написать с нуля»."
             "AI_BAD_FORMAT" -> "AI ответил неразборчиво. Попробуй ещё раз."
