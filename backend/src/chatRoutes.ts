@@ -8,7 +8,7 @@ import { buildCharacterPrompt } from './characterPrompt.js';
 import { settleReferral } from './rewardRoutes.js';
 import { showsMature } from './characters.js';
 import { balance, debitInTransaction, InsufficientTokensError } from './ledger.js';
-import { extractMemories, pickSpeakers, stripSpeakerPrefix, registerMemoryRoutes } from './memoryEngine.js';
+import { extractMemories, pickSpeakers, stripSpeakerPrefix, keepOwnVoice, registerMemoryRoutes } from './memoryEngine.js';
 
 export const visibleCharacter = (userId:string,showMature=false):Prisma.CharacterWhereInput => ({OR:[
   {ownerId:userId},{isHidden:false,publication:{is:{status:'PUBLISHED'}},owner:{blocksGot:{none:{blockerId:userId}},blocksMade:{none:{blockedId:userId}}},
@@ -233,7 +233,7 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
           });
         }
         catch(e){if(i===0||stream.signal?.aborted)throw e;break;}
-        const text=isGroup?stripSpeakerPrefix(output.text,sp.name):output.text;
+        const text=isGroup?keepOwnVoice(stripSpeakerPrefix(output.text,sp.name),cast.filter(c=>c.id!==sp.id).map(c=>c.name)):output.text;
         outputs.push({speaker:sp,output,text});turn.push({ name: sp.name, text });
       }
       const output=outputs[0].output;

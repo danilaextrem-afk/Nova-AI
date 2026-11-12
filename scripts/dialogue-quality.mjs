@@ -171,8 +171,12 @@ try {
     const group = await chat(vera.id, 'Вера и Илья встретились в архиве.', [ilya.id]);
     const groupReply = await send(group, 'Вера и Илья, каждый представьтесь и назовите вашу профессию одним предложением.', '10');
     const speakers = [groupReply.body.assistantMessage, ...(groupReply.body.extraMessages ?? [])];
-    check('10 · Group speaker identity', speakers.some(m => m.speakerId === vera.id && /реставр/i.test(m.content))
-      && speakers.some(m => m.speakerId === ilya.id && /маяк/i.test(m.content)));
+    // Each speaker must speak only for itself: Vera's line must not introduce Ilya, and vice versa.
+    const veraLine = speakers.find(m => m.speakerId === vera.id)?.content ?? '';
+    const ilyaLine = speakers.find(m => m.speakerId === ilya.id)?.content ?? '';
+    check('10 · Group speaker identity', /реставр/i.test(veraLine) && /маяк/i.test(ilyaLine)
+      && !/Илья(?: Невский)?\s*[,:]\s*(?:я\s*[—–-]|[А-ЯЁ])/u.test(veraLine) && !/Вера(?: Снегир[ёе]ва)?\s*[,:]\s*(?:я\s*[—–-]|[А-ЯЁ])/u.test(ilyaLine),
+      'Vera: ' + veraLine.slice(0, 90) + ' | Ilya: ' + ilyaLine.slice(0, 90));
 
     const note = requireOk(await call('POST', '/v1/chats/' + archive + '/memories', { content: 'Код сейфа — Серый Лист.', pinned: true }), 'Add memory').memory;
     requireOk(await call('PATCH', '/v1/chats/' + archive + '/memories/' + note.id,
