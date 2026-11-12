@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.dp
 internal fun HomeScreen(model: NovaViewModel) {
     val featured = model.recommended.firstOrNull()
         ?: model.shelves.asSequence().flatMap { it.items.asSequence() }.firstOrNull()
+        ?: model.catalog.firstOrNull { model.catalogView == CatalogView.PUBLIC && !model.matureSection && !it.mature }
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         Box(
             Modifier.fillMaxWidth().height(244.dp).clip(RoundedCornerShape(28.dp))

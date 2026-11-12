@@ -256,7 +256,7 @@ class NovaUiTest {
   waitFor("published reply draft"){compose.onAllNodesWithText("Хочу продолжение · На модерации").fetchSemanticsNodes().isNotEmpty()}
   val request=com.google.gson.JsonParser.parseString(replyBody).asJsonObject
   assertEquals(rootComment,request.get("parentId").asString)
-  compose.onNodeWithText("Хочу продолжение · На модерации").reveal()
+  compose.onNodeWithText("Хочу продолжение · На модерации").reveal().assertIsDisplayed()
   screenshot("36-product-reply")
  }
  @Test fun sessionStoreEncryptsAndReadsAcrossInstances(){

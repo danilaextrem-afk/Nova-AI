@@ -19,6 +19,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -47,13 +49,13 @@ internal fun CharacterProfileSheet(model: NovaViewModel) {
     Dialog(onDismissRequest = { model.profileCharacter = null },
         properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.fillMaxSize(), color = NovaDesign.Ink) {
-            Column(Modifier.navigationBarsPadding().imePadding().verticalScroll(rememberScrollState())) {
+            Column(Modifier.statusBarsPadding().navigationBarsPadding().imePadding().verticalScroll(rememberScrollState())) {
                 Box(Modifier.fillMaxWidth().height(360.dp)) {
                     NovaPortrait(c.id, c.name, Modifier.fillMaxSize(), c.avatarUrl ?: entry?.avatarUrl)
                     Box(Modifier.fillMaxSize().background(Brush.verticalGradient(listOf(Color(0x66100B18), Color.Transparent, Color(0xFA0C0B14)))))
-                    TextButton(onClick = { model.profileCharacter = null }, modifier = Modifier.statusBarsPadding().padding(8.dp)) { Text("Закрыть профиль", color = Color.White) }
+                    TextButton(onClick = { model.profileCharacter = null }, modifier = Modifier.padding(8.dp)) { Text("Закрыть профиль", color = Color.White) }
                     FilledTonalIconButton(onClick = { portraitOpen = true },
-                        modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(8.dp)) {
+                        modifier = Modifier.align(Alignment.TopEnd).padding(8.dp)) {
                         Icon(Icons.Default.Fullscreen, contentDescription = "Открыть портрет")
                     }
                     Column(Modifier.align(Alignment.BottomStart).padding(22.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -156,7 +158,15 @@ internal fun CharacterProfileSheet(model: NovaViewModel) {
                             OutlinedTextField(value = model.commentInput, onValueChange = { model.commentInput = it.take(1000) },
                                 label = { Text(if (model.commentReplyTo == null) "Комментарий" else "Ответ на комментарий") },
                                 modifier = Modifier.fillMaxWidth(), maxLines = 4)
-                            Button(onClick = { model.sendComment() }, enabled = !model.loading && model.commentInput.isNotBlank()) { Text(if (model.commentReplyTo == null) "Отправить комментарий" else "Отправить ответ") }
+                            val focus = LocalFocusManager.current
+                            val keyboard = LocalSoftwareKeyboardController.current
+                            Button(onClick = {
+                                keyboard?.hide()
+                                focus.clearFocus()
+                                model.sendComment()
+                            }, enabled = !model.loading && model.commentInput.isNotBlank()) {
+                                Text(if (model.commentReplyTo == null) "Отправить комментарий" else "Отправить ответ")
+                            }
                         }
                     }
                     if (publication != null) ModerationActions(model, "PUBLICATION", publication.id, owner?.takeUnless { mine })
