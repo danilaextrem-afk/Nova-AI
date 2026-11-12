@@ -57,7 +57,7 @@ describe('Group chat orchestration',()=>{
   expect(first.json().extraMessages.map((m:any)=>m.speakerName)).toEqual(['Борис']);
   // The second speaker saw the first one's line and only its own character sheet.
   const context = JSON.parse(calls[1].messages[1].content);
-  expect(context.earlierReplies).toEqual([{ name: 'Аврора', text: 'реплика от Аврора' }]);
+  expect(context.earlierReplies).toEqual([{ name: 'Аврора', text: 'реплика от Аврора.' }]); // The impersonated 'Борис: …' line is cut before Борис sees the turn.
   expect(context.activeCharacter.name).toBe('Борис');
   expect(calls[1].messages[0].content).not.toContain('Аврора');
   // Replay of the same request returns the same turn and calls nothing.
