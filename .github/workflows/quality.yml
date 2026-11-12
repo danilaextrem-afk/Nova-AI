@@ -1,0 +1,52 @@
+name: Dialogue quality
+
+# Manual real-model evaluation of the deployed API (characters, memory, groups). Uses the free chat
+# quota of a throwaway account that the script deletes at the end. Run only on demand: a --full run
+# sends about 60 chat turns.
+on:
+  workflow_dispatch:
+    inputs:
+      expect:
+        description: 'Short SHA the API must report on /health (empty: any)'
+        required: false
+        default: ''
+      mode:
+        description: 'quick (identity, memory after 20 messages, group) or full (also 100 messages)'
+        required: false
+        default: 'full'
+
+permissions:
+  contents: read
+concurrency:
+  group: nova-live-check
+  cancel-in-progress: false
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run dialogue scenarios against the deployed API
+        env:
+          EXPECT: ${{ inputs.expect }}
+          MODE: ${{ inputs.mode }}
+        run: |
+          URL="$(tr -d '[:space:]' < android/nova-api-url.txt)"
+          ARGS=()
+          [ -n "$EXPECT" ] && ARGS+=("--expect=$EXPECT")
+          [ "$MODE" = "full" ] && ARGS+=("--full")
+          node scripts/dialogue-quality.mjs "$URL" "${ARGS[@]}" > quality.json
+          status=$?
+          node -e 'const r=require("./quality.json");console.log("Commit: "+r.commit);for(const x of r.rows)console.log(x.result.padEnd(8)+x.name+(x.detail?" — "+x.detail:""));for(const m of r.metrics)console.log("MODEL "+m.model+" replies="+m.replies+" median="+m.medianMs+"ms repeated="+m.repeatedReplies)'
+          exit $status
+      - name: Keep the full report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dialogue-quality
+          path: quality.json
+          if-no-files-found: ignore
