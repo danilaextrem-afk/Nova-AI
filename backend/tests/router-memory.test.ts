@@ -335,3 +335,29 @@ describe('Provider recovery (HTTP fixtures, not live AI)',()=>{
   expect(providerRequest({provider:'groq',model:'openai/gpt-oss-20b'},msgs,false,360).body.max_tokens).toBe(360);
  });
 });
+
+// Regression: a live request failed after every free model's minute window was full and Gemini timed out.
+describe('Waiting for the next quota minute (HTTP fixtures)',()=>{
+ const msgs=[{role:'system' as const,content:'Сцена'},{role:'user' as const,content:'Привет'}];
+ const fill=async(minuteStart:number)=>db.aiProviderState.create({data:{key:quotaKey({provider:'groq',model:'test-free'}),
+  minuteAt:new Date(minuteStart),dayAt:new Date(new Date(minuteStart).toISOString().slice(0,10)),minuteRequests:1}});
+ afterEach(()=>{vi.useRealTimers();});
+ it('waits a few seconds for the next minute instead of failing when only the minute window is full',async()=>{
+  vi.stubEnv('NOVA_AI_MODELS_JSON',JSON.stringify([model('groq','free',{rpm:1})]));
+  const minute=Math.floor(Date.now()/60000)*60000;
+  vi.useFakeTimers({toFake:['Date'],now:minute+57500,shouldAdvanceTime:true});await fill(minute);
+  const mock=vi.fn(async()=>ok('После ожидания'));vi.stubGlobal('fetch',mock);
+  const started=Date.now();const r=await completeAiChat(msgs,'free',db,randomUUID());
+  expect(r.text).toBe('После ожидания');expect(mock).toHaveBeenCalledTimes(1);
+  expect(Date.now()-started).toBeGreaterThanOrEqual(2500);expect(Date.now()-started).toBeLessThan(10000);
+ },20000);
+ it('does not wait long: far from the next minute it reports the rate limit at once',async()=>{
+  vi.stubEnv('NOVA_AI_MODELS_JSON',JSON.stringify([model('groq','free',{rpm:1})]));
+  const minute=Math.floor(Date.now()/60000)*60000;
+  vi.useFakeTimers({toFake:['Date'],now:minute+5000,shouldAdvanceTime:true});await fill(minute);
+  const mock=vi.fn(async()=>ok());vi.stubGlobal('fetch',mock);
+  const started=Date.now();
+  await expect(completeAiChat(msgs,'free',db,randomUUID())).rejects.toMatchObject({code:'AI_RATE_LIMITED'});
+  expect(mock).not.toHaveBeenCalled();expect(Date.now()-started).toBeLessThan(2000);
+ });
+});
