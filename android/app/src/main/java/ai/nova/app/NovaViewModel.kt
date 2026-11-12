@@ -132,12 +132,6 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     var draftGreeting by mutableStateOf("")
     var draftCategory by mutableStateOf("fantasy")
 
-    init {
-        restoreDraft()
-        if (accessToken != null) {
-            activeChat?.let { openChat(it) } ?: refreshCatalog()
-        }
-    }
     private fun service(): NovaApi {
         val url = serverUrl.trim().trimEnd('/') + "/"
         val parsed = java.net.URI(url)
@@ -339,7 +333,6 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             NovaTab.ART -> refreshArt()
             NovaTab.WALLET -> refreshWallet()
             NovaTab.ACCOUNT -> refreshNotifications()
-            else -> Unit
         }
     }
 
@@ -1230,5 +1223,13 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     fun fictionalScene(kind:String) {updateChatInput("Напиши $kind нашего персонажа. Начни с пометки «Вымышленная сцена». Это художественное произведение, а не реальные мысли или данные человека.");sendChatMessage()}
+
+    // A restored session may start work immediately, so initialize state before loading it.
+    init {
+        restoreDraft()
+        if (accessToken != null) {
+            activeChat?.let { openChat(it) } ?: refreshCatalog()
+        }
+    }
 
 }
