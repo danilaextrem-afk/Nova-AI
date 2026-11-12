@@ -139,7 +139,10 @@ export function buildCharacterPrompt(input: {
     })),
   };
   const data: AiMessage = { role: 'user', content: JSON.stringify(context) };
-  const base = [system, data, current];
+  // The format reminder sits right before the request: recent long replies otherwise outweigh the system rules.
+  // No user-written text in system messages.
+  const reminder: AiMessage = { role: 'system', content: 'Reply now as activeCharacter, in character. ' + settings.length + ' ' + settings.voice };
+  const base = [system, data, reminder, current];
   const available = input.tokenBudget - settings.maxOutput;
   // Reserve room for recent dialogue. Trim optional sections individually so the JSON stays valid.
   while (estimatePrompt(base) > available - 1000) {
@@ -164,7 +167,5 @@ export function buildCharacterPrompt(input: {
     history.unshift({ role: message.role, content });
     remaining -= Buffer.byteLength(content) + 8;
   }
-  // The format reminder sits right before the request: recent long replies otherwise outweigh the system rules.
-  const reminder: AiMessage = { role: 'system', content: 'Reply now as activeCharacter, in character. ' + settings.length + ' ' + settings.voice }; // No user-written text in system messages.
   return { messages: [system, data, ...history, reminder, current], settings };
 }
