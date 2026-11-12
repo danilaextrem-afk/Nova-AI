@@ -20,6 +20,10 @@ class NovaUiTest {
  @Volatile private var studioDraft:String?=null
  @Volatile private var sent=false
  @Volatile private var commentSent=false
+ @Volatile private var productMode=false
+ @Volatile private var replyBody:String?=null
+ private val rootComment="20000000-0000-4000-8000-000000000001"
+ private val nextCharacter="00000000-0000-4000-8000-000000000102"
  @Volatile private var regenerated=false
  @Volatile private var streamCalls=0
  @Volatile private var streamFailure=false
@@ -67,6 +71,10 @@ class NovaUiTest {
     r.path=="/v1/me" -> """{"id":"me","email":"adult@example.test","profile":{"showMature":$showMature}}"""
     r.path=="/v1/me/content-settings" -> {val b=r.body.clone().readUtf8();showMature=b.contains("\"showMature\":true")&&b.contains("\"confirmAdult\":true");"""{"showMature":$showMature}"""}
     r.path?.startsWith("/v1/characters/catalog")==true && r.path!!.contains("section=mature") -> """{"items":[{"id":"00000000-0000-4000-8000-000000000199","name":"Северина Лис","greeting":"Добрый вечер.","category":"Романтика","tags":[],"mature":true}]}"""
+    productMode && r.path?.startsWith("/v1/characters/catalog")==true && r.requestUrl?.queryParameter("cursor")==character ->
+     """{"items":[{"id":"$nextCharacter","name":"Лея Винтер","greeting":"Привет","category":"Фэнтези","tags":[]}]}"""
+    productMode && r.path?.startsWith("/v1/characters/catalog")==true ->
+     """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет","category":"Приключения","tags":[],"ownerId":"fixture-creator","publication":{"id":"fixture-publication"}}],"nextCursor":"$character"}"""
     r.path?.startsWith("/v1/characters/catalog")==true -> """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет, исследователь!","category":"Приключения","tags":[],"ownerId":"fixture-creator","publication":{"id":"fixture-publication","likesCount":0}}]}"""
     groupMode && r.path=="/v1/chats" && r.method=="GET" -> """{"items":[{"id":"$chat","characterId":"$character","title":"Аврора Вейл, Кай Номад","characterName":"Аврора Вейл","participantIds":["00000000-0000-4000-8000-000000000107"]}]}"""
     groupMode && r.path?.startsWith("/v1/chats/$chat/messages")==true && r.method=="GET" -> """{"items":[{"id":"u","role":"user","content":"Привет всем","sequence":1},{"id":"a","role":"assistant","content":"*улыбается* Рада **встрече**!","sequence":2,"speakerName":"Аврора Вейл"},{"id":"b","role":"assistant","content":"Я тоже здесь.","sequence":3,"speakerName":"Кай Номад"}]}"""
@@ -91,6 +99,13 @@ class NovaUiTest {
     r.path=="/v1/chats/$chat/messages" && regenerated -> """{"items":[{"id":"u","role":"user","content":"$userText","sequence":1},{"id":"a","role":"assistant","content":"Новая версия ответа","sequence":2,"alternatives":["Тестовый ответ сервера"]}]}"""
     r.path=="/v1/chats/$chat/messages" -> if(sent) """{"items":[{"id":"u","role":"user","content":"Привет","sequence":1},{"id":"a","role":"assistant","content":"Тестовый ответ сервера","sequence":2}]}""" else """{"items":[]}"""
     r.path=="/v1/chats/$chat/memories" -> """{"items":[]}"""
+    productMode && r.path=="/v1/publications/fixture-publication/comments" && r.method=="POST" ->
+     {replyBody=r.body.readUtf8(); "{}"}
+    productMode && r.path=="/v1/publications/fixture-publication/comments" -> {
+     val root="""{"id":"$rootComment","content":"Первый комментарий","status":"PUBLISHED","user":{"profile":{"displayName":"Автор истории"}}}"""
+     val extra=if(replyBody!=null) """,{"id":"reply","parentId":"$rootComment","content":"Хочу продолжение","status":"PENDING_REVIEW"}""" else ""
+     """{"repliesSupported":true,"items":[$root$extra]}"""
+    }
     r.path=="/v1/publications/fixture-publication/comments" && r.method=="POST" -> {commentSent=true;"{}"}
     r.path=="/v1/publications/fixture-publication/comments" -> if(commentSent) """{"items":[{"id":"comment","content":"Интересная история","status":"PENDING_REVIEW"}]}""" else """{"items":[]}"""
     r.path=="/v1/auth/logout" -> "{}"
@@ -143,10 +158,14 @@ class NovaUiTest {
   // Matches a visible label or an icon button's accessible name (e.g. the round send button).
   val m=(hasText(text) or hasContentDescription(text)) and isEnabled()
   waitFor("enabled button '$text'"){compose.onAllNodes(m).fetchSemanticsNodes().isNotEmpty()}
-  val node=compose.onNode(m)
-  try { node.reveal().assertIsDisplayed().performClick() } catch (e:AssertionError) {
-   screenshot("failure-click-"+text.replace(Regex("[^a-zA-Zа-яА-Я0-9]"),"-")); throw AssertionError("Could not tap '$text'",e)
+  // Screens keep loading in the background (feeds, shelves), which can move a button right after scrolling to it:
+  // scroll and tap again a few times before calling it a failure.
+  var last:AssertionError?=null
+  repeat(5){
+   try { compose.onNode(m).reveal().assertIsDisplayed().performClick(); return } catch (e:AssertionError) { last=e }
+   compose.waitForIdle();Thread.sleep(400)
   }
+  screenshot("failure-click-"+text.replace(Regex("[^a-zA-Zа-яА-Я0-9]"),"-")); throw AssertionError("Could not tap '$text'",last)
  }
  @Test fun loginCatalogChatAndEncryptedDraftSurviveRecreation(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")
@@ -218,6 +237,34 @@ class NovaUiTest {
   compose.onNodeWithText("Интересная история · На модерации").reveal().assertExists()
   screenshot("04-comment-pending")
  }
+ @Test fun productCatalogPaginatesAndRepliesToTheSelectedComment(){
+  productMode=true
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  waitFor("recent stories"){compose.onAllNodesWithText("Продолжить историю").fetchSemanticsNodes().isNotEmpty()}
+  screenshot("34-product-home")
+  compose.onNodeWithText("Каталог").performClick()
+  clickWhenEnabled("Показать ещё")
+  waitFor("next catalog page"){compose.onAllNodesWithText("Лея Винтер").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Лея Винтер").reveal()
+  screenshot("35-catalog-pagination")
+  val profiles=compose.onAllNodes(hasText("Полный профиль") and isEnabled())
+  profiles[0].reveal().performClick()
+  clickWhenEnabled("Открыть портрет")
+  clickWhenEnabled("Закрыть портрет")
+  clickWhenEnabled("Обсуждение")
+  clickWhenEnabled("Ответить")
+  compose.onNodeWithText("Ответ на комментарий").reveal().performTextInput("Хочу продолжение")
+  compose.onNode(hasText("Отправить ответ") and isEnabled()).assertExists()
+  // The keyboard covers the button on a 480x800 screen, so the reply goes out with the keyboard's send key.
+  compose.onNodeWithText("Ответ на комментарий").performImeAction()
+  waitFor("published reply draft"){compose.onAllNodesWithText("Хочу продолжение · На модерации").fetchSemanticsNodes().isNotEmpty()}
+  val request=com.google.gson.JsonParser.parseString(replyBody).asJsonObject
+  assertEquals(rootComment,request.get("parentId").asString)
+  compose.onNodeWithText("Хочу продолжение · На модерации").reveal().assertIsDisplayed()
+  screenshot("36-product-reply")
+ }
  @Test fun sessionStoreEncryptsAndReadsAcrossInstances(){
   val a=SessionStore(compose.activity);a.put("secret-test","never-plaintext-123")
   assertEquals("never-plaintext-123",SessionStore(compose.activity).get("secret-test"))
@@ -245,7 +292,13 @@ class NovaUiTest {
   compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
   clickWhenEnabled("Войти")
   waitFor("home"){compose.onAllNodesWithText("Открыть AI Арт").fetchSemanticsNodes().isNotEmpty()}
-  clickWhenEnabled("Открыть AI Арт")
+  // Sign-in finishes loading the feed first; a tap during that re-layout can be swallowed, so tap until the tab opens.
+  waitFor("signed in"){!vm().loading && vm().accessToken!=null}
+  for(attempt in 1..3){
+   clickWhenEnabled("Открыть AI Арт")
+   val opened=runCatching{compose.waitUntil(6000){vm().activeTab==NovaTab.ART}}.isSuccess
+   if(opened)break
+  }
   waitFor("art status"){compose.onAllNodesWithText("Бесплатно сегодня: 3 из 3. Картинки сохраняются только на твоём телефоне.").fetchSemanticsNodes().isNotEmpty()}
   // The art screen re-lays out when the day's status arrives; tap again if the first tap landed mid-layout.
   for(attempt in 1..3){
@@ -560,7 +613,7 @@ class NovaUiTest {
   waitFor("chat list"){compose.onAllNodesWithText("Мои чаты").fetchSemanticsNodes().isNotEmpty()}
   screenshot("19-chat-list-premium")
   compose.onNodeWithText("Каталог").performClick();clickWhenEnabled("Моё избранное")
-  waitFor("empty favorites"){compose.onAllNodesWithText("Опубликованных персонажей пока нет.").fetchSemanticsNodes().isNotEmpty()}
+  waitFor("empty favorites"){compose.onAllNodesWithText("В избранном пока пусто").fetchSemanticsNodes().isNotEmpty()}
   screenshot("20-favorites")
  }
 

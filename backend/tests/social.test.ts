@@ -23,6 +23,42 @@ it('keeps pending comments private, and prevents deletion by another user',async
  expect(await db.socialComment.findUnique({where:{id:comment}})).not.toBeNull();
  await db.socialComment.update({where:{id:comment},data:{status:'PUBLISHED'}});expect(await read(owner)).toHaveLength(1);
 });
+it('links moderated replies to a visible root comment in the same publication', async () => {
+ const url = `/v1/publications/${publication}/comments`;
+ const send = (parentId: string) => app.inject({method: 'POST', url, headers: headers(other),
+  payload: {content: 'Ответ на опубликованный комментарий', parentId}});
+ expect((await send(randomUUID())).statusCode).toBe(404);
+ const pending = await db.socialComment.create({data: {userId: reader, publicationId: publication, content: 'Private pending'}});
+ expect((await send(pending.id)).statusCode).toBe(404);
+ const another = await db.character.create({data: {ownerId: owner, name: 'Another discussion', greeting: 'Hello',
+  category: 'fiction', tags: [], publication: {create: {status: 'PUBLISHED'}}}, include: {publication: true}});
+ try {
+  const foreign = await db.socialComment.create({data: {userId: reader, publicationId: another.publication!.id,
+   content: 'Different discussion', status: 'PUBLISHED'}});
+  expect((await send(foreign.id)).statusCode).toBe(404);
+  const response = await send(comment);
+  expect(response.statusCode, response.body).toBe(200);
+  const replyId = response.json().comment.id;
+  expect(response.json().comment).toMatchObject({parentId: comment, status: 'PENDING_REVIEW'});
+  const page = async (userId: string) => (await app.inject({url, headers: headers(userId)})).json();
+  expect((await page(owner)).items.map((item: {id: string}) => item.id)).not.toContain(replyId);
+  expect((await page(other))).toMatchObject({repliesSupported: true, items: expect.arrayContaining([
+   expect.objectContaining({id: replyId, parentId: comment, parent: {user: {profile: {displayName: 'Fiction author'}}}}),
+  ])});
+  await db.socialComment.update({where: {id: replyId}, data: {status: 'PUBLISHED'}});
+  expect((await send(replyId)).statusCode).toBe(404);
+  await db.userBlock.create({data: {blockerId: owner, blockedId: reader}});
+  try {
+   expect((await page(owner)).items.map((item: {id: string}) => item.id)).not.toContain(replyId);
+  } finally {
+   await db.userBlock.deleteMany({where: {blockerId: owner, blockedId: reader}});
+  }
+  await db.socialComment.delete({where: {id: replyId}});
+ } finally {
+  await db.socialComment.delete({where: {id: pending.id}});
+  await db.character.delete({where: {id: another.id}});
+ }
+});
 it('does not let ordinary users access administrator comment moderation or pricing',async()=>{
  for(const url of [`/v1/admin/comments/${comment}`,'/v1/admin/premium-price']){
   const r=await app.inject({method:'PUT',url,headers:headers(reader),payload:{status:'PUBLISHED',tokens:1}});expect(r.statusCode).toBe(401);
@@ -36,6 +72,24 @@ it('follows once, shows only approved publications, and removes the subscription
  await db.publication.update({where:{id:publication},data:{status:'PENDING_REVIEW'}});expect(await feed()).toHaveLength(0);
  await db.publication.update({where:{id:publication},data:{status:'PUBLISHED'}});
  await app.inject({method:'DELETE',url:`/v1/creators/${owner}/follow`,headers:headers(reader)});expect(await feed()).toHaveLength(0);
+});
+it('enforces the 18+ opt-in for the following feed and discussions', async () => {
+ const mature = await db.character.create({data: {ownerId: owner, name: 'Mature fixture', greeting: 'Hello',
+  category: 'fiction', tags: [], mature: true, publication: {create: {status: 'PUBLISHED'}}}, include: {publication: true}});
+ await db.creatorFollow.create({data: {followerId: other, creatorId: owner}});
+ const feed = async () => (await app.inject({url: '/v1/community/following', headers: headers(other)})).json().items;
+ const discussion = () => app.inject({url: `/v1/publications/${mature.publication!.id}/comments`, headers: headers(other)});
+ try {
+  expect(await feed()).not.toEqual(expect.arrayContaining([expect.objectContaining({id: mature.id})]));
+  expect((await discussion()).statusCode).toBe(404);
+  await db.profile.update({where: {userId: other}, data: {showMature: true}});
+  expect(await feed()).toEqual(expect.arrayContaining([expect.objectContaining({id: mature.id})]));
+  expect((await discussion()).statusCode).toBe(200);
+ } finally {
+  await db.profile.update({where: {userId: other}, data: {showMature: false}});
+  await db.creatorFollow.deleteMany({where: {followerId: other, creatorId: owner}});
+  await db.character.delete({where: {id: mature.id}});
+ }
 });
 it('blocks social and new-chat access in both directions',async()=>{
  await app.inject({method:'PUT',url:`/v1/blocks/${owner}`,headers:headers(reader)});

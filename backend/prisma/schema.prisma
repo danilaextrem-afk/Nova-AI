@@ -449,12 +449,16 @@ model SocialComment {
   id String @id @default(uuid())
   userId String
   publicationId String
+  parentId String?
   content String @db.VarChar(1000)
   status String @default("PENDING_REVIEW")
   createdAt DateTime @default(now())
   user User @relation(fields:[userId],references:[id],onDelete:Cascade)
   publication Publication @relation(fields:[publicationId],references:[id],onDelete:Cascade)
+  parent SocialComment? @relation("CommentReplies", fields: [parentId], references: [id], onDelete: SetNull)
+  replies SocialComment[] @relation("CommentReplies")
   @@index([publicationId,status,createdAt])
+  @@index([parentId])
 }
 model CreatorFollow {
   followerId String

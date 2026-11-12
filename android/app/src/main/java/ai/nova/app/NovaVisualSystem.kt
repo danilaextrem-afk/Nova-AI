@@ -52,7 +52,7 @@ object NovaDesign {
 @Composable fun NovaEyebrow(text:String){Text(text.uppercase(),color=NovaDesign.Rose,fontSize=10.sp,letterSpacing=2.sp,fontWeight=FontWeight.SemiBold)}
 internal val LocalPortraitAccount = staticCompositionLocalOf<NovaViewModel?> { null }
 
-@Composable fun NovaPortrait(id:String?,name:String,modifier:Modifier=Modifier,url:String?=null){
+@Composable fun NovaPortrait(id:String?,name:String,modifier:Modifier=Modifier,url:String?=null,contentScale:ContentScale=ContentScale.Crop){
  val asset=when {
   id?.matches(Regex("00000000-0000-4000-8000-000000000[12](0[1-9]|1[0-2])"))==true -> "file:///android_asset/portraits/${id.takeLast(3)}.webp"
   id?.matches(Regex("studio-2(0[1-9]|1[0-2])"))==true -> "file:///android_asset/portraits/${id.takeLast(3)}.webp"
@@ -72,7 +72,7 @@ internal val LocalPortraitAccount = staticCompositionLocalOf<NovaViewModel?> { n
    .build()
  }
  Box(modifier.background(Color(0xFF2C2339)),contentAlignment=Alignment.Center){
-  if(asset!=null||!url.isNullOrBlank())AsyncImage(model=request,contentDescription="Портрет персонажа $name",contentScale=ContentScale.Crop,alignment=Alignment.TopCenter,modifier=Modifier.fillMaxSize())
+  if(asset!=null||!url.isNullOrBlank())AsyncImage(model=request,contentDescription="Портрет персонажа $name",contentScale=contentScale,alignment=Alignment.TopCenter,modifier=Modifier.fillMaxSize())
   else Text(name.take(1),style=MaterialTheme.typography.headlineLarge,color=NovaDesign.Lavender)
  }
 }

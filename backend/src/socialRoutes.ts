@@ -1,23 +1,56 @@
 import type {FastifyInstance} from 'fastify';
 import type {PrismaClient} from '@prisma/client';
 import {z} from 'zod';
+import {showsMature} from './characters.js';
 export async function registerSocialRoutes(app:FastifyInstance,db:PrismaClient){
  const auth={preHandler:app.auth};
- const visible=(userId:string)=>({
-  status:'PUBLISHED' as const,
-  character:{isHidden:false,owner:{
-   blocksGot:{none:{blockerId:userId}},blocksMade:{none:{blockedId:userId}}
-  }}
+ const unblocked = (userId: string) => ({
+  blocksGot: {none: {blockerId: userId}},
+  blocksMade: {none: {blockedId: userId}},
  });
- app.get('/v1/publications/:id/comments',auth,async(req:any,reply)=>{
-  if(!await db.publication.findFirst({where:{id:req.params.id,...visible(req.user.sub)}}))return reply.code(404).send({error:'NOT_FOUND'});
-  return {items:await db.socialComment.findMany({where:{publicationId:req.params.id,OR:[{status:'PUBLISHED'},{userId:req.user.sub}],user:{blocksGot:{none:{blockerId:req.user.sub}},blocksMade:{none:{blockedId:req.user.sub}}}},
-   select:{id:true,userId:true,content:true,status:true,createdAt:true,user:{select:{profile:{select:{displayName:true}}}}},orderBy:{createdAt:'desc'},take:50})};
+ const visible = (userId: string, mature: boolean) => ({
+  status: 'PUBLISHED' as const,
+  character: {isHidden: false, owner: unblocked(userId), ...(mature ? {} : {mature: false})},
  });
- app.post('/v1/publications/:id/comments',auth,async(req:any,reply)=>{
-  const p=z.object({content:z.string().trim().min(1).max(1000)}).strict().safeParse(req.body);if(!p.success)return reply.code(400).send({error:'INVALID_COMMENT'});
-  if(!await db.publication.findFirst({where:{id:req.params.id,...visible(req.user.sub)}}))return reply.code(404).send({error:'NOT_FOUND'});
-  return {comment:await db.socialComment.create({data:{userId:req.user.sub,publicationId:req.params.id,content:p.data.content}})};
+ const commentVisibility = (userId: string) => ({
+  OR: [{status: 'PUBLISHED'}, {userId}],
+  user: unblocked(userId),
+ });
+ app.get('/v1/publications/:id/comments', auth, async (req: any, reply) => {
+  const userId: string = req.user.sub;
+  const publicationId: string = req.params.id;
+  if (!await db.publication.findFirst({where: {id: publicationId, ...visible(userId, await showsMature(db, userId))}})) {
+   return reply.code(404).send({error: 'NOT_FOUND'});
+  }
+  const items = await db.socialComment.findMany({
+   where: {publicationId, ...commentVisibility(userId), AND: [
+    {OR: [{parentId: null}, {parent: commentVisibility(userId)}]},
+   ]},
+   select: {id: true, userId: true, parentId: true, content: true, status: true, createdAt: true,
+    user: {select: {profile: {select: {displayName: true}}}},
+    parent: {select: {user: {select: {profile: {select: {displayName: true}}}}}},
+   },
+   orderBy: [{createdAt: 'desc'}, {id: 'desc'}],
+   take: 50,
+  });
+  return {items, repliesSupported: true};
+ });
+ app.post('/v1/publications/:id/comments', auth, async (req: any, reply) => {
+  const parsed = z.object({content: z.string().trim().min(1).max(1000), parentId: z.string().uuid().optional()})
+   .strict().safeParse(req.body);
+  if (!parsed.success) return reply.code(400).send({error: 'INVALID_COMMENT'});
+  const userId: string = req.user.sub;
+  const publicationId: string = req.params.id;
+  if (!await db.publication.findFirst({where: {id: publicationId, ...visible(userId, await showsMature(db, userId))}})) {
+   return reply.code(404).send({error: 'NOT_FOUND'});
+  }
+  const {content, parentId} = parsed.data;
+  if (parentId && !await db.socialComment.findFirst({where: {
+   id: parentId, publicationId, parentId: null, status: 'PUBLISHED', user: unblocked(userId),
+  }, select: {id: true}})) {
+   return reply.code(404).send({error: 'COMMENT_NOT_FOUND'});
+  }
+  return {comment: await db.socialComment.create({data: {userId, publicationId, content, parentId}})};
  });
  app.delete('/v1/comments/:id',auth,async(req:any)=>{await db.socialComment.deleteMany({where:{id:req.params.id,userId:req.user.sub}});return {deleted:true}});
  app.put('/v1/creators/:id/follow',auth,async(req:any,reply)=>{
@@ -25,7 +58,19 @@ export async function registerSocialRoutes(app:FastifyInstance,db:PrismaClient){
   await db.creatorFollow.upsert({where:{followerId_creatorId:{followerId:req.user.sub,creatorId:req.params.id}},create:{followerId:req.user.sub,creatorId:req.params.id},update:{}});return {following:true};
  });
  app.delete('/v1/creators/:id/follow',auth,async(req:any)=>{await db.creatorFollow.deleteMany({where:{followerId:req.user.sub,creatorId:req.params.id}});return {following:false}});
- app.get('/v1/community/following',auth,async(req:any)=>({items:await db.character.findMany({where:{isHidden:false,publication:{is:{status:'PUBLISHED'}},owner:{followers:{some:{followerId:req.user.sub}},blocksGot:{none:{blockerId:req.user.sub}},blocksMade:{none:{blockedId:req.user.sub}}}},include:{publication:{select:{id:true,likesCount:true}}},orderBy:{createdAt:'desc'},take:50})}));
+ app.get('/v1/community/following', auth, async (req: any) => {
+  const userId: string = req.user.sub;
+  const mature = await showsMature(db, userId);
+  return {items: await db.character.findMany({
+   where: {isHidden: false, publication: {is: {status: 'PUBLISHED'}},
+    owner: {followers: {some: {followerId: userId}}, ...unblocked(userId)},
+    ...(mature ? {} : {mature: false})},
+   select: {id: true, name: true, greeting: true, category: true, tags: true, biography: true,
+    avatarUrl: true, mature: true, ownerId: true, publication: {select: {id: true, likesCount: true}}},
+   orderBy: {createdAt: 'desc'},
+   take: 50,
+  })};
+ });
  app.post('/v1/chats/:id/diary',auth,async(req:any,reply)=>{
   const p=z.object({requestId:z.string().uuid(),kind:z.enum(['diary','event','inner-monologue','fictional-phone']).default('diary')}).strict().safeParse(req.body);
   if(!p.success)return reply.code(400).send({error:'INVALID_DIARY'});
