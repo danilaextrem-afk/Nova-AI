@@ -81,4 +81,18 @@ describe('Character dialogue context', () => {
     expect(messages[0].content).toContain('The player’s gender is unknown');
     expect(messages[0].content).toContain('no headings, bullet or numbered lists');
   });
+
+  it('keeps at most three real sentences in concise replies', () => {
+    const c = (t: string) => shapeReply(t, 'concise');
+    expect(c('Цена 3.5 рубля. Б. В. Г.')).toBe('Цена 3.5 рубля. Б. В.');
+    expect(c('Это т.е. так. Б. В. Г.')).toBe('Это т.е. так. Б. В.');
+    expect(c('Я живу на ул. Ленина. Б. В. Г.')).toBe('Я живу на ул. Ленина. Б. В.');
+    expect(c('*улыбается.* Привет. Как ты? Хорошо. Ещё.')).toBe('*улыбается.* Привет. Как ты?');
+    expect(c('Привет! как дела? Б. В.')).toBe('Привет! как дела? Б.');
+    expect(c('Раз. Два. Три. четыре без точки')).toBe('Раз. Два. Три.');
+    expect(c('«Стой!». Я замерла. Тишина. Ветер.')).toBe('«Стой!». Я замерла. Тишина.');
+    expect(c('Раз.\n\nДва.\nТри.\nЧетыре.')).toBe('Раз.\n\nДва.\nТри.');
+    expect(c('Ну... Я не знаю. Может быть. Да.')).toBe('Ну... Я не знаю. Может быть.');
+    expect(c('#\nТекст.')).toBe('#\nТекст.');
+  });
 });
