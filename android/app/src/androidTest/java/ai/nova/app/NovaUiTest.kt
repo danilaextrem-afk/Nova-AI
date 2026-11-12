@@ -87,7 +87,7 @@ class NovaUiTest {
    vm.serverUrl=baseUrl
   }
  }
- @After fun finish(){server.shutdown();SessionStore(compose.activity).clear();NovaLang.set(compose.activity,"ru")}
+ @After fun finish(){server.shutdown();SessionStore(compose.activity).clear();NovaLang.set(compose.activity,"ru");File(compose.activity.filesDir,"nova-art").deleteRecursively()}
  private fun screenshot(name:String){
   val image=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
   val dir=File(compose.activity.getExternalFilesDir(null),"screenshots");dir.mkdirs()
@@ -223,8 +223,11 @@ class NovaUiTest {
   waitFor("home"){compose.onAllNodesWithText("Открыть AI Арт").fetchSemanticsNodes().isNotEmpty()}
   clickWhenEnabled("Открыть AI Арт")
   waitFor("art status"){compose.onAllNodesWithText("Бесплатно сегодня: 3 из 3. Картинки сохраняются только на твоём телефоне.").fetchSemanticsNodes().isNotEmpty()}
-  compose.onNodeWithText("Фэнтези").reveal().performClick()
-  screenshot("23-ai-art-style")
+  // The art screen re-lays out when the day's status arrives; tap again if the first tap landed mid-layout.
+  for(attempt in 1..3){
+   if(compose.onAllNodes(hasText("Фэнтези") and isSelected()).fetchSemanticsNodes().isNotEmpty())break
+   compose.onNodeWithText("Фэнтези").reveal().performClick();compose.waitForIdle()
+  }
   waitFor("style selected"){compose.onAllNodes(hasText("Фэнтези") and isSelected()).fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Что нарисовать?").reveal().performTextInput("Озеро на рассвете")
   compose.onNodeWithText("Что нарисовать?").performImeAction()
