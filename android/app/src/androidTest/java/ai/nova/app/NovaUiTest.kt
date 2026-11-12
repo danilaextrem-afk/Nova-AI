@@ -224,6 +224,8 @@ class NovaUiTest {
   clickWhenEnabled("Открыть AI Арт")
   waitFor("art status"){compose.onAllNodesWithText("Бесплатно сегодня: 3 из 3. Картинки сохраняются только на твоём телефоне.").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Фэнтези").reveal().performClick()
+  screenshot("23-ai-art-style")
+  waitFor("style selected"){compose.onAllNodes(hasText("Фэнтези") and isSelected()).fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Что нарисовать?").reveal().performTextInput("Озеро на рассвете")
   clickWhenEnabled("Нарисовать бесплатно")
   waitFor("art result"){compose.onAllNodesWithText("Мои картинки").fetchSemanticsNodes().isNotEmpty()}
