@@ -48,7 +48,12 @@ export function modelPool(tier: AiTier): ModelConfig[] {
       inputUsdPerMillion: 0, outputUsdPerMillion: 0, dailyBudgetMicros: 0, concurrency: 2,
     });
     const groq = groqModels.map(model => free('groq', model));
-    const openrouter = [free('openrouter', preferred === 'openrouter' && process.env.AI_MODEL?.trim() ? process.env.AI_MODEL.trim() : providers.openrouter.model)];
+    // OpenRouter free models share one per-account quota; the set changes often, so it is configurable.
+    // A removed model answers 404 and the gateway moves on to the next entry.
+    const openrouter = Array.from(new Set([
+      ...(preferred === 'openrouter' && process.env.AI_MODEL?.trim() ? [process.env.AI_MODEL.trim()] : []),
+      ...(process.env.NOVA_OPENROUTER_FREE_MODELS?.trim() || 'deepseek/deepseek-v4-flash:free,openrouter/free').split(',').map(x => x.trim()).filter(Boolean),
+    ])).slice(0, 4).map(model => free('openrouter', model));
     // Gemini (free tier) is a last resort and only with the owner's documented consent (NOVA_GEMINI_TERMS_REVIEWED):
     // Google may use free-tier prompts to improve its products. Conservative limits; the provider's 429 still rules.
     const gemini = [{...free('gemini', process.env.NOVA_GEMINI_MODEL?.trim() || providers.gemini.model), rpm: 8, rpd: 200, tpm: 200000, tpd: 2000000}];
