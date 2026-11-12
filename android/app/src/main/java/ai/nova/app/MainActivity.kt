@@ -182,8 +182,10 @@ private fun LoginScreen(model: NovaViewModel) {
     Column(
         modifier = Modifier
             .fillMaxSize()
+            // System bars and keyboard are outside the scroll viewport, so nothing scrolls under them.
+            .imePadding().statusBarsPadding().navigationBarsPadding()
             .verticalScroll(rememberScrollState())
-            .imePadding().statusBarsPadding().navigationBarsPadding().padding(horizontal = 22.dp, vertical = 24.dp),
+            .padding(horizontal = 22.dp, vertical = 24.dp),
         verticalArrangement = Arrangement.spacedBy(18.dp)
     ) {
         LanguageSwitch()
