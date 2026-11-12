@@ -65,12 +65,20 @@ data class NovaChat(
     val responseStyle: String? = null, val tone: String? = null, val participantIds: List<String>? = null
 )
 data class NovaChatsResponse(val items: List<NovaChat> = emptyList())
-data class NovaCreateChatBody(val characterId: String, val participantIds: List<String> = emptyList(), val scenario: String = "", val persona: String = "")
-data class NovaChatResponse(val chat: NovaChat)
+data class NovaCreateChatBody(val characterId: String, val participantIds: List<String> = emptyList(), val scenario: String = "", val persona: String = "", val scenarioId: String? = null)
+data class NovaChatResponse(val chat: NovaChat, val greeting: String? = null)
+data class ChatCastBody(val participantIds: List<String>)
+data class CharacterMemoryItem(val id: String, val content: String, val pinned: Boolean = false, val source: String? = null)
+data class CharacterMemoryPage(val items: List<CharacterMemoryItem> = emptyList())
+data class CharacterMemoryBody(val content: String, val pinned: Boolean = false)
+data class CharacterScenario(val id: String, val title: String, val scenario: String, val greeting: String? = null)
+data class ScenarioPage(val items: List<CharacterScenario> = emptyList())
+data class ScenarioBody(val title: String, val scenario: String, val greeting: String = "")
 data class NovaChatMessage(
     val id: String, val role: String, val content: String,
     val createdAt: String? = null, val sequence: Int = 0, val pinned: Boolean = false,
-    val alternatives: List<String>? = null // Gson ignores Kotlin defaults: absent field stays null.
+    val alternatives: List<String>? = null, // Gson ignores Kotlin defaults: absent field stays null.
+    val speakerName: String? = null // Group chats: which character wrote the reply.
 )
 data class NovaChatMessagesResponse(val items: List<NovaChatMessage> = emptyList(), val nextBefore: Int? = null)
 // Exactly one of content / regenerateMessageId is sent; Gson omits nulls.
@@ -97,7 +105,7 @@ data class PublicationInfo(val id: String, val likesCount: Int = 0)
 data class SocialComment(val id: String, val content: String, val status: String)
 data class CommentPage(val items: List<SocialComment> = emptyList())
 data class RefreshBody(val refreshToken: String)
-data class MemoryItem(val id: String, val content: String, val kind: String, val pinned: Boolean = false)
+data class MemoryItem(val id: String, val content: String, val kind: String, val pinned: Boolean = false, val source: String? = null)
 data class MemoryPage(val items: List<MemoryItem> = emptyList())
 data class MemoryBody(val content: String, val kind: String = "FACT", val pinned: Boolean = false)
 data class BranchBody(val messageId: String, val title: String = "Новая ветка")
@@ -129,6 +137,13 @@ interface NovaApi {
     @POST("v1/characters/{id}/clone") suspend fun clone(@Header("Authorization") bearer: String, @Path("id") id: String): CreatedCharacter
     @GET("v1/characters/favorites") suspend fun favorites(@Header("Authorization") bearer: String): FavoritePage
     @DELETE("v1/characters/{id}/favorite") suspend fun removeFavorite(@Header("Authorization") bearer: String, @Path("id") id: String): FavoriteResult
+    @retrofit2.http.PATCH("v1/chats/{id}") suspend fun saveCast(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: ChatCastBody)
+    @GET("v1/characters/{id}/memories") suspend fun characterMemories(@Header("Authorization") bearer: String, @Path("id") id: String): CharacterMemoryPage
+    @POST("v1/characters/{id}/memories") suspend fun addCharacterMemory(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: CharacterMemoryBody)
+    @DELETE("v1/characters/{id}/memories/{memoryId}") suspend fun deleteCharacterMemory(@Header("Authorization") bearer: String, @Path("id") id: String, @Path("memoryId") memoryId: String): retrofit2.Response<Unit>
+    @GET("v1/characters/{id}/scenarios") suspend fun scenarios(@Header("Authorization") bearer: String, @Path("id") id: String): ScenarioPage
+    @POST("v1/characters/{id}/scenarios") suspend fun addScenario(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: ScenarioBody)
+    @DELETE("v1/characters/{id}/scenarios/{scenarioId}") suspend fun deleteScenario(@Header("Authorization") bearer: String, @Path("id") id: String, @Path("scenarioId") scenarioId: String): retrofit2.Response<Unit>
     @GET("v1/chats/{id}/memories") suspend fun memories(@Header("Authorization") bearer: String, @Path("id") id: String): MemoryPage
     @POST("v1/chats/{id}/memories") suspend fun addMemory(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: MemoryBody)
     @retrofit2.http.PATCH("v1/chats/{id}/memories/{memoryId}") suspend fun editMemory(@Header("Authorization") bearer: String, @Path("id") id: String, @Path("memoryId") memoryId: String, @Body body: MemoryBody)

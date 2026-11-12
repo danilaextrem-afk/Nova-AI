@@ -23,14 +23,14 @@ export async function registerProductRoutes(app:FastifyInstance,db:PrismaClient)
  });
  app.get('/v1/me/export',auth,async(req:any,reply)=>{
   const u=await db.user.findUnique({where:{id:req.user.sub},select:{email:true,createdAt:true,profile:true,
-    characters:true,chats:{include:{messages:{orderBy:{sequence:'asc'}},memories:true}},favorites:true,notifications:true,comments:true,following:true,likes:true}});
+    characters:true,chats:{include:{messages:{orderBy:{sequence:'asc'}},memories:true}},favorites:true,notifications:true,comments:true,following:true,likes:true,characterMemories:true}});
   reply.header('Content-Disposition','attachment; filename="NOVA-data.json"');return u;
  });
  app.delete('/v1/me',auth,async(req:any,reply)=>{
   if(req.body?.confirmation!=='DELETE')return reply.code(400).send({error:'CONFIRMATION_REQUIRED'});
   await db.$transaction(async tx=>{
    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${req.user.sub} FOR UPDATE`;
-   await tx.chat.deleteMany({where:{userId:req.user.sub}});await tx.character.deleteMany({where:{ownerId:req.user.sub}});
+   await tx.chat.deleteMany({where:{userId:req.user.sub}});await tx.characterMemory.deleteMany({where:{userId:req.user.sub}});await tx.character.deleteMany({where:{ownerId:req.user.sub}});
    await tx.socialComment.deleteMany({where:{userId:req.user.sub}});await tx.creatorFollow.deleteMany({where:{OR:[{followerId:req.user.sub},{creatorId:req.user.sub}]}});
    await tx.report.deleteMany({where:{reporterId:req.user.sub}});
    await tx.userBlock.deleteMany({where:{OR:[{blockerId:req.user.sub},{blockedId:req.user.sub}]}});

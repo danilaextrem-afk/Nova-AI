@@ -29,6 +29,7 @@ class NovaUiTest {
  @Volatile private var userText="Привет"
  @Volatile private var artBody:String?=null
  @Volatile private var authRequests=0
+ @Volatile private var groupMode=false
  private val artJpeg:String by lazy {
   val b=Bitmap.createBitmap(64,64,Bitmap.Config.ARGB_8888);b.eraseColor(android.graphics.Color.rgb(120,80,200))
   val out=java.io.ByteArrayOutputStream();b.compress(Bitmap.CompressFormat.JPEG,90,out)
@@ -63,6 +64,8 @@ class NovaUiTest {
     r.path=="/v1/me/content-settings" -> {val b=r.body.clone().readUtf8();showMature=b.contains("\"showMature\":true")&&b.contains("\"confirmAdult\":true");"""{"showMature":$showMature}"""}
     r.path?.startsWith("/v1/characters/catalog")==true && r.path!!.contains("section=mature") -> """{"items":[{"id":"00000000-0000-4000-8000-000000000199","name":"Северина Лис","greeting":"Добрый вечер.","category":"Романтика","tags":[],"mature":true}]}"""
     r.path?.startsWith("/v1/characters/catalog")==true -> """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет, исследователь!","category":"Приключения","tags":[],"ownerId":"fixture-creator","publication":{"id":"fixture-publication","likesCount":0}}]}"""
+    groupMode && r.path=="/v1/chats" && r.method=="GET" -> """{"items":[{"id":"$chat","characterId":"$character","title":"Аврора Вейл, Кай Номад","characterName":"Аврора Вейл","participantIds":["00000000-0000-4000-8000-000000000107"]}]}"""
+    groupMode && r.path?.startsWith("/v1/chats/$chat/messages")==true && r.method=="GET" -> """{"items":[{"id":"u","role":"user","content":"Привет всем","sequence":1},{"id":"a","role":"assistant","content":"Рада встрече!","sequence":2,"speakerName":"Аврора Вейл"},{"id":"b","role":"assistant","content":"Я тоже здесь.","sequence":3,"speakerName":"Кай Номад"}]}"""
     r.path=="/v1/chats" && r.method=="POST" -> """{"chat":{"id":"$chat","characterId":"$character","title":"Аврора Вейл"}}"""
     r.path=="/v1/chats" -> """{"items":[{"id":"$chat","characterId":"$character","title":"Аврора Вейл"}]}"""
     r.path=="/v1/rewards/daily" && r.method=="POST" -> {bonusClaims++;"""{"granted":true,"amount":2}"""}
@@ -288,6 +291,49 @@ class NovaUiTest {
   compose.onNodeWithText("Email").performTextClearance();compose.onNodeWithText("Email").performTextInput("adult@example.test")
   clickWhenEnabled("Войти")
   waitFor("signed in"){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
+ }
+ @Test fun groupSceneShowsEachSpeakerAndVoiceConversationOpens(){
+  groupMode=true
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  waitFor("home"){compose.onAllNodesWithText("Чаты").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Чаты").performClick()
+  waitFor("chat list"){compose.onAllNodesWithText("Аврора Вейл, Кай Номад").fetchSemanticsNodes().isNotEmpty()}
+  waitFor("idle"){var busy=true;compose.runOnIdle{busy=ViewModelProvider(compose.activity)[NovaViewModel::class.java].loading};!busy}
+  compose.onNodeWithText("Аврора Вейл, Кай Номад").performClick()
+  waitFor("second speaker"){compose.onAllNodesWithText("КАЙ НОМАД").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("АВРОРА ВЕЙЛ").assertExists()
+  compose.onNodeWithText("Групповая сцена · персонажей: 2").assertExists()
+  screenshot("28-group-scene")
+  compose.onNodeWithContentDescription("Голосовой разговор").performClick()
+  waitFor("voice screen"){compose.onAllNodesWithText("ГОЛОСОВОЙ РАЗГОВОР").fetchSemanticsNodes().isNotEmpty()}
+  // The emulator has no granted microphone: the screen must explain instead of silently failing.
+  assertTrue(compose.onAllNodesWithText("Разрешить микрофон").fetchSemanticsNodes().isNotEmpty()||
+   compose.onAllNodesWithText("На телефоне нет службы распознавания речи").fetchSemanticsNodes().isNotEmpty())
+  screenshot("29-voice-conversation")
+  compose.onNodeWithText("Завершить разговор").performClick()
+  waitFor("voice closed"){compose.onAllNodesWithText("ГОЛОСОВОЙ РАЗГОВОР").fetchSemanticsNodes().isEmpty()}
+ }
+ @Test fun characterDraftIsSavedOnThePhoneAndRestoredByANewProcess(){
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  waitFor("home"){compose.onAllNodesWithText("Создать").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Создать").performClick()
+  waitFor("editor"){compose.onAllNodesWithText("Имя персонажа").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Имя персонажа").reveal().performTextInput("Лира Черновик")
+  waitFor("draft stored"){SessionStore(compose.activity).get("characterDraft")?.contains("Лира Черновик")==true}
+  // A brand-new view model (as after the app was killed) starts with the saved draft.
+  var restored="";compose.runOnIdle{restored=NovaViewModel(compose.activity.application).draftName}
+  assertEquals("Лира Черновик",restored)
+  compose.onNodeWithText("Предпросмотр").reveal().performClick()
+  waitFor("preview"){compose.onAllNodesWithText("ПЕРВОЕ СООБЩЕНИЕ").fetchSemanticsNodes().isNotEmpty()}
+  screenshot("30-character-preview")
+  compose.onNodeWithText("Закрыть").performClick()
+  waitFor("preview closed"){compose.onAllNodesWithText("ПЕРВОЕ СООБЩЕНИЕ").fetchSemanticsNodes().isEmpty()}
+  compose.onNodeWithText("Очистить черновик").reveal().performClick()
+  waitFor("draft cleared"){SessionStore(compose.activity).get("characterDraft").isNullOrEmpty()}
  }
  @Test fun matureSectionNeedsExplicitAdultConfirmation(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")

@@ -122,6 +122,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     var draftCategory by mutableStateOf("fantasy")
 
     init {
+        restoreDraft()
         if (accessToken != null) {
             activeChat?.let { openChat(it) } ?: refreshCatalog()
         }
@@ -388,11 +389,13 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             chats=api.chats(authorization()).items;aiStatus=api.aiStatus(authorization())
         }
     }
-    fun startChat(character: NovaCharacter) {
+    fun startChat(character: NovaCharacter, scenario: CharacterScenario? = null) {
         execute {
             val api = service()
-            val created = api.createChat(authorization(), NovaCreateChatBody(character.id, groupIds.filter { it != character.id }.take(4), storyScenario, playerPersona))
+            val created = api.createChat(authorization(), NovaCreateChatBody(character.id, groupIds.filter { it != character.id }.take(4), if (scenario == null) storyScenario else "", playerPersona, scenario?.id))
             activeChat = created.chat
+            chatGreeting = created.greeting?.takeIf { it.isNotBlank() } ?: character.greeting
+            profileCharacter = null; characterMemories = emptyList(); memories = emptyList()
             store.put("chat", gson.toJson(created.chat))
             chatMessages = emptyList()
             chatInput = ""
@@ -409,6 +412,8 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             val page = service().chatMessages(authorization(), chat.id)
             chatMessages = page.items; nextBefore = page.nextBefore
             memories = service().memories(authorization(), chat.id).items
+            chatGreeting = null
+            characterMemories = runCatching { service().characterMemories(authorization(), chat.characterId).items }.getOrDefault(emptyList())
             aiStatus = service().aiStatus(authorization())
             playerPersona = chat.persona.orEmpty(); storyScenario = chat.scenario.orEmpty()
             responseStyle = chat.responseStyle ?: "balanced"; storyTone = chat.tone ?: "friendly"
@@ -490,6 +495,30 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         execute { owned = service().myCharacters(authorization()).items }
     }
 
+    // Editor draft: saved on the phone while typing, restored after the app is closed or killed.
+    private fun draftMap(): Map<String, String> = mapOf("name" to draftName, "greeting" to draftGreeting, "category" to draftCategory,
+        "biography" to draftBiography, "personality" to draftPersonality, "appearance" to draftAppearance, "interests" to draftInterests,
+        "backstory" to draftBackstory, "speechStyle" to draftSpeechStyle, "scenario" to draftScenario, "avatar" to draftAvatar,
+        "tags" to draftTags, "language" to draftLanguage, "mature" to draftMature.toString(), "editing" to editingCharacterId.orEmpty())
+    val draftSignature: String get() = draftMap().values.joinToString("\u0001")
+    val draftHasContent: Boolean get() = listOf(draftName, draftGreeting, draftBiography, draftPersonality, draftAppearance, draftInterests,
+        draftBackstory, draftSpeechStyle, draftScenario, draftTags).any { it.isNotBlank() }
+    fun persistDraft() { if (accessToken != null) store.put("characterDraft", if (draftHasContent) gson.toJson(draftMap()) else "") }
+    private fun restoreDraft() {
+        val saved = runCatching { gson.fromJson(store.get("characterDraft"), Map::class.java) }.getOrNull() ?: return
+        fun v(k: String) = saved[k] as? String ?: ""
+        draftName = v("name"); draftGreeting = v("greeting"); draftCategory = v("category").ifBlank { "fantasy" }
+        draftBiography = v("biography"); draftPersonality = v("personality"); draftAppearance = v("appearance"); draftInterests = v("interests")
+        draftBackstory = v("backstory"); draftSpeechStyle = v("speechStyle"); draftScenario = v("scenario"); draftAvatar = v("avatar")
+        draftTags = v("tags"); draftLanguage = v("language").ifBlank { "ru" }; draftMature = v("mature") == "true"
+        editingCharacterId = v("editing").ifBlank { null }
+    }
+    fun clearDraft() {
+        draftName = ""; draftGreeting = ""; draftCategory = "fantasy"; draftBiography = ""; draftPersonality = ""; draftAppearance = ""
+        draftInterests = ""; draftBackstory = ""; draftSpeechStyle = ""; draftScenario = ""; draftAvatar = ""; draftTags = ""
+        draftLanguage = "ru"; draftMature = false; editingCharacterId = null
+        store.put("characterDraft", "")
+    }
     fun createCharacter() {
         if (draftName.isBlank() || draftGreeting.isBlank()) {
             error = "Заполни имя и приветствие персонажа"
@@ -504,8 +533,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             if (editing == null) service().createCharacter(authorization(), draft) else service().editCharacter(authorization(), editing, draft)
             editingCharacterId = null
             owned = service().myCharacters(authorization()).items
-            draftName = ""
-            draftGreeting = ""
+            clearDraft()
             notification = "Персонаж создан и сохранён"
         }
     }
@@ -669,6 +697,38 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         activeChat=created;store.put("chat",gson.toJson(created));chatMessages=service().chatMessages(authorization(),created.id).items
         memories=service().memories(authorization(),created.id).items;notification="Создана отдельная ветка истории"
     } }
+    // Group cast, lasting character memory and author scenarios.
+    var chatGreeting by mutableStateOf<String?>(null)
+    var characterMemories by mutableStateOf<List<CharacterMemoryItem>>(emptyList())
+    var characterMemoryInput by mutableStateOf("")
+    var scenarios by mutableStateOf<List<CharacterScenario>>(emptyList())
+    var scenarioTitle by mutableStateOf("")
+    var scenarioText by mutableStateOf("")
+    fun characterName(id: String): String = (catalog + owned + favorites).firstOrNull { it.id == id }?.name ?: "Персонаж"
+    /** Characters that can be invited into the open chat (everything the user currently sees). */
+    fun castCandidates(): List<NovaCharacter> = (catalog + owned + favorites).distinctBy { it.id }.filter { it.id != activeChat?.characterId }
+    fun toggleCastMember(id: String) { val chat = activeChat ?: return
+        val now = chat.participantIds.orEmpty()
+        val next = if (id in now) now - id else if (now.size < 4) now + id else { error = "В сцене может быть до 5 персонажей"; return }
+        execute {
+            service().saveCast(authorization(), chat.id, ChatCastBody(next))
+            activeChat = chat.copy(participantIds = next); store.put("chat", gson.toJson(activeChat))
+            notification = if (id in now) "Персонаж вышел из сцены" else "Персонаж присоединился к сцене"
+        } }
+    fun addCharacterMemory() { val chat = activeChat ?: return; val text = characterMemoryInput.trim(); if (text.isEmpty()) return
+        execute { service().addCharacterMemory(authorization(), chat.characterId, CharacterMemoryBody(text))
+            characterMemories = service().characterMemories(authorization(), chat.characterId).items; characterMemoryInput = "" } }
+    fun deleteCharacterMemory(id: String) { val chat = activeChat ?: return
+        execute { service().deleteCharacterMemory(authorization(), chat.characterId, id)
+            characterMemories = service().characterMemories(authorization(), chat.characterId).items } }
+    fun loadScenarios(characterId: String) { scenarios = emptyList()
+        viewModelScope.launch { scenarios = runCatching { service().scenarios(authorization(), characterId).items }.getOrDefault(emptyList()) } }
+    fun addScenario(characterId: String) { val title = scenarioTitle.trim(); val text = scenarioText.trim()
+        if (title.isEmpty() || text.isEmpty()) { error = "Заполни название и описание сценария"; return }
+        execute { service().addScenario(authorization(), characterId, ScenarioBody(title, text))
+            scenarios = service().scenarios(authorization(), characterId).items; scenarioTitle = ""; scenarioText = ""; notification = "Сценарий добавлен" } }
+    fun deleteScenario(characterId: String, id: String) {
+        execute { service().deleteScenario(authorization(), characterId, id); scenarios = service().scenarios(authorization(), characterId).items } }
     fun saveStorySettings() {val chat=activeChat?:return;execute {
         service().saveSettings(authorization(),chat.id,ChatSettings(playerPersona,storyScenario,responseStyle,storyTone))
         activeChat=chat.copy(persona=playerPersona,scenario=storyScenario,responseStyle=responseStyle,tone=storyTone)

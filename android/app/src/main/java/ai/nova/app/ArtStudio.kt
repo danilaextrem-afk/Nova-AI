@@ -83,6 +83,7 @@ fun ArtScreen(model: NovaViewModel) {
             AsyncImage(model = file, contentDescription = "Созданная картинка", contentScale = ContentScale.Crop,
                 modifier = Modifier.fillMaxWidth().aspectRatio(1f).clip(RoundedCornerShape(18.dp)))
             ArtActions(context, model, file)
+            if (model.artPrompt.isNotBlank()) TextButton(onClick = { model.generateArt() }, enabled = !model.loading) { Text("Повторить с тем же описанием") }
         }
     }
     if (model.artGallery.isNotEmpty()) {

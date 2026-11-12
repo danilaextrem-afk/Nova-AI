@@ -51,11 +51,41 @@ import java.util.Locale
             listOf("friendly" to "Дружелюбно","dramatic" to "Драматично","humorous" to "С юмором","calm" to "Спокойно").forEach {(value,label)->FilterChip(selected=model.storyTone==value,onClick={model.storyTone=value},label={Text(label)})}
         }
         Button(onClick={model.saveStorySettings()},enabled=!model.loading){Text("Сохранить настройки")}
+        val chat=model.activeChat
+        Text("Участники сцены",style=MaterialTheme.typography.titleMedium)
+        Text("До 5 персонажей. Каждый отвечает своим голосом; за ход говорят двое (в Premium — трое): сначала те, к кому ты обратился по имени, затем те, кто дольше молчал.",style=MaterialTheme.typography.bodySmall)
+        chat?.participantIds.orEmpty().forEach { id ->
+            Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+                androidx.compose.material3.Text(model.characterName(id),Modifier.weight(1f))
+                TextButton(onClick={model.toggleCastMember(id)},enabled=!model.loading){Text("Убрать из сцены")}
+            }
+        }
+        var inviting by remember {mutableStateOf(false)}
+        if((chat?.participantIds?.size?:0)<4)TextButton(onClick={inviting=!inviting}){Text(if(inviting)"Скрыть список" else "Пригласить персонажа")}
+        if(inviting)model.castCandidates().filter {it.id !in chat?.participantIds.orEmpty()}.take(30).forEach { c ->
+            TextButton(onClick={model.toggleCastMember(c.id);inviting=false},enabled=!model.loading){androidx.compose.material3.Text("+ "+c.name)}
+        }
+        if(chat?.participantIds.isNullOrEmpty()) {
+            Text("Что персонаж помнит о тебе",style=MaterialTheme.typography.titleMedium)
+            Text("Эти записи персонаж учитывает во всех твоих историях с ним. Их видишь только ты; автор персонажа и другие люди — нет.",style=MaterialTheme.typography.bodySmall)
+            model.characterMemories.forEach { m ->
+                Card(Modifier.fillMaxWidth()) {Column(Modifier.padding(12.dp)) {
+                    androidx.compose.material3.Text(m.content)
+                    Row(verticalAlignment=androidx.compose.ui.Alignment.CenterVertically) {
+                        if(m.source=="auto")Text("Записано автоматически",style=MaterialTheme.typography.labelSmall,modifier=Modifier.weight(1f)) else Spacer(Modifier.weight(1f))
+                        TextButton(onClick={model.deleteCharacterMemory(m.id)},enabled=!model.loading){Text("Забыть")}
+                    }
+                }}
+            }
+            OutlinedTextField(value=model.characterMemoryInput,onValueChange={model.characterMemoryInput=it},label={Text("Что персонажу стоит помнить")},modifier=Modifier.fillMaxWidth())
+            Button(onClick={model.addCharacterMemory()},enabled=!model.loading&&model.characterMemoryInput.isNotBlank()){Text("Запомнить")}
+        }
         Text("Память этой истории",style=MaterialTheme.typography.titleMedium)
-        Text("Записи используются только в этой переписке. Их можно исправить или удалить.",style=MaterialTheme.typography.bodySmall)
+        Text("Записи используются только в этой переписке. Важные события, факты и отношения записываются автоматически каждые несколько ходов. Любую запись можно исправить или удалить.",style=MaterialTheme.typography.bodySmall)
         model.memories.forEach { memory ->
             Card(Modifier.fillMaxWidth()) {Column(Modifier.padding(12.dp)) {
-                Text((if(memory.pinned) "📌 " else "")+memory.content)
+                Text(when(memory.kind){"EVENT"->"Событие";"RELATION"->"Отношения";"SUMMARY"->"Сводка истории";else->"Факт"}+if(memory.source=="auto")" · записано автоматически" else "",style=MaterialTheme.typography.labelSmall)
+                androidx.compose.material3.Text((if(memory.pinned) "📌 " else "")+memory.content)
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     TextButton(onClick={model.pinMemory(memory)},enabled=!model.loading){Text(if(memory.pinned) "Открепить" else "Закрепить")}
                     TextButton(onClick={model.editingMemoryId=memory.id;model.memoryInput=memory.content}){Text("Изменить")}

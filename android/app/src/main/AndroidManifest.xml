@@ -1,6 +1,12 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Voice conversation: asked only when the user opens it; audio is recognised by the phone's own service. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <queries>
+        <intent><action android:name="android.speech.RecognitionService" /></intent>
+        <intent><action android:name="android.intent.action.TTS_SERVICE" /></intent>
+    </queries>
     <application
         android:label="NOVA AI"
         android:icon="@mipmap/ic_launcher"
