@@ -44,8 +44,9 @@ const sentences = t => t.split(/(?<=[.!?…])\s+/).filter(Boolean).length;
 const latin = t => (t.match(/\b[A-Za-z]{4,}\b/g) || []).filter(w => !/^(NOVA|AI|OK)$/i.test(w));
 const assistantish = /чем (я )?могу (вам |тебе )?помочь|как (ии|искусственный интеллект|языковая модель)|я (—|-)? ?(ии|ai|бот|ассистент)\b/i;
 // Masculine past-tense self-references a female character must not use (and vice versa).
-const masculineSelf = /\bя\s+(?:\S+\s+)?(был|сделал|пришёл|пришел|видел|думал|нашёл|нашел|сказал|понял|устал|рад)\b/i;
-const feminineSelf = /\bя\s+(?:\S+\s+)?(была|сделала|пришла|видела|думала|нашла|сказала|поняла|устала|рада)\b/i;
+// JavaScript's \\b ignores Cyrillic, so word edges are written with Unicode letter look-arounds.
+const masculineSelf = /(?<!\p{L})я\s+(?:\p{L}+\s+)?(был|сделал|пришёл|пришел|видел|думал|нашёл|нашел|сказал|понял|устал|рад)(?!\p{L})/iu;
+const feminineSelf = /(?<!\p{L})я\s+(?:\p{L}+\s+)?(была|сделала|пришла|видела|думала|нашла|сказала|поняла|устала|рада)(?!\p{L})/iu;
 
 const base_card = { category: 'Повседневное', language: 'ru', tags: ['тест'], interests: '', backstory: '', appearance: '' };
 const marina = { ...base_card, name: 'Марина Солнцева', age: 31, gender: 'female', traits: ['Весёлая', 'Болтливая'],
@@ -76,13 +77,13 @@ try {
   const m1 = await say(chatM, q1, 'Марина · как дела');
   const g1 = await say(chatG, q1, 'Глеб · как дела');
   check('Personalities differ in length and energy', m1.length > g1.length * 1.5 && /!/.test(m1) && !/!/.test(g1), `Марина ${m1.length} симв., Глеб ${g1.length} симв.`);
-  check('Speech style markers', /солнышк|обалдеть/i.test(m1) && sentences(g1) <= 3, 'Марина: «солнышко/обалдеть»; Глеб: ≤3 предложений');
+  check('Speech style markers', /солнышк|обалдеть/iu.test(m1) && g1.length <= 140 && /^ну[.,]/iu.test(g1), 'Марина: «солнышко/обалдеть»; Глеб: начинает с «Ну.», ≤140 символов');
   check('Scenario is used', /пион|магазин|цвет/i.test(m1) && /лодк|мотор|причал/i.test(g1));
 
   // 2. Gender agreement in past tense.
   const m2 = await say(chatM, 'Что ты делала вчера вечером? Расскажи от первого лица в прошедшем времени.', 'Марина · вчера');
   const g2 = await say(chatG, 'Что ты делал вчера вечером? Расскажи от первого лица в прошедшем времени.', 'Глеб · вчера');
-  check('Female past tense', !masculineSelf.test(m2) && /(ла|лась)\b/.test(m2), m2.slice(0, 120));
+  check('Female past tense', !masculineSelf.test(m2) && /\p{L}(ла|лась)(?!\p{L})/u.test(m2), m2.slice(0, 120));
   check('Male past tense', !feminineSelf.test(g2), g2.slice(0, 120));
 
   // 3. Contradiction: a false claim about the character's own biography.
@@ -97,7 +98,7 @@ try {
   const short = await say(chatM, ask, 'Марина · кратко');
   need(await call('PATCH', '/v1/chats/' + chatM, { responseStyle: 'detailed', tone: 'dramatic' }), 'Detailed');
   const long = await say(chatM, ask + ' Ещё раз, пожалуйста.', 'Марина · подробно');
-  check('Response style setting matters', long.length > short.length * 1.6, `кратко ${short.length}, подробно ${long.length}`);
+  check('Response style setting matters', short.length <= 260 && long.length > short.length * 1.6, `кратко ${short.length}, подробно ${long.length}`);
 
   // 5. Scenario setting changes the scene.
   need(await call('PATCH', '/v1/chats/' + chatG, { scenario: 'Глеб стоит у штурвала траулера посреди шторма в Баренцевом море.' }), 'Scenario');
@@ -114,6 +115,11 @@ try {
   check('No English words in Russian replies', english.length === 0, english.slice(0, 8).join(', '));
   check('No repeated replies', new Set(all).size === all.length);
   check('Reacts to mood', /грус|печал|сер|обним|понима|солнышк/i.test(replies[2]), replies[2].slice(0, 120));
+  // The player's gender is never set here, so the characters must not guess it.
+  const guessed = all.find(t => /ты\s+(?:\p{L}+\s+)?(запутала|пришла|сказала|устала|была|сделала|запутал|пришёл|пришел|устал|сказал)(?!\p{L})/iu.test(t));
+  check('Does not guess the player gender', !guessed, guessed?.slice(0, 120) ?? '');
+  const markup = all.find(t => /\*\*|^\s*(#|\d+\.\s|[-•]\s)/mu.test(t));
+  check('No markdown headings, lists or bold', !markup, markup?.slice(0, 120) ?? '');
   check('Says goodbye naturally', /до завтр|пока|жду|приходи|удач/i.test(replies[4]), replies[4].slice(0, 100));
 } catch (e) {
   check('Run completion', false, e.message);

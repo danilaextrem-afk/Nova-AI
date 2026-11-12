@@ -101,7 +101,7 @@ import androidx.compose.ui.text.style.TextOverflow
      border=BorderStroke(1.dp,if(mine)Color(0xFF604578)else NovaDesign.Border),modifier=Modifier.widthIn(max=520.dp).fillMaxWidth(if(mine)0.90f else 0.97f).animateContentSize()){
      Column(Modifier.padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)){
       Text(if(mine)"ТЫ" else (message.speakerName?:chat.characterName?:chat.title?:"NOVA").uppercase(),style=MaterialTheme.typography.labelSmall,color=if(mine)NovaDesign.Lavender else NovaDesign.Rose)
-      Text(message.content,style=MaterialTheme.typography.bodyLarge)
+      androidx.compose.material3.Text(chatText(message.content,NovaDesign.Muted),style=MaterialTheme.typography.bodyLarge) // User content: never translated.
       if(!message.alternatives.isNullOrEmpty())Text("Версия ${message.alternatives.size+1} · прежние сохранены",style=MaterialTheme.typography.labelSmall,color=NovaDesign.Muted)
      }
     }
@@ -125,7 +125,7 @@ import androidx.compose.ui.text.style.TextOverflow
   model.streamingText?.let{partial->item{
    Surface(color=NovaDesign.Surface,shape=RoundedCornerShape(22.dp),border=BorderStroke(1.dp,NovaDesign.Border)){
     Column(Modifier.fillMaxWidth().padding(16.dp),verticalArrangement=Arrangement.spacedBy(10.dp)){
-     NovaTyping();if(partial.isNotEmpty())Text(partial,style=MaterialTheme.typography.bodyLarge)
+     NovaTyping();if(partial.isNotEmpty())androidx.compose.material3.Text(chatText(partial,NovaDesign.Muted),style=MaterialTheme.typography.bodyLarge)
     }
    }
   }}

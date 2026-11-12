@@ -69,7 +69,7 @@ class NovaUiTest {
     r.path?.startsWith("/v1/characters/catalog")==true && r.path!!.contains("section=mature") -> """{"items":[{"id":"00000000-0000-4000-8000-000000000199","name":"Северина Лис","greeting":"Добрый вечер.","category":"Романтика","tags":[],"mature":true}]}"""
     r.path?.startsWith("/v1/characters/catalog")==true -> """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет, исследователь!","category":"Приключения","tags":[],"ownerId":"fixture-creator","publication":{"id":"fixture-publication","likesCount":0}}]}"""
     groupMode && r.path=="/v1/chats" && r.method=="GET" -> """{"items":[{"id":"$chat","characterId":"$character","title":"Аврора Вейл, Кай Номад","characterName":"Аврора Вейл","participantIds":["00000000-0000-4000-8000-000000000107"]}]}"""
-    groupMode && r.path?.startsWith("/v1/chats/$chat/messages")==true && r.method=="GET" -> """{"items":[{"id":"u","role":"user","content":"Привет всем","sequence":1},{"id":"a","role":"assistant","content":"Рада встрече!","sequence":2,"speakerName":"Аврора Вейл"},{"id":"b","role":"assistant","content":"Я тоже здесь.","sequence":3,"speakerName":"Кай Номад"}]}"""
+    groupMode && r.path?.startsWith("/v1/chats/$chat/messages")==true && r.method=="GET" -> """{"items":[{"id":"u","role":"user","content":"Привет всем","sequence":1},{"id":"a","role":"assistant","content":"*улыбается* Рада **встрече**!","sequence":2,"speakerName":"Аврора Вейл"},{"id":"b","role":"assistant","content":"Я тоже здесь.","sequence":3,"speakerName":"Кай Номад"}]}"""
     discoverMode && r.path=="/v1/discover/recommended" -> """{"items":[{"id":"00000000-0000-4000-8000-000000000102","name":"Лея Винтер","greeting":"Привет","category":"Романтика","tags":["город"],"biography":"Фотограф ночного города.","reason":"TASTE"}],"personalised":true}"""
     r.path=="/v1/discover/collections" && discoverMode -> """{"collections":[{"key":"new","title":"NEW","items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет","category":"Приключения","tags":[],"publication":{"id":"fixture-publication","likesCount":3}}]}]}"""
     r.path=="/v1/creators/fixture-creator" -> """{"id":"fixture-creator","displayName":"Студия Север","bio":"Пишу истории о дальних мирах.","followers":4,"isFollowing":false,"likes":7,"characters":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет","category":"Приключения","tags":[]}]}"""
@@ -318,6 +318,9 @@ class NovaUiTest {
   waitFor("second speaker"){compose.onAllNodesWithText("КАЙ НОМАД").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("АВРОРА ВЕЙЛ").assertExists()
   compose.onNodeWithText("Группа · 2").assertExists()
+  // Model markup is rendered, never shown as raw asterisks.
+  compose.onNodeWithText("улыбается Рада встрече!").assertExists()
+  assertTrue(compose.onAllNodes(hasText("**",substring=true)).fetchSemanticsNodes().isEmpty())
   screenshot("28-group-scene")
   compose.onNodeWithContentDescription("Голосовой разговор").performClick()
   waitFor("voice screen"){compose.onAllNodesWithText("ГОЛОСОВОЙ РАЗГОВОР").fetchSemanticsNodes().isNotEmpty()}
