@@ -158,10 +158,14 @@ class NovaUiTest {
   // Matches a visible label or an icon button's accessible name (e.g. the round send button).
   val m=(hasText(text) or hasContentDescription(text)) and isEnabled()
   waitFor("enabled button '$text'"){compose.onAllNodes(m).fetchSemanticsNodes().isNotEmpty()}
-  val node=compose.onNode(m)
-  try { node.reveal().assertIsDisplayed().performClick() } catch (e:AssertionError) {
-   screenshot("failure-click-"+text.replace(Regex("[^a-zA-Zа-яА-Я0-9]"),"-")); throw AssertionError("Could not tap '$text'",e)
+  // Screens keep loading in the background (feeds, shelves), which can move a button right after scrolling to it:
+  // scroll and tap again a few times before calling it a failure.
+  var last:AssertionError?=null
+  repeat(5){
+   try { compose.onNode(m).reveal().assertIsDisplayed().performClick(); return } catch (e:AssertionError) { last=e }
+   compose.waitForIdle();Thread.sleep(400)
   }
+  screenshot("failure-click-"+text.replace(Regex("[^a-zA-Zа-яА-Я0-9]"),"-")); throw AssertionError("Could not tap '$text'",last)
  }
  @Test fun loginCatalogChatAndEncryptedDraftSurviveRecreation(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")
