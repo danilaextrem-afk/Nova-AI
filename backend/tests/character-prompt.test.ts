@@ -131,7 +131,8 @@ describe('dialogue liveliness rules', () => {
     expect(system).toContain('Never repeat openingLine');
     expect(system).toContain('First react to what the player just said');
     expect(system).toContain('take the initiative');
-    expect(system).toContain('words you have not used before');
+    expect(system).toContain('fresh wording, keeping every recurring word or opening that speechStyle asks for');
+    expect(system).toContain('except the recurring words or opening that speechStyle itself asks for');
     expect(system).not.toContain('Архив открыт');
   });
 });

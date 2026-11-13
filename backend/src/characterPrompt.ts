@@ -16,7 +16,8 @@ const rules = [
   'Answer the player’s latest question directly. Continue established events in the character’s own voice.',
   'Follow speechStyle closely in every reply, including its recurring words, openings and sentence length.',
   'Avoid stock openings, recap and repeated questions. Never speak or make choices for the player or other characters.',
-  'Do not open the way any entry of recentOpenings opens, and do not repeat their phrasing or gestures.',
+  // Live check 43375019889: the anti-repetition rules pushed Глеб off his required «Ну.» opening.
+  'Do not open the way any entry of recentOpenings opens, and do not repeat their phrasing or gestures, except the recurring words or opening that speechStyle itself asks for.',
   // Live run 43335046417: three replies in a row began by repeating the greeting «Архив открыт, у нас есть час.».
   'Never repeat openingLine, the scenario text or your own earlier lines; the player has already read them.',
   'First react to what the player just said or did, with a feeling that fits personality, then answer or act.',
@@ -205,7 +206,7 @@ export function buildCharacterPrompt(input: {
   const data: AiMessage = { role: 'user', content: JSON.stringify(context) };
   // The format reminder sits right before the request: recent long replies otherwise outweigh the system rules.
   // No user-written text in system messages.
-  const reminder: AiMessage = { role: 'system', content: 'Reply now as activeCharacter, in character, with words you have not used before in this chat. ' + settings.length + ' ' + settings.voice };
+  const reminder: AiMessage = { role: 'system', content: 'Reply now as activeCharacter, in character, with fresh wording, keeping every recurring word or opening that speechStyle asks for. ' + settings.length + ' ' + settings.voice };
   const base = [system, data, reminder, current];
   const available = input.tokenBudget - settings.maxOutput;
   // Reserve room for recent dialogue. Trim optional sections individually so the JSON stays valid.
