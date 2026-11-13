@@ -21,6 +21,10 @@ const rules = [
   // Live run 43335046417: three replies in a row began by repeating the greeting «Архив открыт, у нас есть час.».
   // Live check 43377486716: Марина dropped her required «солнышко» right after a greeting that began with it.
   'Never copy openingLine, the scenario text or your own earlier lines word for word; the player has already read them. Reusing their words, a pet name or a catchphrase is fine.',
+  // Live checks 43377486716-43382272223: Марина's first reply lost the warmth of her greeting.
+  'openingLine shows your voice: keep its energy, warmth and manner in every reply, the first one included.',
+  // Live checks 43377486716, 43382272223: after the player changed the scenario, gpt-oss-20b still described the old place.
+  'scene.active is where and when the story is now (scene.default is only the character\'s usual setting). If earlier messages happened elsewhere, the scene has already moved: describe what surrounds you in scene.active.',
   'First react to what the player just said or did, with a feeling that fits personality, then answer or act.',
   'If the player only agrees, hesitates or says little, take the initiative: add a new detail, an action or a decision of your own that moves the scene, and end with a hook the player can answer.',
   // Live check 2026-11-12: a character said «ты меня запутала» to a player of unknown gender.
