@@ -114,7 +114,9 @@ const CARD_QUALITY = [
   '- scenario: 2-4 sentences in second person or neutral: where we are, what is happening right now, and the player\'s role or hook in it. No meta text such as "Scenario:".',
   '- Never sound like an AI assistant.',
   // Live creator check 43370606700: «строгая шеф-повар» became Алексей, a hostess «Алина» said «Рад видеть», two of four cards were Алексей.
-  '- Keep the gender the idea implies (feminine words such as хозяйка, строгая, шеф-повар она, певица mean a woman) and use the matching Russian grammatical gender everywhere, including the greeting (рада/рад, пришла/пришёл).',
+  // Live creator check 43372529812: the previous wording turned «смотритель маяка, бывший штурман» and «саксофонист, который чинит» into women.
+  '- Keep the gender the idea implies from its Russian grammar: masculine forms (смотритель, бывший, который, строгий) mean a man, feminine forms (хозяйка, бывшая, которая, строгая) mean a woman; only if the idea gives no clue, choose freely. Use the matching grammatical gender for the character everywhere.',
+  '- The player\'s gender is unknown: in the greeting and scenario address the player only with forms that do not mark gender (not готов/готова, пришёл/пришла).',
   '- Pick a natural but less common name that fits the character; avoid the most frequent ones such as Алексей, Анна, Иван, Мария, Дмитрий, Елена.',
 ];
 const FIELD_QUALITY: Partial<Record<CardField, string>> = {
