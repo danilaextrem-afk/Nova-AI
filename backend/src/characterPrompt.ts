@@ -207,7 +207,12 @@ export function buildCharacterPrompt(input: {
   const romance = cast.some(character => character.mature)
     ? ' Adult romance and drama are allowed, but never sexually explicit. Never involve minors. Fade to black.'
     : '';
-  const system: AiMessage = { role: 'system', content: rules + romance + ' ' + settings.length + ' ' + settings.voice };
+  // Group scenes: the other characters' lines of this turn are in earlierReplies; without a rule the model
+  // tends to answer the player's question again in the same shape.
+  const group = cast.length > 1
+    ? ' This is a group scene. earlierReplies are what other characters already said this turn: react to them or add something new from your own view, do not repeat their content, opening or gestures, and address another character by name when you answer them.'
+    : '';
+  const system: AiMessage = { role: 'system', content: rules + romance + group + ' ' + settings.length + ' ' + settings.voice };
   const current: AiMessage = { role: 'user', content: request };
   // What the last few messages were about, for choosing memory notes (see relevantNotes).
   const recentContext = input.historyNewestFirst.slice(0, 4).map(message => message.content).join(' ');

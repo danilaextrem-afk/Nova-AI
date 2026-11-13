@@ -177,3 +177,18 @@ describe('memory notes follow the conversation', () => {
     expect(picked).toEqual(['Код сейфа Медный Парус', 'Маяк погас в полночь']);
   });
 });
+
+describe('group scenes', () => {
+  it('tells only group speakers how to treat earlierReplies', async () => {
+    const { buildCharacterPrompt } = await import('../src/characterPrompt.js');
+    const sheet = (id: string, name: string) => ({ id, name, age: 30, gender: 'female', mature: false, traits: [], appearance: '', biography: 'Реставратор.',
+      personality: 'Спокойная.', interests: '', backstory: '', speechStyle: 'Коротко.', scenario: 'Архив.', greeting: 'Привет.', language: 'ru' }) as any;
+    const base = { chat: { persona: '', scenario: '', responseStyle: 'balanced', tone: 'auto' } as any, notes: [], characterNotes: [],
+      historyNewestFirst: [], request: 'Что думаете о находке?', tier: 'free' as const, tokenBudget: 8000 };
+    const system = (input: any) => buildCharacterPrompt(input).messages.filter((m: any) => m.role === 'system').map((m: any) => m.content).join(' ');
+    const vera = sheet('vera', 'Вера'), ilya = sheet('ilya', 'Илья');
+    expect(system({ ...base, speaker: ilya, cast: [vera, ilya], earlierReplies: [{ name: 'Вера', text: 'Находка странная.' }] }))
+      .toContain('earlierReplies are what other characters already said this turn');
+    expect(system({ ...base, speaker: vera, cast: [vera] })).not.toContain('group scene');
+  });
+});
