@@ -27,6 +27,7 @@ const sendInput=z.object({content:z.string().trim().min(1).max(4000).optional(),
   regenerateMessageId:id.optional()}).strict()
   .refine(v=>!!v.content!==!!v.regenerateMessageId,{message:'Exactly one of content or regenerateMessageId'});
 class RegenerateTargetChanged extends Error {}
+class ChatAttemptExpired extends Error {}
 export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
   const background = new Set<Promise<void>>();
   const runInBackground = (task: Promise<unknown>, onFailure: () => void) => {
@@ -137,10 +138,15 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
     const userId=req.user.sub as string;
     const chat=await db.chat.findFirst({where:{id:req.params.id,userId},include:{character:true}});
     if(!chat)return reply.code(404).send({error:'CHAT_NOT_FOUND'});
-    if(chat.character.mature&&chat.character.ownerId!==userId&&!await showsMature(db,userId))return reply.code(403).send({error:'MATURE_SECTION_DISABLED'});
+    const canViewMature = chat.character.ownerId !== userId || chat.participantIds.length > 0
+      ? await showsMature(db, userId) : false;
+    if (chat.character.mature && chat.character.ownerId !== userId && !canViewMature) {
+      return reply.code(403).send({error: 'MATURE_SECTION_DISABLED'});
+    }
     const {tier,requestId,regenerateMessageId}=body.data;
     // For regeneration the prompt is the user turn that preceded the latest assistant reply.
     let content=body.data.content??'';let target:{id:string,sequence:number}|null=null;let promptUser:{sequence:number}|null=null;
+    let regenerationSpeaker: typeof chat.character | undefined;
     if(regenerateMessageId){
       const last=await db.message.findFirst({where:{chatId:chat.id},orderBy:{sequence:'desc'}});
       const prior=await db.chatRequest.findUnique({where:{id:requestId}});
@@ -153,6 +159,16 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       if(!last||last.id!==regenerateMessageId||last.role!=='assistant')return reply.code(409).send({error:'REGENERATE_ONLY_LATEST_REPLY'});
       const user=await db.message.findFirst({where:{chatId:chat.id,role:'user',sequence:{lt:last.sequence}},orderBy:{sequence:'desc'}});
       if(!user)return reply.code(409).send({error:'REGENERATE_NO_USER_TURN'});
+      if (last.speakerId && last.speakerId !== chat.characterId) {
+        if (!chat.participantIds.includes(last.speakerId)) {
+          return reply.code(409).send({error: 'REGENERATE_SPEAKER_UNAVAILABLE'});
+        }
+        const speaker = await db.character.findFirst({
+          where: {id: last.speakerId, ...visibleCharacter(userId, canViewMature)},
+        });
+        if (!speaker) return reply.code(409).send({error: 'REGENERATE_SPEAKER_UNAVAILABLE'});
+        regenerationSpeaker = speaker;
+      }
       target={id:last.id,sequence:last.sequence};promptUser={sequence:user.sequence};content=user.content.slice(0,4000);
     }
     const fingerprint=createHash('sha256').update(JSON.stringify(regenerateMessageId?[chat.id,'regenerate',regenerateMessageId,tier]:[chat.id,content,tier])).digest('hex');
@@ -165,6 +181,11 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       const [assistantMessage,...extraMessages]=await withNames([first,...extra]);
       return {duplicate:true,userMessage,assistantMessage,extraMessages,tier:old.tier,tokensCharged:old.priceTokens};
     }
+    // Historical replies stay readable. New generation must respect current publication and block state.
+    const lead = chat.character.ownerId === userId ? chat.character : await db.character.findFirst({
+      where: {id: chat.characterId, ...visibleCharacter(userId, canViewMature)},
+    });
+    if (!lead) return reply.code(404).send({error: 'CHARACTER_NOT_FOUND'});
     // Legacy requests from previous releases must never be re-billed. No guessing the answer by timestamp.
     if(!old&&await db.message.findUnique({where:{requestId}}))return reply.code(409).send({error:'LEGACY_REQUEST_ALREADY_SAVED'});
     if(tier==='premium'&&!premiumReady())return reply.code(503).send({error:'PREMIUM_NOT_CONFIGURED'});
@@ -176,38 +197,39 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       const previous=await tx.chatRequest.findUnique({where:{id:requestId}});
       if(previous&&(previous.fingerprint!==fingerprint||previous.userId!==userId))return 'REQUEST_ID_USED';
       if(previous?.status==='SUCCEEDED')return 'REQUEST_COMPLETED_RETRY';
-      // Pending attempts with uncertain outcome are never automatically resubmitted.
-      if(previous?.status==='PENDING'&&Date.now()-previous.startedAt.getTime()<180000)return 'REQUEST_IN_PROGRESS';
-      await tx.chatRequest.updateMany({where:{userId,status:'PENDING',startedAt:{lt:new Date(Date.now()-180000)}},data:{status:'FAILED',errorCode:'REQUEST_TIMED_OUT'}});
+      const now = Date.now();
+      const expiresBefore = new Date(now - 180000);
+      if (previous?.status === 'PENDING' && previous.startedAt >= expiresBefore) return 'REQUEST_IN_PROGRESS';
+      await tx.chatRequest.updateMany({where:{userId,status:'PENDING',startedAt:{lt:expiresBefore}},data:{status:'FAILED',errorCode:'REQUEST_TIMED_OUT'}});
       if(await tx.chatRequest.count({where:{userId,status:'PENDING'}}))return 'CHAT_BUSY';
       if(tier==='premium'){
         const w=await tx.walletAccount.findUnique({where:{userId}});
         if((w?.purchased??0)+(w?.adReward??0)+(w?.bonus??0)<price)return 'INSUFFICIENT_TOKENS';
       }
-      await tx.chatRequest.upsert({where:{id:requestId},create:{id:requestId,userId,chatId:chat.id,content,fingerprint,tier,priceTokens:price,targetMessageId:target?.id??null},
-        update:{status:'PENDING',errorCode:null,startedAt:new Date(),priceTokens:price}});
-      return 'READY';
+      // Persist a distinct attempt timestamp even when retries start in the same millisecond.
+      const startedAt = new Date(Math.max(now, (previous?.startedAt.getTime() ?? 0) + 1));
+      await tx.chatRequest.upsert({where:{id:requestId},create:{id:requestId,userId,chatId:chat.id,content,fingerprint,tier,priceTokens:price,targetMessageId:target?.id??null,startedAt},
+        update:{status:'PENDING',errorCode:null,startedAt,priceTokens:price}});
+      return startedAt;
     });
-    if(reservation!=='READY')return reply.code(reservation==='INSUFFICIENT_TOKENS'?402:409).send({error:reservation});
+    if (typeof reservation === 'string') return reply.code(reservation==='INSUFFICIENT_TOKENS'?402:409).send({error:reservation});
+    const attempt = {id: requestId, userId, status: 'PENDING', startedAt: reservation};
     const started=Date.now();
     try {
       const [history,memories,others,summary]=await Promise.all([
         db.message.findMany({where:{chatId:chat.id,...(promptUser?{sequence:{lt:promptUser.sequence}}:{})},orderBy:{sequence:'desc'},take:tier==='premium'?36:24}),
         db.memory.findMany({where:{chatId:chat.id,kind:{not:'SUMMARY'}},orderBy:[{pinned:'desc'},{updatedAt:'desc'}],take:100}),
-        db.character.findMany({where:{id:{in:chat.participantIds},...visibleCharacter(userId,await showsMature(db,userId))}}),
+        db.character.findMany({where:{id:{in:chat.participantIds},...visibleCharacter(userId,canViewMature)}}),
         db.memory.findFirst({where:{chatId:chat.id,kind:'SUMMARY'},orderBy:{updatedAt:'desc'}}),
       ]);
       others.sort((x,y)=>chat.participantIds.indexOf(x.id)-chat.participantIds.indexOf(y.id)); // Stable cast order.
-      const cast=[chat.character,...others];
+      const cast=[lead,...others];
       const isGroup=others.length>0;
       const names=new Map(cast.map(c=>[c.id,c.name]));
       // What each character remembers about this player across all of the player's stories (private to the player).
       const lasting=await db.characterMemory.findMany({where:{userId,characterId:{in:cast.map(c=>c.id)}},orderBy:[{pinned:'desc'},{updatedAt:'desc'}],take:60});
-      let speakers=[chat.character];
-      if(isGroup&&target){
-        const t=await db.message.findUnique({where:{id:target.id},select:{speakerId:true}});
-        speakers=[cast.find(c=>c.id===t?.speakerId)??chat.character];
-      }else if(isGroup){
+      let speakers = [regenerationSpeaker ?? lead];
+      if (isGroup && !target) {
         const spoke=await db.message.findMany({where:{chatId:chat.id,role:'assistant'},orderBy:{sequence:'desc'},take:12,select:{speakerId:true}});
         // AI cost control: a turn is 2 replies on the free tier and 3 on Premium, however large the cast.
         speakers=pickSpeakers(cast,content,spoke.map(m=>m.speakerId),tier==='premium'?3:2);
@@ -220,7 +242,15 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       const turn: { name: string; text: string }[] = [];
       for(const [i,sp] of speakers.entries()){
         if(stream.signal?.aborted)throw new AiProviderError('AI_CANCELLED',499,1);
-        if(isGroup)stream.onDelta?.((i?'\n\n':'')+sp.name+': ');
+        let onDelta = stream.onDelta;
+        if (isGroup && stream.onDelta) {
+          const emit = stream.onDelta;
+          let first = true;
+          onDelta = text => {
+            emit(first ? (i ? '\n\n' : '') + sp.name + ': ' + text : text);
+            first = false;
+          };
+        }
         const { messages, settings } = buildCharacterPrompt({
           speaker: sp, cast, chat, historyNewestFirst: history, notes: memories,
           characterNotes: lasting.filter(note => note.characterId === sp.id).map(note => ({ ...note, kind: 'FACT' })),
@@ -230,7 +260,7 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
         let output;
         try {
           output = await completeAiChat(messages, tier, db, i ? undefined : requestId, {
-            ...stream, maxOutput: settings.maxOutput, temperature: settings.temperature,
+            ...stream, onDelta, maxOutput: settings.maxOutput, temperature: settings.temperature,
           });
         }
         catch(e){if(i===0||stream.signal?.aborted)throw e;break;}
@@ -242,8 +272,7 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
         if(stream.signal?.aborted)throw new AiProviderError('AI_CANCELLED',499,1);
         await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
         if(stream.signal?.aborted)throw new AiProviderError('AI_CANCELLED',499,1);
-        const reserved=await tx.chatRequest.findUnique({where:{id:requestId}});
-        if(!reserved||reserved.status!=='PENDING')throw new Error('REQUEST_EXPIRED');
+        if (!await tx.chatRequest.findFirst({where: attempt, select: {id: true}})) throw new ChatAttemptExpired();
         let userMessage:any=null;let assistantMessage:any;
         if(target){
           // Lock the chat so a concurrent new turn cannot slip in between the check and the replace.
@@ -280,12 +309,13 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
         inference:{provider:output.provider,model:output.model}};
     }catch(error){
       const code=error instanceof AiProviderError?error.code:error instanceof InsufficientTokensError?'INSUFFICIENT_TOKENS':
-        error instanceof RegenerateTargetChanged?'REGENERATE_TARGET_CHANGED':'CHAT_STORAGE_FAILURE';
-      await db.chatRequest.updateMany({where:{id:requestId,userId,status:'PENDING'},data:{status:'FAILED',errorCode:code}});
+        error instanceof RegenerateTargetChanged?'REGENERATE_TARGET_CHANGED':
+        error instanceof ChatAttemptExpired?'REQUEST_EXPIRED':'CHAT_STORAGE_FAILURE';
+      await db.chatRequest.updateMany({where:attempt,data:{status:'FAILED',errorCode:code}});
       if(error instanceof AiProviderError)reply.header('Retry-After',error.retryAfter);
       req.log.warn({code},'Chat request failed; no token debit committed');
       return reply.code(error instanceof AiProviderError?error.httpStatus:error instanceof InsufficientTokensError?402:
-        error instanceof RegenerateTargetChanged?409:503).send({error:code,requestId});
+        error instanceof RegenerateTargetChanged||error instanceof ChatAttemptExpired?409:503).send({error:code,requestId});
     }
   }
   return drainChatJobs;

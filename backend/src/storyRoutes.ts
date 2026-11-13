@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 const memoryInput=z.object({content:z.string().trim().min(1).max(2000),kind:z.enum(['FACT','EVENT','RELATION']).default('FACT'),pinned:z.boolean().default(false)}).strict();
 export async function registerStoryRoutes(app:FastifyInstance,db:PrismaClient){
@@ -32,7 +33,17 @@ export async function registerStoryRoutes(app:FastifyInstance,db:PrismaClient){
       const c=await tx.chat.create({data:{userId:req.user.sub,characterId:source.characterId,participantIds:source.participantIds,
         title:p.data.title,parentChatId:source.id,persona:source.persona,scenario:source.scenario,responseStyle:source.responseStyle,tone:source.tone}});
       const messages=await tx.message.findMany({where:{chatId:source.id,sequence:{lte:message.sequence}},orderBy:{sequence:'asc'},take:10000});
-      await tx.message.createMany({data:messages.map(m=>({chatId:c.id,role:m.role,content:m.content,pinned:m.pinned,createdAt:m.createdAt,speakerId:m.speakerId}))});
+      const turnIds = new Map<string, string>();
+      for (const m of messages) {
+        if (m.role === 'user' && m.requestId) turnIds.set(m.requestId, randomUUID());
+      }
+      await tx.message.createMany({data:messages.map(m=>({
+        chatId:c.id,role:m.role,content:m.content,pinned:m.pinned,createdAt:m.createdAt,speakerId:m.speakerId,
+        // The branch links its own copied messages without reusing the original AI or billing request.
+        requestId:m.requestId ? turnIds.get(m.requestId) : undefined,
+        replyToRequestId:m.replyToRequestId ? turnIds.get(m.replyToRequestId) : undefined,
+        turnRequestId:m.turnRequestId ? turnIds.get(m.turnRequestId) : undefined,
+      }))});
       // No summaries/facts from the future are copied into an earlier timeline.
       const memories=await tx.memory.findMany({where:{chatId:source.id,kind:{not:'SUMMARY'},updatedAt:{lte:message.createdAt}}});
       await tx.memory.createMany({data:memories.map(m=>({chatId:c.id,kind:m.kind,content:m.content,pinned:m.pinned,source:m.source}))});
