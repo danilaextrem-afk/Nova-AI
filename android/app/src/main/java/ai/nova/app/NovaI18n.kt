@@ -317,7 +317,7 @@ private val EN: Map<String, String> = mapOf(
     // Voice
     "Голосовой разговор" to "Voice conversation", "ГОЛОСОВОЙ РАЗГОВОР" to "VOICE CONVERSATION", "Нужен доступ к микрофону" to "Microphone access is needed",
     "Слушаю тебя…" to "Listening…", "Персонаж думает…" to "The character is thinking…", "Персонаж говорит" to "The character is speaking",
-    "Пауза" to "Pause", "На телефоне нет службы распознавания речи" to "This phone has no speech recognition service",
+    "Пауза" to "Pause", "Перебить" to "Interrupt", "На телефоне нет службы распознавания речи" to "This phone has no speech recognition service",
     "Разрешить микрофон" to "Allow microphone", "Продолжить" to "Resume", "Отменить ответ" to "Cancel reply", "Завершить разговор" to "End conversation",
     "Речь распознаёт и озвучивает сам телефон; в NOVA уходит только текст. Это разговор по очереди, а не непрерывный аудиопоток." to
         "Speech is recognised and spoken by the phone itself; only text goes to NOVA. This is a turn-by-turn conversation, not a continuous audio stream.",
