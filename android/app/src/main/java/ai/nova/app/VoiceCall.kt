@@ -199,7 +199,7 @@ fun VoiceCallDialog(model: NovaViewModel, voice: NovaVoice, onClose: () -> Unit)
         if (model.error != null || fresh.isEmpty()) { state = CallState.PAUSED; note = model.error ?: "Ответ не пришёл. Нажми «Продолжить» и повтори."; return@LaunchedEffect }
         lastSpokenId = all.last().id; replyDelayMs = System.currentTimeMillis() - sentAt
         state = CallState.SPEAKING
-        voice.speak("call-" + all.last().id, fresh.joinToString(". ") { (it.speakerName?.let { n -> "$n. " } ?: "") + it.content }, chat.characterId, NovaLang.code, model.genderOf(chat.characterId))
+        voice.speak("call-" + all.last().id, fresh.joinToString(". ") { (it.speakerName?.let { n -> "$n. " } ?: "") + it.content }, chat.characterId, NovaLang.code, hint = model.voiceHintOf(chat.characterId))
         // A failed start never changes speakingId, so the effect below would not fire: go back to listening here.
         if (voice.speakingId == null) listen()
     }
