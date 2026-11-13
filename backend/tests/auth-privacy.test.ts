@@ -11,6 +11,47 @@ afterAll(async()=>{await db.user.deleteMany({where:{id:userId}});await app.close
 it('rejects registration without explicit adult confirmation',async()=>{
  const result=await app.inject({method:'POST',url:'/v1/auth/register',payload:{email:randomUUID()+'@test.invalid',password:'safe-test-password-123'}});expect(result.statusCode).toBe(400);
 });
+it('returns an email conflict for concurrent registrations of the same address', async () => {
+ const email = randomUUID() + '@test.invalid';
+ try {
+  const responses = await Promise.all([email, email.toUpperCase()].map(address => app.inject({
+   method: 'POST', url: '/v1/auth/register', remoteAddress: '192.0.2.12',
+   payload: { email: address, password: 'concurrent-password-123', adultConfirmed: true },
+  })));
+  expect(responses.map(response => response.statusCode).sort()).toEqual([200, 409]);
+  expect(responses.find(response => response.statusCode === 409)?.json()).toEqual({error:'EMAIL_TAKEN'});
+  const user = await db.user.findUniqueOrThrow({where:{email},include:{wallet:true,profile:true,sessions:true}});
+  expect(user.wallet).toBeTruthy();
+  expect(user.profile).toBeTruthy();
+  expect(user.sessions).toHaveLength(1);
+ } finally {
+  await db.user.deleteMany({where:{email}});
+ }
+});
+it('counts simultaneous failed logins from different addresses against one account', async () => {
+ const email = randomUUID() + '@test.invalid';
+ const password = 'correct-password-123';
+ try {
+  const registration = await app.inject({
+   method:'POST', url:'/v1/auth/register', remoteAddress:'192.0.2.13',
+   payload:{email,password,adultConfirmed:true},
+  });
+  expect(registration.statusCode).toBe(200);
+  const failures = await Promise.all(Array.from({length:8}, (_, index) => app.inject({
+   method:'POST', url:'/v1/auth/login', remoteAddress:'192.0.2.' + (index + 20),
+   payload:{email,password:'incorrect-password-123'},
+  })));
+  expect(failures.map(response => response.statusCode)).toEqual(Array(8).fill(401));
+  const locked = await app.inject({
+   method:'POST', url:'/v1/auth/login', remoteAddress:'192.0.2.30', payload:{email,password},
+  });
+  expect(locked.statusCode).toBe(429);
+  expect(locked.json()).toEqual({error:'TOO_MANY_LOGIN_ATTEMPTS'});
+  expect(Number(locked.headers['retry-after'])).toBeGreaterThan(0);
+ } finally {
+  await db.user.deleteMany({where:{email}});
+ }
+});
 it('explains which credential field is invalid without relaxing validation',async()=>{
  const post=(url:string,payload:any)=>app.inject({method:'POST',url,payload});
  for(const url of ['/v1/auth/login','/v1/auth/register']){

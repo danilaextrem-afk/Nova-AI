@@ -2,7 +2,7 @@ import Fastify from 'fastify';
 import jwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
 import helmet from '@fastify/helmet';
-import { PrismaClient } from '@prisma/client';
+import { Prisma, PrismaClient } from '@prisma/client';
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import argon2 from 'argon2';
 import { z } from 'zod';
@@ -124,7 +124,12 @@ app.post('/v1/auth/register', { config: { rateLimit: { max: 10, timeWindow: '1 m
   const passwordHash = await argon2.hash(body.data.password, { type: argon2.argon2id });
   const user = await db.user.create({
     data: { email, passwordHash, profile: { create: { displayName: email.split('@')[0] } }, wallet: { create: {} } },
+  }).catch(error => {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002' &&
+        Array.isArray(error.meta?.target) && error.meta.target.includes('email')) return null;
+    throw error;
   });
+  if (!user) return reply.code(409).send({ error: 'EMAIL_TAKEN' });
   return issueTokens(user.id);
 });
 
@@ -132,22 +137,30 @@ app.post('/v1/auth/register', { config: { rateLimit: { max: 10, timeWindow: '1 m
 // 8 failed attempts per email within 15 minutes lock that email's login for the rest of the window.
 const failedLogins = new Map<string, { count: number; until: number }>();
 const LOGIN_WINDOW_MS = 15 * 60_000, LOGIN_MAX_FAILURES = 8;
+function currentLoginFailures(email: string, now: number) {
+  const entry = failedLogins.get(email);
+  return entry && entry.until > now ? entry : undefined;
+}
 // Unknown emails still run one argon2 verification so response timing does not reveal registered accounts.
 const dummyHash = await argon2.hash(randomBytes(16).toString('hex'), { type: argon2.argon2id });
 app.post('/v1/auth/login', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
   const body = creds.safeParse(req.body);
   if (!body.success) return reply.code(400).send({ error: credsError(body.error) });
   const email = body.data.email.toLowerCase();
-  const now = Date.now();
-  const entry = failedLogins.get(email);
-  if (entry && entry.until > now && entry.count >= LOGIN_MAX_FAILURES) {
-    reply.header('Retry-After', Math.ceil((entry.until - now) / 1000));
-    return reply.code(429).send({ error: 'TOO_MANY_LOGIN_ATTEMPTS' });
-  }
+  const locked = (until: number, now: number) => reply
+    .header('Retry-After', Math.ceil((until - now) / 1000))
+    .code(429).send({ error: 'TOO_MANY_LOGIN_ATTEMPTS' });
+  const startedAt = Date.now();
+  const before = currentLoginFailures(email, startedAt);
+  if (before && before.count >= LOGIN_MAX_FAILURES) return locked(before.until, startedAt);
   const user = await db.user.findUnique({ where: { email } });
   const valid = await argon2.verify(user?.passwordHash ?? dummyHash, body.data.password).catch(() => false);
+  // Other requests can record failures while the password hash is being verified.
+  const now = Date.now();
+  const entry = currentLoginFailures(email, now);
+  if (entry && entry.count >= LOGIN_MAX_FAILURES) return locked(entry.until, now);
   if (!user || user.status !== 'ACTIVE' || !valid) {
-    const current = entry && entry.until > now ? entry : { count: 0, until: now + LOGIN_WINDOW_MS };
+    const current = entry ?? { count: 0, until: now + LOGIN_WINDOW_MS };
     current.count++; failedLogins.set(email, current);
     if (failedLogins.size > 50_000) for (const [k, v] of failedLogins) if (v.until <= now) failedLogins.delete(k);
     return reply.code(401).send({ error: 'INVALID_CREDENTIALS' });
