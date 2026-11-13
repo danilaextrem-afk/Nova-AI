@@ -119,3 +119,17 @@ export function impliedGender(idea: string): 'female' | 'male' | undefined {
 export function marksPlayerGender(text: string): boolean {
   return /(?:^|[^\p{L}])ты\s+(?:\p{L}+\s+)?(?:\p{L}{2,}(?:л|ла|лся|лась)|\p{L}*шел|\p{L}*шёл|\p{L}*шла|готов|готова|рад|рада|должен|должна|один|одна)(?!\p{L})/iu.test(text ?? '');
 }
+
+/**
+ * Whom a generated card's text is about, from Russian pronouns and past-tense forms in biography,
+ * backstory and personality («она открыла…» → female). The author still chooses the gender; this only lets
+ * the app say which gender the text was written for. Undefined when the cues are absent or mixed.
+ */
+export function genderOfCardText(card: { biography?: string; backstory?: string; personality?: string }): 'female' | 'male' | undefined {
+  const t = ' ' + [card.biography, card.backstory, card.personality].filter(Boolean).join(' ').toLocaleLowerCase('ru') + ' ';
+  const female = (t.match(/[^\p{L}](она|её|ее|ей)(?!\p{L})|\p{L}{2,}(ла|лась)(?=[\s,.!?;:])/gu) ?? []).length;
+  const male = (t.match(/[^\p{L}](он|его|ему)(?!\p{L})|\p{L}{2,}[^л\s](л|лся)(?=[\s,.!?;:])/gu) ?? []).length;
+  if (female >= male * 2 && female >= 2) return 'female';
+  if (male >= female * 2 && male >= 2) return 'male';
+  return undefined;
+}

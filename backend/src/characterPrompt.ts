@@ -104,8 +104,8 @@ export function dialogueSettings(style: string, tone: string, tier: AiTier) {
   const styles = {
     concise: { maxOutput: premium ? 640 : 480, length: 'Strictly one or two short sentences, at most 200 characters. Answer first.' },
     balanced: { maxOutput: premium ? 1600 : 640, length: premium ? 'Use richer continuity and natural detail where it helps.' : 'Usually one to three short paragraphs.' },
-    detailed: { maxOutput: premium ? 1900 : 880, length: 'Develop the reply with specific details and an unhurried pace.' },
-    story: { maxOutput: premium ? 2100 : 1040, length: 'Write a short scene with grounded action and dialogue. Leave the next decision to the player.' },
+    detailed: { maxOutput: premium ? 1900 : 880, length: 'Develop the reply with specific sensory details, a concrete action of your own and an unhurried pace.' },
+    story: { maxOutput: premium ? 2100 : 1040, length: 'Write a short scene that moves the plot one step: a complication, a discovery or a choice. Mix grounded action with a line or two of dialogue and vary sentence rhythm. End on a concrete situation the player can act on, not a generic question such as «Что будешь делать?». Leave the decision to the player.' },
   };
   const tones = {
     friendly: { temperature: 0.65, voice: 'Warm and direct.' },
@@ -207,7 +207,12 @@ export function buildCharacterPrompt(input: {
   const romance = cast.some(character => character.mature)
     ? ' Adult romance and drama are allowed, but never sexually explicit. Never involve minors. Fade to black.'
     : '';
-  const system: AiMessage = { role: 'system', content: rules + romance + ' ' + settings.length + ' ' + settings.voice };
+  // Group scenes: the other characters' lines of this turn are in earlierReplies; without a rule the model
+  // tends to answer the player's question again in the same shape.
+  const group = cast.length > 1
+    ? ' This is a group scene. earlierReplies are what other characters already said this turn: react to them or add something new from your own view, do not repeat their content, opening or gestures, and address another character by name when you answer them.'
+    : '';
+  const system: AiMessage = { role: 'system', content: rules + romance + group + ' ' + settings.length + ' ' + settings.voice };
   const current: AiMessage = { role: 'user', content: request };
   // What the last few messages were about, for choosing memory notes (see relevantNotes).
   const recentContext = input.historyNewestFirst.slice(0, 4).map(message => message.content).join(' ');

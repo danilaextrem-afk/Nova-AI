@@ -48,7 +48,7 @@ data class AssistRequest(val mode: String, val idea: String? = null, val field: 
 data class AssistCard(val name: String = "", val biography: String = "", val personality: String = "", val interests: String = "",
     val appearance: String = "", val speechStyle: String = "", val backstory: String = "", val scenario: String = "", val greeting: String = "",
     val tags: List<String>? = null, val traits: List<String>? = null, val category: String? = null)
-data class AssistResponse(val card: AssistCard? = null, val variants: List<String>? = null, val needs: List<String>? = null)
+data class AssistResponse(val card: AssistCard? = null, val variants: List<String>? = null, val needs: List<String>? = null, val textGender: String? = null)
 data class AvatarUpload(val data: String, val source: String, val rightsConfirmed: Boolean = true)
 data class AvatarResult(val id: String, val url: String)
 data class ArtStatus(val configured: Boolean = false, val freePerDay: Int = 0, val usedToday: Int = 0, val freeLeft: Int = 0, val priceTokens: Int = 0)

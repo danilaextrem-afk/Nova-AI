@@ -724,6 +724,8 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     data class FieldSuggestion(val field: String, val action: String, val variants: List<String>)
     var cardSuggestion by mutableStateOf<AssistCard?>(null)
     var cardNeeds by mutableStateOf<List<String>>(emptyList())
+    /** Whom the generated card text is about ("female"/"male"); the author still picks the gender. */
+    var cardTextGender by mutableStateOf<String?>(null)
     var fieldSuggestion by mutableStateOf<FieldSuggestion?>(null)
     var assistBusy by mutableStateOf<String?>(null) // "card" or a field key while the AI works
     var lastIdea by mutableStateOf("")
@@ -773,7 +775,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         if (text.length < 3) { error = "Опиши идею хотя бы парой слов"; return }
         lastIdea = text
         assistCall("card", AssistRequest("full", idea = text, current = currentCard(), language = NovaLang.code)) { r ->
-            cardSuggestion = r.card; cardNeeds = r.needs.orEmpty() }
+            cardSuggestion = r.card; cardNeeds = r.needs.orEmpty(); cardTextGender = r.textGender }
     }
     fun assistField(field: String, action: String) {
         assistCall(field, AssistRequest("field", field = field, action = action, current = currentCard(), language = NovaLang.code)) { r ->
@@ -794,7 +796,9 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         c.category?.takeIf { it.isNotBlank() }?.let { draftCategory = it }
         if (draftTraits.isEmpty()) c.traits?.let { draftTraits = it.take(6) }
         cardSuggestion = null; fieldUndo = emptyMap()
-        notification = if (cardNeeds.isNotEmpty()) "Карточка заполнена. Выбери возраст и пол — AI их не выбирает за тебя." else "Карточка заполнена. Проверь и поправь любые поля."
+        // The text was written about a woman or a man: say so, so the chosen gender matches the biography.
+        val about = when (cardTextGender) { "female" -> " Текст написан о женщине."; "male" -> " Текст написан о мужчине."; else -> "" }
+        notification = if (cardNeeds.isNotEmpty()) "Карточка заполнена.$about Выбери возраст и пол — AI их не выбирает за тебя." else "Карточка заполнена. Проверь и поправь любые поля."
     }
     fun undoCard() { cardUndo?.forEach { (k, v) -> setDraftField(k, v) }; cardUndo = null }
 

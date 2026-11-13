@@ -180,6 +180,16 @@ try {
       && !/Илья(?: Невский)?\s*[,:]\s*(?:я\s*[—–-]|[А-ЯЁ])/u.test(veraLine) && !/Вера(?: Снегир[ёе]ва)?\s*[,:]\s*(?:я\s*[—–-]|[А-ЯЁ])/u.test(ilyaLine),
       'Vera: ' + veraLine.slice(0, 90) + ' | Ilya: ' + ilyaLine.slice(0, 90));
 
+    // A question both answer: the second speaker should react or add something, not echo the first (real model, heuristic).
+    const both = await send(group, 'Что вы оба думаете о сегодняшней находке в архиве?', '14');
+    const lines = [both.body.assistantMessage, ...(both.body.extraMessages ?? [])].map(m => m?.content ?? '').filter(Boolean);
+    const stems = t => new Set((t.toLocaleLowerCase('ru').match(/\p{L}{5,}/gu) ?? []).map(w => w.slice(0, 5)));
+    const [a, b] = [stems(lines[0] ?? ''), stems(lines[1] ?? '')];
+    const shared = [...a].filter(w => b.has(w)).length / Math.max(1, Math.min(a.size, b.size));
+    const opening = t => t.replace(/\*[^*]*\*/g, '').toLocaleLowerCase('ru').match(/\p{L}+/gu)?.slice(0, 3).join(' ') ?? '';
+    check('14 · Group replies are not echoes', lines.length >= 2 && opening(lines[0]) !== opening(lines[1]) && shared <= 0.5,
+      `общих основ ${(shared * 100).toFixed(0)}%; ${lines.map(l => '«' + l.slice(0, 70) + '»').join(' | ')}`);
+
     const note = requireOk(await call('POST', '/v1/chats/' + archive + '/memories', { content: 'Код сейфа — Серый Лист.', pinned: true }), 'Add memory').memory;
     requireOk(await call('PATCH', '/v1/chats/' + archive + '/memories/' + note.id,
       { content: 'Код сейфа — Медный Парус.', pinned: true }), 'Correct memory');
