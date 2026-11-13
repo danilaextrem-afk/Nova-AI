@@ -104,8 +104,8 @@ export function dialogueSettings(style: string, tone: string, tier: AiTier) {
   const styles = {
     concise: { maxOutput: premium ? 640 : 480, length: 'Strictly one or two short sentences, at most 200 characters. Answer first.' },
     balanced: { maxOutput: premium ? 1600 : 640, length: premium ? 'Use richer continuity and natural detail where it helps.' : 'Usually one to three short paragraphs.' },
-    detailed: { maxOutput: premium ? 1900 : 880, length: 'Develop the reply with specific details and an unhurried pace.' },
-    story: { maxOutput: premium ? 2100 : 1040, length: 'Write a short scene with grounded action and dialogue. Leave the next decision to the player.' },
+    detailed: { maxOutput: premium ? 1900 : 880, length: 'Develop the reply with specific sensory details, a concrete action of your own and an unhurried pace.' },
+    story: { maxOutput: premium ? 2100 : 1040, length: 'Write a short scene that moves the plot one step: a complication, a discovery or a choice. Mix grounded action with a line or two of dialogue and vary sentence rhythm. End on a concrete situation the player can act on, not a generic question such as «Что будешь делать?». Leave the decision to the player.' },
   };
   const tones = {
     friendly: { temperature: 0.65, voice: 'Warm and direct.' },

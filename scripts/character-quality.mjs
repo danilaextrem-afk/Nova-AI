@@ -105,6 +105,14 @@ try {
   const g5 = await say(chatG, 'Где мы сейчас и что происходит вокруг?', 'Глеб · новый сценарий');
   check('Scenario setting matters', /шторм|штурвал|волн|траулер|баренц/i.test(g5), g5.slice(0, 140));
 
+  // 5b. Story mode (heuristic, real model): a scene with dialogue that moves the plot and ends on a concrete situation.
+  need(await call('PATCH', '/v1/chats/' + chatG, { responseStyle: 'story', tone: 'dramatic' }), 'Story');
+  const story = await say(chatG, 'Что происходит дальше?', 'Глеб · сцена');
+  const genericEnd = /(что|как)\s+(ты\s+|вы\s+)?(будешь|будете|хочешь|хотите|собираешься|собираетесь)\s+(делать|поступить|предпринять)[^.!?]*\?\s*$/iu;
+  check('Story mode writes a scene', story.length >= 300 && story.length <= 2200 && /[—–]\s*\p{Lu}|«[^»]{3,}»/u.test(story) && !genericEnd.test(story),
+    `${story.length} симв.; диалог: ${/[—–]\s*\p{Lu}|«[^»]{3,}»/u.test(story) ? 'да' : 'нет'}; общий вопрос в конце: ${genericEnd.test(story) ? 'да' : 'нет'}`);
+  need(await call('PATCH', '/v1/chats/' + chatG, { responseStyle: 'balanced', tone: 'calm' }), 'Back to balanced');
+
   // 6. Natural small talk over several turns: no assistant phrases, no English, no repeats.
   const talk = ['Слушай, а какие цветы ты сама больше всего любишь?', 'А почему именно они?', 'Мне сегодня грустно, погода серая.', 'Спасибо. А ты бы что посоветовала сделать вечером?', 'Хорошо, так и сделаю. До завтра!'];
   const replies = [];

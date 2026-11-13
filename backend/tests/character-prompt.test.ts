@@ -66,7 +66,7 @@ describe('Character dialogue context', () => {
     const story = buildCharacterPrompt({ ...input, chat: { ...input.chat, responseStyle: 'story', tone: 'humorous' } });
     expect(short.settings.maxOutput).toBeLessThan(story.settings.maxOutput);
     expect(short.settings.temperature).toBeLessThan(story.settings.temperature);
-    expect(story.messages[0].content).toContain('Leave the next decision to the player');
+    expect(story.messages[0].content).toContain('Leave the decision to the player');
     expect(short.messages.at(-2)?.content).toContain('at most 200 characters');
   });
   it('enforces the concise mode on the saved text and removes markdown headings', () => {
@@ -175,5 +175,15 @@ describe('memory notes follow the conversation', () => {
     const notes = [note('Ключ лежал в вазе'), note('Маяк погас в полночь'), note('Код сейфа Медный Парус', { pinned: true })];
     const picked = relevantNotes(notes, 'Что случилось с маяком?', 2, 'ключ ваза ключ ваза').map(n => n.content);
     expect(picked).toEqual(['Код сейфа Медный Парус', 'Маяк погас в полночь']);
+  });
+});
+
+describe('story and detailed modes', () => {
+  it('ask for a plot step and a concrete ending, not a generic question', async () => {
+    const { dialogueSettings } = await import('../src/characterPrompt.js');
+    expect(dialogueSettings('story', 'dramatic', 'free').length).toContain('moves the plot one step');
+    expect(dialogueSettings('story', 'dramatic', 'free').length).toContain('not a generic question');
+    expect(dialogueSettings('detailed', 'calm', 'free').length).toContain('sensory details');
+    expect(dialogueSettings('story', 'dramatic', 'free').maxOutput).toBe(1040);
   });
 });
