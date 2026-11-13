@@ -135,3 +135,17 @@ describe('dialogue liveliness rules', () => {
     expect(system).not.toContain('Архив открыт');
   });
 });
+
+describe('greeting echo', () => {
+  it('drops a word-for-word copy of the greeting but keeps a one-word speech tic and everything new', async () => {
+    const { dropGreetingEcho } = await import('../src/characterPrompt.js');
+    expect(dropGreetingEcho('Ну. Чего надо. Чиню мотор, проверяю свечи.', 'Ну. Чего надо.')).toBe('Ну. Чиню мотор, проверяю свечи.');
+    expect(dropGreetingEcho('Архив открыт, у нас есть час. Я — Вера, реставратор карт.', 'Архив открыт, у нас есть час.')).toBe('Я — Вера, реставратор карт.');
+    expect(dropGreetingEcho('*Улыбается* Архив открыт, у нас есть час! Ищем карту?', '*улыбается* Архив открыт, у нас есть час.')).toBe('Ищем карту?');
+    // Not a copy, only the same first word: untouched. A reply that is only the greeting: untouched.
+    expect(dropGreetingEcho('Ну. Мотор опять глохнет.', 'Ну. Чего надо.')).toBe('Ну. Мотор опять глохнет.');
+    expect(dropGreetingEcho('Ну. Чего надо.', 'Ну. Чего надо.')).toBe('Ну. Чего надо.');
+    expect(dropGreetingEcho('Привет.', null)).toBe('Привет.');
+    expect(shapeReply('Архив открыт, у нас есть час. **Ключ** у меня.', 'balanced', 'Архив открыт, у нас есть час.')).toBe('Ключ у меня.');
+  });
+});
