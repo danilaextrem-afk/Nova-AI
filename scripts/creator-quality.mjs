@@ -31,8 +31,10 @@ const sentences = s => (s.replace(/\*[^*]*\*/g, ' ').match(/[^.!?…]+[.!?…]+|
 const words = s => new Set((s.toLocaleLowerCase('ru').match(/\p{L}{5,}/gu) ?? []).map(w => w.slice(0, 6)));
 const jaccard = (a, b) => { const A = words(a), B = words(b); const both = [...A].filter(w => B.has(w)).length; return both / Math.max(1, A.size + B.size - both); };
 
+// Each idea implies a gender through Russian grammar; the card must keep it.
 const ideas = ['Смотритель маяка на северном острове, бывший штурман', 'Хозяйка ночного книжного магазина в старом квартале',
   'Уличный музыкант-саксофонист, который чинит велосипеды', 'Строгая шеф-повар маленького ресторана у вокзала'];
+const impliedGender = ['male', 'female', 'male', 'female'];
 
 try {
   commit = need(await call('GET', '/health'), 'Health').commit;
@@ -65,6 +67,17 @@ try {
   check('Personalities are distinct (word overlap ≤ 0.25)', worst <= 0.25, worst.toFixed(2) + ' ' + pair);
   const openings = new Set(greet.map(g => g.replace(/\*[^*]*\*/g, '').toLocaleLowerCase('ru').match(/\p{L}+/gu)?.slice(0, 2).join(' ')));
   check('Greetings open differently', openings.size === greet.length, [...openings].join(' / '));
+  // Gender from the card's own Russian: pronouns and past-tense forms about the character in biography/backstory.
+  const genderOf = c => {
+    const t = ' ' + [c.biography, c.backstory, c.personality].filter(Boolean).join(' ').toLocaleLowerCase('ru') + ' ';
+    const f = (t.match(/\s(она|её|ее|ей)\s|\p{L}{2,}(ла|лась)(?=[\s,.!?])/gu) ?? []).length;
+    const m = (t.match(/\s(он|его|ему|им)\s|\p{L}{2,}(л|лся)(?=[\s,.!?])/gu) ?? []).length;
+    return f > m ? 'female' : m > f ? 'male' : 'unknown';
+  };
+  const genders = cards.map(genderOf);
+  check('Cards keep the gender the idea implies', genders.every((g, i) => g === impliedGender[i]), genders.map((g, i) => cards[i].name + ': ' + g + ' (ожидалось ' + impliedGender[i] + ')').join(', '));
+  const marked = greet.find(g => /ты\s+(?:\p{L}+\s+)?(готов|готова|пришёл|пришел|пришла|рад|рада|устал|устала)(?!\p{L})/iu.test(g));
+  check('Greetings do not guess the player gender', !marked, marked?.slice(0, 100) ?? '');
   info('Card names', cards.map(c => c.name).join(', '));
 } catch (e) {
   check('Run completion', false, e.message);
