@@ -241,7 +241,7 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
       if (!attempt) continue;
       const started=Date.now();
       let retry=0; let code='AI_UPSTREAM_ERROR'; let status=502; let certainNoCharge=false; let emitted=false;
-      let httpStatus=0; let detail='';
+      let httpStatus=0;
       const streaming=!!opts.onDelta;
       try {
         const req=providerRequest(m,messages,streaming,maxOutput,opts.temperature);
@@ -254,8 +254,8 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
           httpStatus=response.status;
           retry=retryAfterMs(response.headers?.get('retry-after'));
           status=response.status===429?429:502; code=response.status===429?'AI_RATE_LIMITED':'AI_UPSTREAM_ERROR';
-          // Keep the provider's own error message (never our prompt) for diagnosis; reading it must never fail the request.
-          detail=await Promise.resolve().then(()=>response.text()).then(t=>{try{const j=JSON.parse(t);return String(j?.error?.message??j?.error??j?.errors?.[0]?.message??t);}catch{return String(t);}}).catch(()=>'');
+          // An upstream body may echo prompts or credentials. Keep only protocol metadata.
+          void response.body?.cancel().catch(() => {});
           certainNoCharge=[400,401,403,404,429].includes(response.status);
           if([401,403,404].includes(response.status)) retry=Math.max(retry,300000);
           throw new Error(code);
@@ -320,7 +320,7 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
         const cancelled=!!opts.signal?.aborted;if(cancelled)code='AI_CANCELLED';
         if(!cancelled&&!httpStatus&&(error as Error)?.name==='TimeoutError'){code='AI_TIMEOUT';status=504;}
         if(!cancelled)console.warn(JSON.stringify({level:40,msg:'AI provider attempt failed',provider:m.provider,model:m.model,code,
-          httpStatus:httpStatus||undefined,retry:second||undefined,detail:detail.replace(/\s+/g,' ').replace(/(key|token|bearer)[=: ]+\S+/gi,'$1=…').slice(0,240)||undefined}));
+          httpStatus:httpStatus||undefined,retry:second||undefined}));
         await db.$transaction(async tx=>{
           await tx.$queryRaw`SELECT key FROM "AiProviderState" WHERE key = ${key} FOR UPDATE`;
           const state=(await tx.aiProviderState.findUnique({where:{key}}))!;

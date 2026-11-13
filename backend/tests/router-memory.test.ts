@@ -44,6 +44,32 @@ describe('PostgreSQL router and persisted chat invariants (HTTP fixtures, not li
   expect(mock).toHaveBeenCalledTimes(2);expect((await db.aiProviderState.findUnique({where:{key:quotaKey({provider:'groq',model:'test-free'})}}))!.retryAt!.getTime()).toBeGreaterThan(Date.now());
   const attempts=await db.aiAttempt.findMany({where:{requestId},orderBy:{createdAt:'asc'}});expect(attempts.map(x=>x.status)).toEqual(['FAILED','SUCCEEDED']);
  });
+ it('keeps upstream failure metadata without logging provider response bodies', async () => {
+  const privateText = 'private message echoed by upstream';
+  const cancel = vi.fn();
+  const mock = vi.fn(async (url: string) => url.includes('groq')
+   ? new Response(new ReadableStream({
+    start(controller) { controller.enqueue(new TextEncoder().encode(JSON.stringify({error: {message: privateText}}))); },
+    cancel,
+   }), {status: 503, headers: {'Retry-After': '60'}})
+   : ok('Ответ резервной модели'));
+  vi.stubGlobal('fetch', mock);
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+   const requestId = randomUUID();
+   expect((await send('Продолжи', requestId)).statusCode).toBe(200);
+   expect(cancel).toHaveBeenCalledOnce();
+   const warnings = warn.mock.calls.map(([line]) => String(line));
+   expect(warnings.some(line => line.includes(privateText))).toBe(false);
+   expect(warnings.map(line => JSON.parse(line))).toContainEqual(expect.objectContaining({
+    provider: 'groq', model: 'test-free', code: 'AI_UPSTREAM_ERROR', httpStatus: 503,
+   }));
+   expect(await db.aiAttempt.findFirst({where: {requestId, status: 'FAILED'}}))
+    .toMatchObject({errorCode: 'AI_UPSTREAM_ERROR:503'});
+  } finally {
+   warn.mockRestore();
+  }
+ });
  it('preserves failed user text, charges nothing, and retries the same request ID',async()=>{
   vi.stubGlobal('fetch',vi.fn(async()=>new Response('',{status:429})));const id=randomUUID();const before=await balance(db,userId);
   expect((await send('Сохрани мой черновик',id)).statusCode).toBe(429);
@@ -297,7 +323,9 @@ describe('Provider recovery (HTTP fixtures, not live AI)',()=>{
    ?new Response(JSON.stringify({error:{message:'No endpoints found for dead/model:free.'}}),{status:404}):ok('Живая модель')));
   const r=await completeAiChat(msgs,'free',db,randomUUID());expect(r.model).toBe('openrouter/free');
   const failed=await db.aiAttempt.findFirst({where:{status:'FAILED'}});expect(failed!.errorCode).toBe('AI_UPSTREAM_ERROR:404');
-  expect(warn.mock.calls.map(c=>String(c[0])).join()).toContain('No endpoints found');
+  expect(warn.mock.calls.map(([line]) => JSON.parse(String(line)))).toContainEqual(expect.objectContaining({
+   provider: 'openrouter', model: 'dead/model:free', httpStatus: 404, code: 'AI_UPSTREAM_ERROR',
+  }));
   const dead=await db.aiProviderState.findUnique({where:{key:breakerKey({provider:'openrouter',model:'dead/model:free'})}});
   expect(dead!.retryAt!.getTime()).toBeGreaterThan(Date.now());
   expect((await db.aiProviderState.findUnique({where:{key:'openrouter'}}))!.retryAt).toBeNull();
