@@ -176,6 +176,31 @@ describe('Streaming replies over SSE (HTTP fixtures, not live AI)',()=>{
   expect(JSON.parse(mock.mock.calls[0][1].body).stream).toBe(true);
   expect((await db.message.findMany({where:{chatId},orderBy:{sequence:'asc'}})).map(m=>m.content)).toEqual(['Здравствуй','Привет, путник!']);
  });
+ it('finishes at the SSE terminator without waiting for the provider connection to close',async()=>{
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const cancel = vi.fn(() => clearTimeout(timeout));
+  const body = new ReadableStream<Uint8Array>({
+   start(controller) {
+    controller.enqueue(enc.encode(chunk('Готовый ответ') + usage + chunk('Лишние данные')));
+    timeout = setTimeout(() => controller.error(new Error('provider kept the connection open')), 500);
+   },
+   cancel,
+  });
+  const mock = vi.fn(async () => new Response(body, {headers:{'content-type':'text/event-stream'}}));
+  vi.stubGlobal('fetch', mock);
+  try {
+   const requestId = randomUUID();
+   const result = await stream({content:'Сцена',requestId});
+   const ev = events(result.body);
+   expect(ev.filter(e => e.name === 'delta').map(e => e.data.text)).toEqual(['Готовый ответ']);
+   expect(ev.at(-1)).toMatchObject({name:'done',data:{assistantMessage:{content:'Готовый ответ'}}});
+   expect(cancel).toHaveBeenCalledTimes(1);
+   expect(mock).toHaveBeenCalledTimes(1);
+   expect(await db.aiUsage.findUnique({where:{id:requestId}})).toMatchObject({inputTokens:40,outputTokens:6});
+  } finally {
+   clearTimeout(timeout);
+  }
+ });
  it('an interrupted Premium stream is not failed over, not saved and not charged',async()=>{
   await credit(db,{userId,bucket:'BONUS',amount:20,source:'test',idempotencyKey:randomUUID()});const before=await balance(db,userId);
   const mock=vi.fn(async()=>streamResponse([chunk('Начало')],{fail:true}));vi.stubGlobal('fetch',mock);
