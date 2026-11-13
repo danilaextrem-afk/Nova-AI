@@ -48,10 +48,34 @@ export function splitSentences(text: string): string[] {
   return parts;
 }
 
-export function shapeReply(text: string, style: string): string {
+const plainWords = (text: string) => text.toLocaleLowerCase('ru').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+
+/**
+ * Removes a copy of the character's greeting from the start of a reply. Live checks 43335046417 and
+ * 43371723359: the first reply after the greeting often repeated it word for word, despite the prompt rule.
+ * A one-word first sentence of the greeting («Ну.», «Эх.») is a speech tic, not content, so it stays.
+ */
+export function dropGreetingEcho(text: string, openingLine?: string | null): string {
+  const greeting = plainWords(openingLine ?? '');
+  if (greeting.length < 6) return text;
+  const parts = splitSentences(text);
+  let taken = '';
+  for (let i = 0; i < parts.length - 1; i++) {
+    taken = (taken + ' ' + plainWords(parts[i])).trim();
+    if (!greeting.startsWith(taken)) return text;
+    if (taken === greeting) {
+      const greetingParts = splitSentences((openingLine ?? '').trim());
+      const tic = greetingParts.length > 1 && plainWords(greetingParts[0]).split(' ').length === 1 ? greetingParts[0].trim() + ' ' : '';
+      return (tic + parts.slice(i + 1).join('')).trim();
+    }
+  }
+  return text;
+}
+
+export function shapeReply(text: string, style: string, openingLine?: string | null): string {
   // Plain conversational text: headings and **bold** / __bold__ go; a single *action* stays.
-  let out = text.replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, '')
-    .replace(/\*\*(?=\S)([^*\n]+?)\*\*/g, '$1').replace(/__(?=\S)([^_\n]+?)__/g, '$1').trim();
+  let out = dropGreetingEcho(text.replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, '')
+    .replace(/\*\*(?=\S)([^*\n]+?)\*\*/g, '$1').replace(/__(?=\S)([^_\n]+?)__/g, '$1').trim(), openingLine);
   if (style === 'concise') {
     const parts = splitSentences(out);
     if (parts.length > 3) out = parts.slice(0, 3).join('').trim();

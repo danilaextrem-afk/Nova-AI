@@ -234,7 +234,7 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
           });
         }
         catch(e){if(i===0||stream.signal?.aborted)throw e;break;}
-        const text=shapeReply(isGroup?keepOwnVoice(stripSpeakerPrefix(output.text,sp.name),cast.filter(c=>c.id!==sp.id).map(c=>c.name)):output.text,chat.responseStyle);
+        const text=shapeReply(isGroup?keepOwnVoice(stripSpeakerPrefix(output.text,sp.name),cast.filter(c=>c.id!==sp.id).map(c=>c.name)):output.text,chat.responseStyle,sp.greeting);
         outputs.push({speaker:sp,output,text});turn.push({ name: sp.name, text });
       }
       const output=outputs[0].output;
