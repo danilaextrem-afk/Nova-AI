@@ -110,6 +110,9 @@ describe('anti-repetition context', () => {
     ] as any;
     expect(recentOpenings(history, 'vera')).toEqual([
       '*улыбается* Ну. Давай посмотрим на карту', '*улыбается* Ну. Ключ у меня.', 'Старый ответ без автора.']);
+    // The greeting itself is not listed: the first reply may use the character's own words again.
+    expect(recentOpenings([{ role: 'assistant', content: 'Солнышко, заходи! Пионы только привезли.', speakerId: null }] as any,
+      'marina', 3, 'Солнышко, заходи! Пионы только привезли.')).toEqual([]);
   });
 });
 
@@ -128,8 +131,8 @@ describe('dialogue liveliness rules', () => {
       historyNewestFirst: [{ role: 'assistant', content: 'Архив открыт, у нас есть час.', speakerId: null }] as any,
       request: 'Ага.', tier: 'free', tokenBudget: 8000 });
     const system = messages.filter((m: any) => m.role === 'system').map((m: any) => m.content).join('\n');
-    expect(system).toContain('Never repeat openingLine');
-    expect(system).toContain('such as a pet name or a catchphrase, are not repetition');
+    expect(system).toContain('Never copy openingLine');
+    expect(system).toContain('Reusing their words, a pet name or a catchphrase is fine');
     expect(system).toContain('First react to what the player just said');
     expect(system).toContain('take the initiative');
     expect(system).toContain('fresh wording, keeping every recurring word or opening that speechStyle asks for');
