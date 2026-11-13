@@ -1,5 +1,8 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { PrismaClient } from '@prisma/client';
+import { randomUUID } from 'node:crypto';
+import { PRODUCT_SEED } from '../src/config.js';
+import { buildApp } from '../src/server.js';
 import { seedStarterCast, STARTER_CAST } from '../src/starterCast.js';
 
 const db = new PrismaClient();
@@ -22,8 +25,8 @@ describe('Original NOVA starter characters', () => {
   });
 
   it('seeds all 12 moderated public library characters once', async () => {
-    await seedStarterCast(db);
-    await seedStarterCast(db);
+    await db.user.deleteMany({ where: { email: accountEmail } });
+    await Promise.all(Array.from({ length: 4 }, () => seedStarterCast(db)));
     const system = await db.user.findUniqueOrThrow({ where: { email: accountEmail } });
     expect(system.status).toBe('BLOCKED');
     const list = await db.character.findMany({ where: { ownerId: system.id }, include: { publication: true } });
@@ -37,5 +40,29 @@ describe('Original NOVA starter characters', () => {
     await seedStarterCast(db);
     const status = await db.publication.findUnique({ where: { characterId: id } });
     expect(status?.status).toBe('HIDDEN');
+  });
+
+  it('starts multiple instances without duplicating the initial admin or payment products', async () => {
+    const email = 'startup-' + randomUUID() + '@test.invalid';
+    const skus = Object.keys(PRODUCT_SEED);
+    const existing = await db.paymentProduct.findMany({ where: { sku: { in: skus } } });
+    const newSkus = skus.filter(sku => !existing.some(product => product.sku === sku));
+    await db.paymentProduct.deleteMany({ where: { sku: { in: skus } } });
+    vi.stubEnv('NOVA_ADMIN_EMAIL', email);
+    vi.stubEnv('NOVA_ADMIN_PASSWORD', 'startup-fixture-admin-password');
+    try {
+      const results = await Promise.allSettled(Array.from({ length: 3 }, () => buildApp()));
+      for (const result of results) if (result.status === 'fulfilled') await result.value.close();
+      expect(results.map(result => result.status)).toEqual(Array(3).fill('fulfilled'));
+      expect(await db.adminUser.count({ where: { email } })).toBe(1);
+      expect(await db.paymentProduct.count({ where: { sku: { in: skus } } })).toBe(skus.length);
+    } finally {
+      vi.unstubAllEnvs();
+      await db.adminUser.deleteMany({ where: { email } });
+      await db.paymentProduct.deleteMany({ where: { sku: { in: newSkus } } });
+      for (const { sku, ...data } of existing) {
+        await db.paymentProduct.upsert({ where: { sku }, create: { sku, ...data }, update: data });
+      }
+    }
   });
 });
