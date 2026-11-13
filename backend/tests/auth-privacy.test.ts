@@ -1,9 +1,16 @@
 import {beforeAll,afterAll,it,expect} from 'vitest';
 import {PrismaClient} from '@prisma/client';
 import {randomUUID} from 'node:crypto';
+import {setTimeout as delay} from 'node:timers/promises';
 import {buildApp,clientIpHeaderName} from '../src/server.js';
-const db=new PrismaClient();let app:Awaited<ReturnType<typeof buildApp>>;let userId:string;let tokens:any;
-beforeAll(async()=>{app=await buildApp(db);await app.ready();
+let beforeSessionCreate: (() => Promise<void>) | undefined;
+const db=new PrismaClient();
+const appDb = db.$extends({query:{session:{async create({args,query}) {
+ await beforeSessionCreate?.();
+ return query(args);
+}}}});
+let app:Awaited<ReturnType<typeof buildApp>>;let userId:string;let tokens:any;
+beforeAll(async()=>{app=await buildApp(appDb as unknown as PrismaClient);await app.ready();
  const email=randomUUID()+'@test.invalid';const response=await app.inject({method:'POST',url:'/v1/auth/register',payload:{email,password:'safe-test-password-123',adultConfirmed:true}});
  expect(response.statusCode,response.body).toBe(200);tokens=response.json();userId=(await db.user.findUnique({where:{email}}))!.id;
 });
@@ -95,6 +102,47 @@ it('logout ends every session at once: access tokens and refresh tokens stop wor
   expect((await app.inject({method:'POST',url:'/v1/auth/refresh',payload:{refreshToken}})).statusCode).toBe(401);
  tokens=await newSession();
  expect((await app.inject({url:'/v1/wallet',headers:{authorization:'Bearer '+tokens.accessToken}})).statusCode).toBe(200);
+});
+it('revokes a new session when logout overlaps refresh rotation',async()=>{
+ const rotating = await newSession(), otherDevice = await newSession();
+ let reachedInsert!: () => void, allowInsert!: () => void;
+ const insertStarted = new Promise<void>(resolve => { reachedInsert = resolve; });
+ const insertReleased = new Promise<void>(resolve => { allowInsert = resolve; });
+ beforeSessionCreate = async () => { reachedInsert(); await insertReleased; };
+ const refresh = app.inject({method:'POST',url:'/v1/auth/refresh',payload:{refreshToken:rotating.refreshToken}});
+ try {
+  await insertStarted;
+  const logout = app.inject({
+   method:'POST',url:'/v1/auth/logout',headers:{authorization:'Bearer '+otherDevice.accessToken},
+  });
+  try {
+   // Wait for logout to reach the database while rotation is still in flight.
+   let waiting = false;
+   for (let i = 0; i < 100 && !waiting; i++) {
+    const [row] = await db.$queryRaw<{waiting:boolean}[]>`
+     SELECT EXISTS (
+      SELECT 1 FROM pg_stat_activity
+      WHERE datname = current_database() AND wait_event_type = 'Lock'
+      AND (query LIKE 'UPDATE %."Session"%' OR query LIKE 'SELECT id FROM "User"%FOR UPDATE')
+     ) AS waiting`;
+    waiting = row.waiting;
+    if (!waiting) await delay(10);
+   }
+   expect(waiting).toBe(true);
+  } finally {
+   allowInsert();
+  }
+  const [rotated, signedOut] = await Promise.all([refresh, logout]);
+  expect(rotated.statusCode).toBe(200);
+  expect(signedOut.statusCode).toBe(200);
+  const next = rotated.json();
+  expect((await app.inject({url:'/v1/me',headers:{authorization:'Bearer '+next.accessToken}})).statusCode).toBe(401);
+  expect((await app.inject({method:'POST',url:'/v1/auth/refresh',payload:{refreshToken:next.refreshToken}})).statusCode).toBe(401);
+  tokens=await newSession();
+ } finally {
+  allowInsert();
+  beforeSessionCreate = undefined;
+ }
 });
 it('does not expose secrets in data export and rejects a blocked user access token',async()=>{
  const result=await app.inject({url:'/v1/me/export',headers:{authorization:'Bearer '+tokens.accessToken}});

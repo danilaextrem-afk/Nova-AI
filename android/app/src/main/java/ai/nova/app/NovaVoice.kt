@@ -59,21 +59,35 @@ class NovaVoice(context: Context) {
 
     private fun fail(message: String) { speakingId = null; lastUtteranceId = null; problem = message }
 
-    fun speak(id: String, text: String, characterId: String, language: String = "ru", gender: String? = null, hint: VoiceHint? = null) {
+    /** One reply to speak in its own character's voice. */
+    data class Line(val text: String, val characterId: String, val gender: String? = null, val hint: VoiceHint? = null)
+
+    fun speak(id: String, text: String, characterId: String, language: String = "ru", gender: String? = null, hint: VoiceHint? = null) =
+        speakLines(id, listOf(Line(text, characterId, gender, hint)), language)
+
+    /**
+     * Speaks several replies in one queue, each with its own character's pitch and speed (group scenes).
+     * Pitch and speed are captured by each speak() call, so setting them before a line's first chunk is enough.
+     */
+    fun speakLines(id: String, lines: List<Line>, language: String = "ru") {
         if (!ready) { fail("Голосовой движок телефона ещё не готов"); return }
-        val parts = chunks(clean(text), maxChunk())
-        if (parts.isEmpty()) return
-        val p = profile(characterId, gender, hint)
+        val plan = plan(lines.map { clean(it.text) }, maxChunk())
+        if (plan.isEmpty()) return
         val lang = tts.setLanguage(Locale.forLanguageTag(if (language == "en") "en-US" else "ru-RU"))
         if (lang == TextToSpeech.LANG_MISSING_DATA || lang == TextToSpeech.LANG_NOT_SUPPORTED) {
             fail(if (language == "en") "В телефоне не установлен английский голос. Установи его в настройках синтеза речи."
                 else "В телефоне не установлен русский голос. Установи его в настройках синтеза речи.")
             return
         }
-        tts.setPitch(p.pitch); tts.setSpeechRate(p.rate)
         speakingId = id
-        lastUtteranceId = "$id#${parts.lastIndex}"
-        parts.forEachIndexed { i, part ->
+        lastUtteranceId = "$id#${plan.lastIndex}"
+        var voiced = -1
+        plan.forEachIndexed { i, (lineIndex, part) ->
+            if (lineIndex != voiced) {
+                val line = lines[lineIndex]
+                val p = profile(line.characterId, line.gender, line.hint)
+                tts.setPitch(p.pitch); tts.setSpeechRate(p.rate); voiced = lineIndex
+            }
             val r = tts.speak(part, if (i == 0) TextToSpeech.QUEUE_FLUSH else TextToSpeech.QUEUE_ADD, null, "$id#$i")
             if (r == TextToSpeech.ERROR) { tts.stop(); fail("Не удалось озвучить ответ"); return }
         }
@@ -93,10 +107,19 @@ class NovaVoice(context: Context) {
 
     companion object {
         /** Reads the words, not the markup: *actions* keep their text, symbols and emoji are dropped. */
+        /** Text to speak: *stage directions* are not read aloud (they are not speech); other markup goes. */
         fun clean(text: String) = text
+            .replace(ACTION, " ")
             .replace(Regex("[*_~`#>|\\[\\]]"), " ")
             .replace(Regex("[\\p{So}\\p{Cn}\\x{1F000}-\\x{1FFFF}]"), " ")
             .replace(Regex("\\s+"), " ").trim()
+
+        /** Utterance plan for several already-cleaned texts: (index of the text, chunk), empty texts skipped. */
+        fun plan(texts: List<String>, max: Int): List<Pair<Int, String>> =
+            texts.flatMapIndexed { index, text -> chunks(text, max).filter { it.isNotBlank() }.map { index to it } }
+
+        // A single-asterisk action such as *улыбается*; **bold** (double asterisks) keeps its words.
+        private val ACTION = Regex("(?<!\\*)\\*(?![*\\s])[^*\\n]{1,200}(?<![*\\s])\\*(?!\\*)")
 
         private val FAST_CUES = listOf("быстр", "тарато", "энергич", "эмоционал", "восклиц", "взахлёб", "взахлеб", "бойк")
         private val SLOW_CUES = listOf("медлен", "неторопл", "спокойн", "сдержан", "тих", "коротк", "немногослов", "лаконич", "растягива")

@@ -8,7 +8,11 @@ class NovaVoiceTest {
     private fun words(s: String) = s.split(Regex("\\s+")).filter { it.isNotEmpty() }
 
     @Test fun cleanStripsMarkupAndKeepsActionText() {
-        assertEquals("улыбается Привет мир", NovaVoice.clean("*улыбается* **Привет** `мир`"))
+        assertEquals("Привет мир", NovaVoice.clean("*улыбается* **Привет** `мир`"))
+        // Stage directions are not spoken; a reply that is only an action leaves nothing to say.
+        assertEquals("Ну. Мотор опять глохнет.", NovaVoice.clean("Ну. *вытирает руки о тряпку* Мотор опять глохнет."))
+        assertEquals("", NovaVoice.clean("*кивает*"))
+        assertEquals("2 3 4", NovaVoice.clean("2 * 3 * 4")) // spaced asterisks are not an action
     }
 
     @Test fun cleanDoesNotTruncateLongText() {

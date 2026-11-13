@@ -137,15 +137,32 @@ function characterCard(character: CharacterSheet, compact: boolean) {
   };
 }
 
+// Light Russian stemming: drop a common case ending (keeping at least three letters), then the first five
+// letters, so «маяк/маяком» and «ваза/вазе/вазы» match. The ending list is ordered longest first.
+const ENDING = /(?:ами|ями|ого|его|ому|ему|ыми|ими|ой|ей|ом|ем|ам|ям|ах|ях|ую|юю|ая|яя|ое|ее|ые|ие|ый|ий|ов|ев|а|я|о|е|ы|и|у|ю|ь)$/u;
+function noteStem(word: string) {
+  const stripped = word.replace(ENDING, '');
+  return (stripped.length >= 3 ? stripped : word).slice(0, 5);
+}
 function noteWords(text: string) {
-  return new Set((text.toLocaleLowerCase('ru').match(/[\p{L}\p{N}]+/gu) ?? [])
-    .filter(word => word.length >= 4).map(word => word.slice(0, 5)));
+  return new Set((text.toLocaleLowerCase('ru').replace(/ё/g, 'е').match(/[\p{L}\p{N}]+/gu) ?? [])
+    .filter(word => word.length >= 4).map(noteStem));
 }
 
-function relevantNotes(notes: Note[], query: string, limit: number) {
+/**
+ * Notes for the prompt: pinned and player-written first, then the ones that share words with the latest
+ * request (strong) or with the last few messages (weaker). A short request such as «А дальше?» or «Помнишь?»
+ * has no keywords, so without the recent context an older event the conversation is about could be left out.
+ */
+export function relevantNotes(notes: Note[], query: string, limit: number, recentContext = '') {
   const queryWords = noteWords(query);
-  const rank = (note: Note) => (note.pinned ? 100 : 0) + (note.source === 'user' ? 30 : 0)
-    + [...noteWords(note.content)].filter(word => queryWords.has(word)).length * 8;
+  const contextWords = noteWords(recentContext);
+  const rank = (note: Note) => {
+    const words = [...noteWords(note.content)];
+    return (note.pinned ? 100 : 0) + (note.source === 'user' ? 30 : 0)
+      + words.filter(word => queryWords.has(word)).length * 8
+      + words.filter(word => !queryWords.has(word) && contextWords.has(word)).length * 3;
+  };
   return notes.map(note => ({ note, score: rank(note) }))
     .sort((left, right) => right.score - left.score).slice(0, limit).map(({ note }) => ({
       kind: note.kind,
@@ -192,6 +209,8 @@ export function buildCharacterPrompt(input: {
     : '';
   const system: AiMessage = { role: 'system', content: rules + romance + ' ' + settings.length + ' ' + settings.voice };
   const current: AiMessage = { role: 'user', content: request };
+  // What the last few messages were about, for choosing memory notes (see relevantNotes).
+  const recentContext = input.historyNewestFirst.slice(0, 4).map(message => message.content).join(' ');
   const context = {
     activeCharacter: characterCard(speaker, compact),
     otherCharacters: cast.filter(character => character.id !== speaker.id).map(character => ({
@@ -202,8 +221,8 @@ export function buildCharacterPrompt(input: {
       default: chat.scenario ? utf8Prefix(speaker.scenario ?? '', compact ? 220 : 850) : undefined,
     },
     player: utf8Prefix(chat.persona, compact ? 320 : 1000),
-    notes: relevantNotes(input.notes, request, compact ? 4 : 12),
-    memoriesAcrossStories: relevantNotes(input.characterNotes, request, compact ? 2 : 6),
+    notes: relevantNotes(input.notes, request, compact ? 4 : 12, recentContext),
+    memoriesAcrossStories: relevantNotes(input.characterNotes, request, compact ? 2 : 6, recentContext),
     storySoFar: utf8Prefix(input.summary ?? '', compact ? 740 : 2200),
     // How this character's last replies began: models otherwise settle into one opening (*улыбается* …).
     recentOpenings: recentOpenings(input.historyNewestFirst, speaker.id, 3, speaker.greeting),
