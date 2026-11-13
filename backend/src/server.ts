@@ -177,15 +177,25 @@ app.post('/v1/auth/refresh', async (req, reply) => {
 
 app.get('/v1/wallet', { preHandler: app.auth }, async (req: any) => balance(db, req.user.sub));
 
-app.get('/v1/wallet/transactions', { preHandler: app.auth }, async (req: any) => {
-  const q = z.object({ cursor: z.string().optional(), limit: z.coerce.number().int().min(1).max(100).default(30) }).parse(req.query);
+app.get('/v1/wallet/transactions', { preHandler: app.auth }, async (req: any, reply) => {
+  const query = z.object({
+    cursor: z.string().uuid().optional(),
+    limit: z.coerce.number().int().min(1).max(100).default(30),
+  }).safeParse(req.query);
+  if (!query.success) return reply.code(400).send({ error: 'INVALID_QUERY' });
+  const { cursor, limit } = query.data;
+  const userId: string = req.user.sub;
+  if (cursor && !await db.walletTransaction.findFirst({ where: { id: cursor, userId }, select: { id: true } })) {
+    return reply.code(404).send({ error: 'CURSOR_NOT_FOUND' });
+  }
   const items = await db.walletTransaction.findMany({
-    where: { userId: req.user.sub }, // IDOR-safe: always scoped to the caller
-    orderBy: { createdAt: 'desc' },
-    take: q.limit,
-    ...(q.cursor ? { cursor: { id: q.cursor }, skip: 1 } : {}),
+    where: { userId },
+    select: { id: true, userId: true, type: true, bucket: true, source: true, amount: true, status: true, createdAt: true },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+    take: limit + 1,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
   });
-  return { items, nextCursor: items.length === q.limit ? items[items.length - 1].id : null };
+  return { items: items.slice(0, limit), nextCursor: items.length > limit ? items[limit - 1].id : null };
 });
 
 app.post('/v1/billing/verify', { preHandler: app.auth }, async (req: any, reply) => {

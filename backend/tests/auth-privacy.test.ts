@@ -11,6 +11,52 @@ afterAll(async()=>{await db.user.deleteMany({where:{id:userId}});await app.close
 it('rejects registration without explicit adult confirmation',async()=>{
  const result=await app.inject({method:'POST',url:'/v1/auth/register',payload:{email:randomUUID()+'@test.invalid',password:'safe-test-password-123'}});expect(result.statusCode).toBe(400);
 });
+it('returns wallet transaction history without internal purchase and deduplication identifiers', async () => {
+ const purchaseToken = 'fixture-purchase-' + randomUUID();
+ const transaction = await db.walletTransaction.create({data:{
+  userId, type:'CREDIT_PURCHASE', bucket:'PURCHASED', source:'play_billing', amount:100,
+  externalId:purchaseToken, idempotencyKey:'play:'+purchaseToken,
+ }});
+ try {
+  const response = await app.inject({url:'/v1/wallet/transactions',headers:{authorization:'Bearer '+tokens.accessToken}});
+  expect(response.statusCode).toBe(200);
+  expect(response.json()).toMatchObject({items:[{id:transaction.id,amount:100,source:'play_billing',
+   type:'CREDIT_PURCHASE',bucket:'PURCHASED',status:'COMPLETED',createdAt:transaction.createdAt.toISOString()}]});
+  expect(response.json().items[0]).not.toHaveProperty('externalId');
+  expect(response.json().items[0]).not.toHaveProperty('idempotencyKey');
+  expect(response.body).not.toContain(purchaseToken);
+ } finally {
+  await db.walletTransaction.delete({where:{id:transaction.id}});
+ }
+});
+it('accepts only the account owner’s wallet cursor and validates page size',async()=>{
+ const foreign = await db.user.create({data:{email:randomUUID()+'@test.invalid',passwordHash:'test'}});
+ const first = randomUUID(), second = randomUUID(), third = randomUUID(), foreignId = randomUUID();
+ const createdAt = new Date('2026-11-01T00:00:00.000Z');
+ const ids = [first, second, third, foreignId];
+ try {
+  await db.walletTransaction.createMany({data:ids.map(id=>({
+   id,userId:id===foreignId?foreign.id:userId,type:'CREDIT_BONUS',bucket:'BONUS',source:'fixture',
+   amount:1,idempotencyKey:'fixture:'+id,createdAt,
+  }))});
+  const history = (query:string) => app.inject({url:'/v1/wallet/transactions?'+query,
+   headers:{authorization:'Bearer '+tokens.accessToken}});
+  expect((await history('limit=999')).statusCode).toBe(400);
+  expect((await history('cursor=bad')).statusCode).toBe(400);
+  expect((await history('cursor='+foreignId)).statusCode).toBe(404);
+  expect((await history('cursor='+randomUUID())).statusCode).toBe(404);
+  const page = (await history('limit=2')).json();
+  const ordered = [first, second, third].sort().reverse();
+  expect(page.items.map((item:{id:string})=>item.id)).toEqual(ordered.slice(0,2));
+  expect(page.nextCursor).toBe(ordered[1]);
+  const last = (await history('limit=2&cursor='+page.nextCursor)).json();
+  expect(last.items.map((item:{id:string})=>item.id)).toEqual(ordered.slice(2));
+  expect(last.nextCursor).toBeNull();
+ } finally {
+  await db.walletTransaction.deleteMany({where:{id:{in:ids}}});
+  await db.user.delete({where:{id:foreign.id}});
+ }
+});
 it('explains which credential field is invalid without relaxing validation',async()=>{
  const post=(url:string,payload:any)=>app.inject({method:'POST',url,payload});
  for(const url of ['/v1/auth/login','/v1/auth/register']){
