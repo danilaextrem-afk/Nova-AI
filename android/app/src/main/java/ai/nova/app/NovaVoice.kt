@@ -93,10 +93,15 @@ class NovaVoice(context: Context) {
 
     companion object {
         /** Reads the words, not the markup: *actions* keep their text, symbols and emoji are dropped. */
+        /** Text to speak: *stage directions* are not read aloud (they are not speech); other markup goes. */
         fun clean(text: String) = text
+            .replace(ACTION, " ")
             .replace(Regex("[*_~`#>|\\[\\]]"), " ")
             .replace(Regex("[\\p{So}\\p{Cn}\\x{1F000}-\\x{1FFFF}]"), " ")
             .replace(Regex("\\s+"), " ").trim()
+
+        // A single-asterisk action such as *улыбается*; **bold** (double asterisks) keeps its words.
+        private val ACTION = Regex("(?<!\\*)\\*(?![*\\s])[^*\\n]{1,200}(?<![*\\s])\\*(?!\\*)")
 
         private val FAST_CUES = listOf("быстр", "тарато", "энергич", "эмоционал", "восклиц", "взахлёб", "взахлеб", "бойк")
         private val SLOW_CUES = listOf("медлен", "неторопл", "спокойн", "сдержан", "тих", "коротк", "немногослов", "лаконич", "растягива")
