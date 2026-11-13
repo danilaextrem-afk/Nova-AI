@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
 import jwt from '@fastify/jwt';
 import { PrismaClient } from '@prisma/client';
@@ -13,11 +13,17 @@ let owner: string;
 let stranger: string;
 let characterId: string;
 let chatId: string;
-const previousProvider = process.env.AI_PROVIDER;
-const previousKey = process.env.GROQ_API_KEY;
-const previousModel = process.env.AI_MODEL;
-const previousPremiumModel = process.env.NOVA_PREMIUM_MODEL;
-const previousPremiumProvider = process.env.NOVA_PREMIUM_PROVIDER;
+let drainChatJobs: () => Promise<void>;
+
+function stubChatProvider(reply: (url: string, init: RequestInit) => unknown) {
+  vi.stubGlobal('fetch', async (url: string, init: RequestInit) => {
+    const {messages} = JSON.parse(String(init.body));
+    if (messages[0].content.startsWith('You maintain the memory of a fictional interactive story.')) {
+      return Response.json({choices: [{message: {content: '{"add":[]}'}}]});
+    }
+    return reply(url, init);
+  });
+}
 
 async function makeUser() {
   const user = await db.user.create({
@@ -36,7 +42,29 @@ async function send(content: string, requestId = randomUUID()) {
   });
 }
 
-beforeEach(async()=>{await db.aiProviderState.deleteMany();process.env.NOVA_AI_DAILY_BUDGET_MICROS='100000';});
+beforeEach(async () => {
+  await db.aiProviderState.deleteMany();
+  for (const name of ['NOVA_AI_MODELS_JSON', 'OPENROUTER_API_KEY', 'GEMINI_API_KEY', 'CEREBRAS_API_KEY', 'CLOUDFLARE_API_TOKEN']) {
+    vi.stubEnv(name, undefined);
+  }
+  vi.stubEnv('AI_PROVIDER', 'groq');
+  vi.stubEnv('AI_MODEL', 'openai/gpt-oss-20b');
+  vi.stubEnv('NOVA_GROQ_FREE_MODELS', 'openai/gpt-oss-20b');
+  vi.stubEnv('GROQ_API_KEY', 'private-test-key-never-publish');
+  vi.stubEnv('NOVA_PREMIUM_PROVIDER', 'groq');
+  vi.stubEnv('NOVA_PREMIUM_MODEL', 'openai/gpt-oss-120b');
+  vi.stubEnv('NOVA_AI_DAILY_BUDGET_MICROS', '100000');
+  stubChatProvider(() => { throw new Error('Unexpected provider request without a test fixture'); });
+});
+
+afterEach(async () => {
+  try {
+    await drainChatJobs();
+  } finally {
+    vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
+  }
+});
 
 beforeAll(async () => {
   await db.$connect();
@@ -45,7 +73,7 @@ beforeAll(async () => {
     try { await req.jwtVerify(); }
     catch { return reply.code(401).send({ error: 'UNAUTHORIZED' }); }
   });
-  await registerChatRoutes(app, db);
+  drainChatJobs = await registerChatRoutes(app, db);
   await app.ready();
   owner = await makeUser();
   stranger = await makeUser();
@@ -59,20 +87,12 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  vi.unstubAllGlobals();
-  for (const [name, value] of [
-    ['AI_PROVIDER', previousProvider], ['GROQ_API_KEY', previousKey], ['AI_MODEL', previousModel],
-    ['NOVA_PREMIUM_MODEL', previousPremiumModel], ['NOVA_PREMIUM_PROVIDER', previousPremiumProvider],
-  ] as const) {
-    if (value === undefined) delete process.env[name];
-    else process.env[name] = value;
-  }
   await app.close();
   await db.user.deleteMany({ where: { id: { in: users } } });
   await db.$disconnect();
 });
 
-describe('real AI character chat gateway', () => {
+describe('AI character chat gateway with HTTP fixtures', () => {
   it('requires authentication and restricts private character creation', async () => {
     const unauthorized = await app.inject({ method: 'POST', url: '/v1/chats', payload: { characterId } });
     expect(unauthorized.statusCode).toBe(401);
@@ -98,8 +118,7 @@ describe('real AI character chat gateway', () => {
   });
 
   it('fails honestly when no AI provider is configured, without saving fake messages', async () => {
-    process.env.AI_PROVIDER = 'groq';
-    delete process.env.GROQ_API_KEY;
+    vi.stubEnv('GROQ_API_KEY', undefined);
     const response = await send('Hello there!');
     expect(response.statusCode).toBe(503);
     expect(response.json().error).toBe('AI_NOT_CONFIGURED');
@@ -110,8 +129,6 @@ describe('real AI character chat gateway', () => {
   });
 
   it('sends a real provider-format request, saves messages and does not leak API keys', async () => {
-    process.env.GROQ_API_KEY = 'private-test-key-never-publish';
-    process.env.AI_MODEL = 'openai/gpt-oss-20b';
     const mock = vi.fn(async (_url: string, init: any) => {
       const request = JSON.parse(init.body);
       expect(JSON.parse(request.messages[1].content).activeCharacter.name).toBe('Test Librarian');
@@ -124,7 +141,7 @@ describe('real AI character chat gateway', () => {
         }),
       };
     });
-    vi.stubGlobal('fetch', mock);
+    stubChatProvider(mock);
     const requestId = randomUUID();
     const response = await send('What book should I read?', requestId);
     expect(response.statusCode).toBe(200);
@@ -142,7 +159,7 @@ describe('real AI character chat gateway', () => {
   });
 
   it('does not save requests or usage when model API fails', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 429 })));
+    stubChatProvider(vi.fn(async () => ({ ok: false, status: 429 })));
     const before = await db.message.count({ where: { chatId } });
     const response = await send('Please continue');
     expect(response.statusCode).toBe(429);
@@ -151,8 +168,6 @@ describe('real AI character chat gateway', () => {
   });
 
   it('does not impose a daily message-count quota on free conversations', async () => {
-    process.env.AI_PROVIDER = 'groq';
-    process.env.GROQ_API_KEY = 'fake-test-key';
     // Simulate a user who has already sent 80 successful messages today.
     await db.aiUsage.createMany({
       data: Array.from({ length: 80 }, () => ({
@@ -166,7 +181,7 @@ describe('real AI character chat gateway', () => {
         choices: [{ message: { content: 'The adventure continues.' } }],
       }),
     }));
-    vi.stubGlobal('fetch', mock);
+    stubChatProvider(mock);
     const result = await send('Continue our story');
     expect(result.statusCode).toBe(200);
     expect(result.json().tokensCharged).toBe(0);
@@ -176,14 +191,12 @@ describe('real AI character chat gateway', () => {
   });
 
   it('requires real balance and a separate configured model for Premium mode', async () => {
-    process.env.NOVA_PREMIUM_MODEL = 'openai/gpt-oss-120b';
-    process.env.NOVA_PREMIUM_PROVIDER = 'groq';
     const status = await app.inject({ method: 'GET', url: '/v1/ai/status', headers: auth(owner) });
     expect(status.json()).toMatchObject({
       premiumConfigured: true, premiumPriceTokens: 5, premiumModel: 'openai/gpt-oss-120b',
     });
     const mock = vi.fn();
-    vi.stubGlobal('fetch', mock);
+    stubChatProvider(mock);
     const result = await app.inject({
       method: 'POST', url: '/v1/chats/' + chatId + '/messages',
       headers: auth(owner), payload: { content: 'Write in detail', requestId: randomUUID(), tier: 'premium', expectedPriceTokens: 5 },
@@ -208,7 +221,7 @@ describe('real AI character chat gateway', () => {
         usage: { prompt_tokens: 150, completion_tokens: 600 },
       }) };
     });
-    vi.stubGlobal('fetch', mock);
+    stubChatProvider(mock);
     const requestId = randomUUID();
     const premiumBody = { content: 'Continue in more detail', requestId, tier: 'premium', expectedPriceTokens: 5 };
     const first = await app.inject({
@@ -229,7 +242,7 @@ describe('real AI character chat gateway', () => {
   });
 
   it('does not spend tokens when the Premium provider reports an error', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false, status: 429 })));
+    stubChatProvider(vi.fn(async () => ({ ok: false, status: 429 })));
     const previousBalance = (await balance(db, owner)).total;
     const result = await app.inject({
       method: 'POST', url: '/v1/chats/' + chatId + '/messages',
@@ -263,9 +276,8 @@ describe('send route under concurrent and cross-account requests', () => {
   });
 
   it('answers a double-tapped send once: one reply, one model call, the twin is told it is in progress', async () => {
-    process.env.GROQ_API_KEY = 'private-test-key-never-publish';
     const mock = slowReply('Одна полка, один ответ.');
-    vi.stubGlobal('fetch', mock);
+    stubChatProvider(mock);
     const before = await db.message.count({ where: { chatId } });
     const requestId = randomUUID();
     const [a, b] = await Promise.all([send('Двойное нажатие', requestId), send('Двойное нажатие', requestId)]);
@@ -283,7 +295,7 @@ describe('send route under concurrent and cross-account requests', () => {
 
   it('runs one request per player at a time: a second send while the first is pending is refused, not queued twice', async () => {
     const mock = slowReply('По очереди.');
-    vi.stubGlobal('fetch', mock);
+    stubChatProvider(mock);
     const before = await db.message.count({ where: { chatId } });
     const [a, b] = await Promise.all([send('Первый вопрос'), send('Второй вопрос')]);
     const busy = [a, b].filter(r => r.statusCode === 409);
@@ -297,7 +309,7 @@ describe('send route under concurrent and cross-account requests', () => {
   it('charges Premium once when two paid sends race', async () => {
     await credit(db, { userId: owner, bucket: 'BONUS', amount: 10, source: 'test', idempotencyKey: 'race-' + randomUUID() });
     const mock = slowReply('Премиальный ответ.');
-    vi.stubGlobal('fetch', mock);
+    stubChatProvider(mock);
     const start = (await balance(db, owner)).total;
     const paid = () => app.inject({ method: 'POST', url: '/v1/chats/' + chatId + '/messages', headers: auth(owner),
       payload: { content: 'Платный вопрос', requestId: randomUUID(), tier: 'premium', expectedPriceTokens: 5 } });
@@ -311,7 +323,7 @@ describe('send route under concurrent and cross-account requests', () => {
 
   it('never lets another account write into, stream from or edit a private chat', async () => {
     const mock = slowReply('Чужой ответ');
-    vi.stubGlobal('fetch', mock);
+    stubChatProvider(mock);
     const payload = { content: 'Чужой вопрос', requestId: randomUUID() };
     const json = await app.inject({ method: 'POST', url: '/v1/chats/' + chatId + '/messages', headers: auth(stranger), payload });
     expect(json.statusCode).toBe(404);
@@ -320,9 +332,7 @@ describe('send route under concurrent and cross-account requests', () => {
     expect(stream.body).toContain('CHAT_NOT_FOUND');
     const patch = await app.inject({ method: 'PATCH', url: '/v1/chats/' + chatId, headers: auth(stranger), payload: { scenario: 'Захват' } });
     expect(patch.statusCode).toBe(404);
-    // Background memory work from earlier tests may still call the model; none of it may carry the stranger's text.
-    const sent = mock.mock.calls.map(call => String((call as unknown[])[1] && ((call as unknown[])[1] as { body?: unknown }).body));
-    expect(sent.filter(body => body.includes('Чужой вопрос') || body.includes('Захват'))).toEqual([]);
+    expect(mock).not.toHaveBeenCalled();
     expect(await db.chatRequest.count({ where: { userId: stranger } })).toBe(0);
     expect((await db.chat.findUnique({ where: { id: chatId } }))!.scenario).not.toBe('Захват');
   });
