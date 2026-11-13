@@ -77,7 +77,13 @@ async function extractRange(db: PrismaClient, chatId: string, userId: string): P
   const parsed = parseExtraction(result.text);
   if (!parsed) throw new AiProviderError("AI_BAD_MEMORY_FORMAT", 502);
   let written = 0;
+  const lastingNotes = chat.participantIds.length ? [] : parsed.character;
   await db.$transaction(async tx => {
+    // Character memory is shared across this user's stories and manual edits. Keep the
+    // user-before-chat lock order used by chat writes and account deletion.
+    if (lastingNotes.length) {
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+    }
     const advanced = await tx.chat.updateMany({
       where: { id: chatId, userId, memoryThrough: chat.memoryThrough },
       data: { memoryThrough: through },
@@ -108,14 +114,20 @@ async function extractRange(db: PrismaClient, chatId: string, userId: string): P
     }
     const auto = await tx.memory.findMany({ where: { chatId, source: 'auto', pinned: false }, orderBy: { createdAt: 'desc' }, skip: AUTO_LIMIT, select: { id: true } });
     if (auto.length) await tx.memory.deleteMany({ where: { id: { in: auto.map(x => x.id) } } });
-    // Character-level memory only for one-on-one stories, where "the character" is unambiguous.
-    if (!chat.participantIds.length) {
-      const have = await tx.characterMemory.findMany({ where: { userId, characterId: chat.characterId } });
-      const lower = new Set(have.map(m => m.content.trim().toLowerCase()));
-      for (const c of parsed.character) {
-        if (have.length >= CHARACTER_MEMORY_LIMIT || lower.has(c.toLowerCase())) continue;
-        await tx.characterMemory.create({ data: { userId, characterId: chat.characterId, content: c, source: 'auto' } }); written++;
+    if (lastingNotes.length) {
+      const have = await tx.characterMemory.findMany({
+        where: { userId, characterId: chat.characterId }, select: { content: true },
+      });
+      const knownContent = new Set(have.map(note => note.content.trim().toLowerCase()));
+      const newNotes = [];
+      for (const content of lastingNotes) {
+        if (have.length + newNotes.length >= CHARACTER_MEMORY_LIMIT) break;
+        const normalized = content.toLowerCase();
+        if (knownContent.has(normalized)) continue;
+        knownContent.add(normalized);
+        newNotes.push({ userId, characterId: chat.characterId, content, source: 'auto' });
       }
+      if (newNotes.length) written += (await tx.characterMemory.createMany({ data: newNotes })).count;
     }
   });
   return written;
@@ -177,10 +189,17 @@ export async function registerMemoryRoutes(app: FastifyInstance, db: PrismaClien
     return { items: await db.characterMemory.findMany({ where: { userId: req.user.sub, characterId: req.params.id }, orderBy: [{ pinned: 'desc' }, { createdAt: 'asc' }] }) };
   });
   app.post('/v1/characters/:id/memories', auth, async (req: any, reply) => {
-    if (!await canSee(req, reply)) return;
+    const c = await canSee(req, reply);
+    if (!c) return;
     const p = input.safeParse(req.body); if (!p.success) return reply.code(400).send({ error: 'INVALID_MEMORY' });
-    if (await db.characterMemory.count({ where: { userId: req.user.sub, characterId: req.params.id } }) >= CHARACTER_MEMORY_LIMIT) return reply.code(409).send({ error: 'MEMORY_FULL' });
-    return reply.code(201).send({ memory: await db.characterMemory.create({ data: { ...p.data, userId: req.user.sub, characterId: req.params.id } }) });
+    const userId: string = req.user.sub;
+    const memory = await db.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+      const where = { userId, characterId: c.id };
+      if (await tx.characterMemory.count({ where }) >= CHARACTER_MEMORY_LIMIT) return null;
+      return tx.characterMemory.create({ data: { ...p.data, ...where } });
+    });
+    return memory ? reply.code(201).send({ memory }) : reply.code(409).send({ error: 'MEMORY_FULL' });
   });
   app.patch('/v1/characters/:id/memories/:memoryId', auth, async (req: any, reply) => {
     const p = input.partial().safeParse(req.body); if (!p.success) return reply.code(400).send({ error: 'INVALID_MEMORY' });

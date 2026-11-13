@@ -135,6 +135,51 @@ describe('Story memory',()=>{
   expect(response.statusCode, response.body).toBe(200);
   expect(JSON.parse(calls[0].messages[1].content).storySoFar).toBe('Аврора нашла медный ключ в вазе.');
  });
+ it('deduplicates lasting memories within one extraction', async () => {
+  const uid = await user();
+  const lead = await character(uid, 'Лея');
+  const thread = await db.chat.create({ data: { userId: uid, characterId: lead.id } });
+  await db.message.createMany({ data: Array.from({ length: EXTRACT_EVERY_MESSAGES }, (_, index) => ({
+   chatId: thread.id, role: 'user', content: 'Сцена ' + index,
+  })) });
+  provider(() => JSON.stringify({ character: ['Игрок любит маяки', 'игрок любит маяки'] }));
+  expect(await extractMemories(db, thread.id, uid)).toBe(1);
+  expect(await db.characterMemory.findMany({ where: { userId: uid, characterId: lead.id }, select: { content: true } }))
+   .toEqual([{ content: 'Игрок любит маяки' }]);
+ });
+ it('shares the final character memory slot across parallel stories and manual creation', async () => {
+  const uid = await user();
+  const lead = await character(uid, 'Лея');
+  const where = { userId: uid, characterId: lead.id };
+  await db.characterMemory.createMany({ data: Array.from({ length: 49 }, (_, index) => ({
+   ...where, content: 'Сохранённый факт ' + index,
+  })) });
+  const threads = await Promise.all(Array.from({ length: 2 }, () => db.chat.create({ data: where })));
+  await db.message.createMany({ data: threads.flatMap(thread => Array.from({ length: EXTRACT_EVERY_MESSAGES }, (_, index) => ({
+   chatId: thread.id, role: 'user', content: 'Сцена ' + index,
+  }))) });
+  // Isolate memory writes from the gateway's separately tested cold quota initialization.
+  const now = Date.now();
+  await db.aiProviderState.create({ data: {
+   key: 'groq:openai/gpt-oss-20b',
+   minuteAt: new Date(Math.floor(now / 60000) * 60000),
+   dayAt: new Date(new Date(now).toISOString().slice(0, 10)),
+  } });
+  provider(() => JSON.stringify({ character: ['Игрок любит маяки', 'Игрок умеет читать карты'] }));
+  const [first, second, manual] = await Promise.all([
+   extractMemories(db, threads[0].id, uid),
+   extractMemories(db, threads[1].id, uid),
+   app.inject({ method: 'POST', url: `/v1/characters/${lead.id}/memories`, headers: auth(uid),
+    payload: { content: 'Игрок любит штормы', pinned: true } }),
+  ]);
+  expect([201, 409]).toContain(manual.statusCode);
+  expect(first + second + Number(manual.statusCode === 201)).toBe(1);
+  expect(await db.characterMemory.count({ where })).toBe(50);
+  const extra = await app.inject({ method: 'POST', url: `/v1/characters/${lead.id}/memories`, headers: auth(uid),
+   payload: { content: 'Лишняя заметка' } });
+  expect(extra.statusCode).toBe(409);
+  expect(extra.json()).toEqual({ error: 'MEMORY_FULL' });
+ });
  it('uses character memory in later chats of the same user only, and lets the user edit and delete it',async()=>{
   const u=await user();const stranger=await user();const c=await character(u,'Аврора');
   await db.character.update({where:{id:c.id},data:{publication:{create:{status:'PUBLISHED'}}}}).catch(()=>{});
