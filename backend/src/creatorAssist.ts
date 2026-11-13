@@ -3,6 +3,8 @@ import type { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { completeAiChat, AiProviderError } from './aiGateway.js';
 import { rewardDay } from './rewardRoutes.js';
+import { cardProblems, fieldProblems } from './creatorQuality.js';
+export * from './creatorQuality.js';
 
 /**
  * Smart character creator.
@@ -102,6 +104,25 @@ const RULES = (lang: string) => [
   'Stay consistent with every field the user already filled in and never contradict or change the chosen name, age, gender or traits.',
   'Reply with JSON only, no markdown.',
 ];
+const CARD_QUALITY = [
+  'Quality rules for the card:',
+  '- Make it specific, not generic. Give a specific occupation and place (a real kind of workplace or district, not just "a city").',
+  '- The character has one concrete quirk or habit, something they want and something they fear; show them in biography, personality and backstory.',
+  '- personality: short sentences about behaviour and contradictions, never only a list of generic adjectives (kind, smart, brave).',
+  '- speechStyle: describe recognisable features (rhythm, favourite words, how they address the player) and include 2-3 short example phrases in quotes, like «...».',
+  '- greeting: ' + 'an in-scene first line addressed to the player, with a small *action* in asterisks; under 220 characters; NEVER starts with the character name or "Привет, я ..." / "Меня зовут ..."; never asks "чем могу помочь"; ends with a question or a remark the player can answer.',
+  '- scenario: 2-4 sentences in second person or neutral: where we are, what is happening right now, and the player\'s role or hook in it. No meta text such as "Scenario:".',
+  '- Never sound like an AI assistant.',
+  // Live creator check 43370606700: «строгая шеф-повар» became Алексей, a hostess «Алина» said «Рад видеть», two of four cards were Алексей.
+  '- Keep the gender the idea implies (feminine words such as хозяйка, строгая, шеф-повар она, певица mean a woman) and use the matching Russian grammatical gender everywhere, including the greeting (рада/рад, пришла/пришёл).',
+  '- Pick a natural but less common name that fits the character; avoid the most frequent ones such as Алексей, Анна, Иван, Мария, Дмитрий, Елена.',
+];
+const FIELD_QUALITY: Partial<Record<CardField, string>> = {
+  greeting: 'Greeting rules: an in-scene first line addressed to the player with a small *action* in asterisks, under 220 characters; never start with the character name or "Привет, я ..." / "Меня зовут ..."; never ask "чем могу помочь"; end with a question or remark the player can answer.',
+  scenario: 'Scenario rules: 2-4 sentences, second person or neutral; say where we are, what is happening right now and what the player\'s role or hook is; no meta text.',
+  speechStyle: 'Speech style rules: describe recognisable features and include 2-3 short example phrases in quotes, like «...».',
+  personality: 'Personality rules: behaviour, a quirk, a want and a fear; never only a list of generic adjectives.',
+};
 
 export async function runAssist(db: PrismaClient, input: AssistInput): Promise<{ card?: GeneratedCard; variants?: string[] }> {
   const c = input.current;
@@ -112,9 +133,11 @@ export async function runAssist(db: PrismaClient, input: AssistInput): Promise<{
       `Return JSON: {"name":"","biography":"","personality":"","interests":"","appearance":"","speechStyle":"","backstory":"","scenario":"","greeting":"","tags":["3-6 short tags"],"traits":["3-5 one-word personality traits"],"category":"one of: ${CATEGORIES.join(', ')}"}.`,
       `Limits in characters: ${Object.entries(FIELD_LIMITS).map(([k, v]) => `${k} ${Math.floor(v * 0.8)}`).join(', ')}.`,
       'If the user fixed a name, age, gender or traits, use exactly those. If age or gender are not given, write the card so that it does not state them.',
+      ...CARD_QUALITY,
     ].join('\n');
     const user = JSON.stringify({ user_data: { idea: input.idea, already_chosen: fixed, other_filled_fields: { ...c, name: undefined, age: undefined, gender: undefined, traits: undefined } } });
-    let blocked: GeneratedCard | null = null;
+    let blocked: GeneratedCard | null = null, soft: { card: GeneratedCard; n: number } | null = null;
+    const checkQuality = input.language === 'ru'; // the checks are written for Russian output
     for (let attempt = 0; attempt < 2; attempt++) {
       const out = await completeAiChat([{ role: 'system', content: system }, { role: 'user', content: user }], 'free', db, undefined, { maxOutput: 2000 });
       const card = parseCard(out.text);
@@ -124,8 +147,12 @@ export async function runAssist(db: PrismaClient, input: AssistInput): Promise<{
       if (fixed.traits) card.traits = fixed.traits;
       // A card the safety filter would refuse gets one fresh attempt instead of failing the user at once.
       if (CREATOR_BLOCKED.test(JSON.stringify(card))) { blocked = card; continue; }
-      return { card };
+      // Quality problems only spend the retry; they never fail the request.
+      const n = checkQuality ? cardProblems(card).length : 0;
+      if (n === 0) return { card };
+      if (!soft || n < soft.n) soft = { card, n };
     }
+    if (soft) return { card: soft.card };
     if (blocked) return { card: blocked }; // The route refuses it (CREATOR_RESULT_REJECTED).
     throw new AiProviderError('AI_BAD_FORMAT', 502);
   }
@@ -136,10 +163,12 @@ export async function runAssist(db: PrismaClient, input: AssistInput): Promise<{
     `Task: the field "${LABEL[field]}". ${ACTION[action]}`,
     `Return JSON: {"variants":[${count === 1 ? '"..."' : '"...","...","..."'}]} with exactly ${count} variant${count > 1 ? 's' : ''}, each at most ${Math.floor(max * 0.85)} characters.`,
     field === 'name' ? 'A name only: no quotes, no explanations.' : 'Use the other fields as context and stay consistent with them.',
+    ...(FIELD_QUALITY[field] && (action === 'write' || action === 'variants') ? [FIELD_QUALITY[field]!] : []),
   ].join('\n');
   const user = JSON.stringify({ user_data: { field, current_text_of_this_field: (c as any)[field] ?? '', card: c } });
   if (action !== 'write' && action !== 'variants' && !String((c as any)[field] ?? '').trim()) throw new AiProviderError('FIELD_EMPTY', 400);
-  let best: string[] | null = null, refused: string[] | null = null;
+  let best: string[] | null = null, bestBad = 0, refused: string[] | null = null;
+  const checkQuality = input.language === 'ru' && (action === 'write' || action === 'variants');
   for (let attempt = 0; attempt < 2; attempt++) {
     const out = await completeAiChat([{ role: 'system', content: system }, { role: 'user', content: user }], 'free', db, undefined, { maxOutput: count === 1 ? 900 : 1500 });
     const parsed = parseVariants(out.text, max)?.slice(0, count);
@@ -147,9 +176,11 @@ export async function runAssist(db: PrismaClient, input: AssistInput): Promise<{
     const variants = field === 'name' ? parsed.map(v => v.replace(/^["«]|["»]$/g, '').slice(0, 80)) : parsed;
     // Variants the safety filter would refuse are dropped; if any were dropped, try once more for a full set.
     const clean = variants.filter(v => !CREATOR_BLOCKED.test(v));
-    if (clean.length === variants.length) return { variants };
-    if (clean.length > (best?.length ?? 0)) best = clean;
-    refused = variants;
+    const bad = checkQuality ? clean.filter(v => fieldProblems(field, v, c.name ?? '').length).length : 0;
+    if (clean.length === variants.length && bad === 0) return { variants };
+    // Prefer more safe variants, then fewer quality failures; quality never turns into an error.
+    if (clean.length > (best?.length ?? 0) || (clean.length === best?.length && bad < bestBad)) { best = clean; bestBad = bad; }
+    if (clean.length < variants.length) refused = variants;
   }
   if (best) return { variants: best };
   if (refused) return { variants: refused }; // Nothing usable: the route answers CREATOR_RESULT_REJECTED.
