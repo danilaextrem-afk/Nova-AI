@@ -263,7 +263,7 @@ app.get('/v1/ads/ssv', async (req, reply) => {
       if (lastReward && Date.now() - lastReward.createdAt.getTime() < config.admob.minIntervalSec * 1000) {
         return false;
       }
-      await tx.walletAccount.upsert({ where: { userId: user.id }, create: { userId: user.id }, update: {} });
+      await tx.walletAccount.createMany({ data: { userId: user.id }, skipDuplicates: true });
       await tx.adReward.create({
         data: { userId: user.id, transactionId: r.transactionId, adUnit: r.adUnit, amount: r.amount },
       });
