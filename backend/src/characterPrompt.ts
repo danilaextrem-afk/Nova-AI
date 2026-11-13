@@ -20,7 +20,7 @@ const rules = [
   'Do not open the way any entry of recentOpenings opens, and do not repeat their phrasing or gestures, except the recurring words or opening that speechStyle itself asks for.',
   // Live run 43335046417: three replies in a row began by repeating the greeting «Архив открыт, у нас есть час.».
   // Live check 43377486716: Марина dropped her required «солнышко» right after a greeting that began with it.
-  'Never repeat openingLine, the scenario text or your own earlier lines; the player has already read them. Words that speechStyle asks you to repeat, such as a pet name or a catchphrase, are not repetition.',
+  'Never copy openingLine, the scenario text or your own earlier lines word for word; the player has already read them. Reusing their words, a pet name or a catchphrase is fine.',
   'First react to what the player just said or did, with a feeling that fits personality, then answer or act.',
   'If the player only agrees, hesitates or says little, take the initiative: add a new detail, an action or a decision of your own that moves the scene, and end with a hook the player can answer.',
   // Live check 2026-11-12: a character said «ты меня запутала» to a player of unknown gender.
@@ -152,11 +152,14 @@ function relevantNotes(notes: Note[], query: string, limit: number) {
 }
 
 /** The first few words of the speaker's latest replies (newest first), for the anti-repetition rule. */
-export function recentOpenings(historyNewestFirst: HistoryLine[], speakerId: string, limit = 3): string[] {
+export function recentOpenings(historyNewestFirst: HistoryLine[], speakerId: string, limit = 3, greeting?: string | null): string[] {
   const out: string[] = [];
   for (const message of historyNewestFirst) {
     if (out.length >= limit) break;
     if (message.role !== 'assistant' || (message.speakerId && message.speakerId !== speakerId)) continue;
+    // The greeting is not a reply: listing it made the first reply avoid the character's own pet name and
+    // scenario words (live checks 43377486716, 43379580521). A copied greeting is removed by dropGreetingEcho.
+    if (greeting && message.content.trim() === greeting.trim()) continue;
     const words = message.content.trim().split(/\s+/u).slice(0, 6).join(' ');
     if (words) out.push(utf8Prefix(words, 80));
   }
@@ -199,7 +202,7 @@ export function buildCharacterPrompt(input: {
     memoriesAcrossStories: relevantNotes(input.characterNotes, request, compact ? 2 : 6),
     storySoFar: utf8Prefix(input.summary ?? '', compact ? 740 : 2200),
     // How this character's last replies began: models otherwise settle into one opening (*улыбается* …).
-    recentOpenings: recentOpenings(input.historyNewestFirst, speaker.id),
+    recentOpenings: recentOpenings(input.historyNewestFirst, speaker.id, 3, speaker.greeting),
     earlierReplies: input.earlierReplies?.map(reply => ({
       name: reply.name, text: utf8Prefix(reply.text, compact ? 380 : 850),
     })),
