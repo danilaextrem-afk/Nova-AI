@@ -339,7 +339,10 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
           await tx.aiAttempt.update({where:{id:attempt.id},data:{status:'FAILED',errorCode:httpStatus?code+':'+httpStatus:code,latencyMs:Date.now()-started}});
         });
         lastError=new AiProviderError(code==='AI_TIMEOUT'?'AI_UPSTREAM_ERROR':code,code==='AI_TIMEOUT'?502:status,Math.max(1,Math.ceil(retry/1000)||30));
-        if(!second&&TRANSIENT.has(code))retryable.add(m);
+        // Only transient failures may bypass the short local backoff for a second pass.
+        // An explicit provider cooldown and non-retryable HTTP errors still apply.
+        const retryableStatus = !httpStatus || httpStatus === 408 || httpStatus >= 500;
+        if(!second && !retry && retryableStatus && TRANSIENT.has(code)) retryable.add(m);
         // A cancelled request, or a stream that already showed text, is never silently continued elsewhere.
         if(opts.signal?.aborted)throw new AiProviderError('AI_CANCELLED',499,1);
         if(emitted)throw new AiProviderError('AI_STREAM_INTERRUPTED',502,5);

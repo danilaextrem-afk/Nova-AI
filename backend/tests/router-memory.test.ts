@@ -329,6 +329,22 @@ describe('Provider recovery (HTTP fixtures, not live AI)',()=>{
   await expect(completeAiChat(msgs,'free',db,randomUUID())).rejects.toMatchObject({code:'AI_RATE_LIMITED'});
   expect(limited).toHaveBeenCalledTimes(2);
  });
+ it.each([[400,null],[401,null],[403,null],[404,null],[503,'60']] as const)(
+  'does not immediately repeat provider HTTP %s with Retry-After %s', async (status, retryAfter) => {
+   const requests: string[] = [];
+   vi.stubGlobal('fetch', vi.fn(async (url: string) => {
+    const groq = url.includes('groq');
+    requests.push(groq ? 'groq' : 'openrouter');
+    const headers = groq && retryAfter ? {'Retry-After': retryAfter} : undefined;
+    return new Response('', {status: groq ? status : 429, headers});
+   }));
+   const requestId = randomUUID();
+   await expect(completeAiChat(msgs, 'free', db, requestId)).rejects.toBeTruthy();
+   expect(requests).toEqual(['groq', 'openrouter']);
+   const attempts = await db.aiAttempt.findMany({where:{requestId,provider:'groq'}});
+   expect(attempts.map(x => x.errorCode)).toEqual([`AI_UPSTREAM_ERROR:${status}`]);
+  },
+ );
  it('gives gpt-oss on Cloudflare room for its hidden reasoning',()=>{
   vi.stubEnv('CLOUDFLARE_ACCOUNT_ID','e9349634542ae1b6b5730a9ffdad2855');
   expect(providerRequest({provider:'cloudflare',model:'@cf/openai/gpt-oss-20b'},msgs,false,360).body.max_tokens).toBe(1024);
