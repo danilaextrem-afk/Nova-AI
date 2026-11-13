@@ -113,7 +113,14 @@ app.setErrorHandler((error,req,reply)=>{
  if(Number.isInteger(status)&&status>=400&&status<500)return reply.code(status).send({error:status===429?'RATE_LIMITED':status===413?'BODY_TOO_LARGE':'INVALID_REQUEST'});
  req.log.error({code:(error as any).code||'INTERNAL'},'Request failed');return reply.code(500).send({error:'INTERNAL_ERROR'});
 });
-app.post('/v1/auth/logout',{preHandler:app.auth},async(req:any)=>{await db.session.updateMany({where:{userId:req.user.sub},data:{revokedAt:new Date()}});return {ok:true};});
+app.post('/v1/auth/logout', { preHandler: app.auth }, async (req: any) => {
+  const userId = req.user.sub;
+  await db.$transaction(async tx => {
+    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+    await tx.session.updateMany({ where: { userId, revokedAt: null }, data: { revokedAt: new Date() } });
+  });
+  return { ok: true };
+});
 
 app.post('/v1/auth/register', { config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (req, reply) => {
   const body = creds.safeParse(req.body);
@@ -161,12 +168,15 @@ app.post('/v1/auth/refresh', async (req, reply) => {
   const body = z.object({ refreshToken: z.string().min(20) }).safeParse(req.body);
   if (!body.success) return reply.code(400).send({ error: 'INVALID_INPUT' });
   const refresh=randomBytes(48).toString('base64url');
+  const hash = sha256(body.data.refreshToken);
+  const session = await db.session.findUnique({ where: { refreshTokenHash: hash }, select: { userId: true } });
+  if (!session) return reply.code(401).send({ error: 'INVALID_REFRESH' });
   const result=await db.$transaction(async tx=>{
-    const hash=sha256(body.data.refreshToken);
-    await tx.$queryRaw`SELECT id FROM "Session" WHERE "refreshTokenHash" = ${hash} FOR UPDATE`;
+    // Logout, account deletion and rotation all take the user lock before changing sessions.
+    await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${session.userId} FOR UPDATE`;
     const s=await tx.session.findUnique({where:{refreshTokenHash:hash},include:{user:{select:{status:true}}}});
     if(!s||s.expiresAt<new Date()||s.user.status!=='ACTIVE')return null;
-    if(s.revokedAt){await tx.session.updateMany({where:{familyId:s.familyId},data:{revokedAt:new Date()}});return null;}
+    if(s.revokedAt){await tx.session.updateMany({where:{userId:s.userId,familyId:s.familyId,revokedAt:null},data:{revokedAt:new Date()}});return null;}
     await tx.session.update({where:{id:s.id},data:{revokedAt:new Date()}});
     await tx.session.create({data:{userId:s.userId,familyId:s.familyId,refreshTokenHash:sha256(refresh),expiresAt:new Date(Date.now()+config.refreshTtlSec*1000)}});
     return {userId:s.userId,familyId:s.familyId};
