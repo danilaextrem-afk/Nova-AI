@@ -97,6 +97,53 @@ describe('PostgreSQL router and persisted chat invariants (HTTP fixtures, not li
  });
 });
 
+describe('Cancellation before an upstream request', () => {
+ const messages = [{ role: 'system' as const, content: 'Сцена' }, { role: 'user' as const, content: 'Привет' }];
+
+ it('does not reserve capacity or call a model if the request is already cancelled', async () => {
+  const mock = vi.fn(async () => ok());
+  vi.stubGlobal('fetch', mock);
+  await expect(completeAiChat(messages, 'free', db, randomUUID(), { signal: AbortSignal.abort() }))
+   .rejects.toMatchObject({ code: 'AI_CANCELLED', httpStatus: 499 });
+  expect(mock).not.toHaveBeenCalled();
+  expect(await db.aiAttempt.count()).toBe(0);
+  expect(await db.aiProviderState.count()).toBe(0);
+ });
+
+ it('removes a cancelled waiter and lets the next queued request run', async () => {
+  vi.stubEnv('NOVA_AI_MODELS_JSON', JSON.stringify([model('groq', 'free', { concurrency: 4 })]));
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const mock = vi.fn(async () => { await gate; return ok(); });
+  vi.stubGlobal('fetch', mock);
+  const active = Array.from({ length: 4 }, () => completeAiChat(messages, 'free', db));
+  const settledActive = Promise.allSettled(active);
+  const controller = new AbortController();
+  const cancelledId = randomUUID();
+  let queued: Promise<unknown> | undefined;
+  let next: Promise<unknown> | undefined;
+  try {
+   await vi.waitFor(() => expect(mock).toHaveBeenCalledTimes(4));
+   queued = completeAiChat(messages, 'free', db, cancelledId, { signal: controller.signal }).catch(error => error);
+   next = completeAiChat(messages, 'free', db);
+   controller.abort();
+   let cancellation: unknown;
+   const observed = queued.then(value => { cancellation = value; });
+   await vi.waitFor(() => expect(cancellation).toMatchObject({ code: 'AI_CANCELLED' }), { timeout: 1000 });
+   await observed;
+   expect(await db.aiAttempt.findFirst({ where: { requestId: cancelledId } })).toBeNull();
+   expect(mock).toHaveBeenCalledTimes(4);
+  } finally {
+   release();
+   await settledActive;
+   await Promise.allSettled([queued, next]);
+  }
+  await expect(next).resolves.toMatchObject({ provider: 'groq' });
+  expect(mock).toHaveBeenCalledTimes(5);
+  expect(await db.aiAttempt.count()).toBe(5);
+ });
+});
+
 describe('Default free pool (no NOVA_AI_MODELS_JSON; HTTP fixtures, not live AI)',()=>{
  beforeEach(()=>{vi.stubEnv('NOVA_AI_MODELS_JSON','');vi.stubEnv('AI_PROVIDER','groq');vi.stubEnv('AI_MODEL','');vi.stubEnv('NOVA_GROQ_FREE_MODELS','');vi.stubEnv('NOVA_OPENROUTER_FREE_MODELS','');vi.stubEnv('GEMINI_API_KEY','');vi.stubEnv('CLOUDFLARE_API_TOKEN','');vi.stubEnv('NOVA_PREMIUM_MODEL','')});
  it('uses separate per-model Groq quota buckets and falls through to the next Groq model',async()=>{
@@ -351,6 +398,29 @@ describe('Waiting for the next quota minute (HTTP fixtures)',()=>{
   expect(r.text).toBe('После ожидания');expect(mock).toHaveBeenCalledTimes(1);
   expect(Date.now()-started).toBeGreaterThanOrEqual(2500);expect(Date.now()-started).toBeLessThan(10000);
  },20000);
+ it('aborts the wait for a quota window without contacting the provider', async () => {
+  vi.stubEnv('NOVA_AI_MODELS_JSON', JSON.stringify([model('groq', 'free', { rpm: 1 })]));
+  const minute = Math.floor(Date.now() / 60000) * 60000;
+  vi.useFakeTimers({ toFake: ['Date'], now: minute + 50000, shouldAdvanceTime: true });
+  await fill(minute);
+  const controller = new AbortController();
+  const mock = vi.fn(async () => ok());
+  vi.stubGlobal('fetch', mock);
+  // The database has found the exhausted window when the wait starts.
+  const waitStarted = vi.spyOn(controller.signal, 'addEventListener');
+  const pending = completeAiChat(msgs, 'free', db, randomUUID(), { signal: controller.signal }).catch(error => error);
+  try {
+   await vi.waitFor(() => expect(waitStarted).toHaveBeenCalledWith('abort', expect.any(Function), expect.any(Object)));
+   controller.abort();
+   await expect(pending).resolves.toMatchObject({ code: 'AI_CANCELLED' });
+   expect(mock).not.toHaveBeenCalled();
+   expect(await db.aiAttempt.count()).toBe(0);
+  } finally {
+   controller.abort();
+   await pending;
+   waitStarted.mockRestore();
+  }
+ });
  it('does not wait long: far from the next minute it reports the rate limit at once',async()=>{
   vi.stubEnv('NOVA_AI_MODELS_JSON',JSON.stringify([model('groq','free',{rpm:1})]));
   const minute=Math.floor(Date.now()/60000)*60000;

@@ -1,3 +1,4 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import type { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 
@@ -158,17 +159,41 @@ export function retryAfterMs(value: string | null | undefined, now = Date.now())
 const queues: Record<AiTier, { active: number; waiting: (() => void)[] }> = {
   free: {active:0, waiting:[]}, premium: {active:0, waiting:[]},
 };
-async function enter(tier:AiTier) {
+const cancelledRequest = () => new AiProviderError('AI_CANCELLED', 499, 1);
+
+function checkCancellation(signal?: AbortSignal) {
+  if (signal?.aborted) throw cancelledRequest();
+}
+
+async function enter(tier: AiTier, signal?: AbortSignal) {
+  checkCancellation(signal);
   const queue = queues[tier];
   if (queue.active >= 4) {
-    if (queue.waiting.length >= 24) throw new AiProviderError('AI_QUEUE_FULL',503);
-    await new Promise<void>((resolve,reject) => {
-      const start = () => { clearTimeout(timer); resolve(); };
-      const timer = setTimeout(() => {queue.waiting = queue.waiting.filter(x=>x!==start);reject(new AiProviderError('AI_QUEUE_FULL',503));},15000);
+    if (queue.waiting.length >= 24) throw new AiProviderError('AI_QUEUE_FULL', 503);
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        signal?.removeEventListener('abort', abort);
+      };
+      const start = () => { cleanup(); resolve(); };
+      const remove = (error: AiProviderError) => {
+        cleanup();
+        queue.waiting = queue.waiting.filter(waiter => waiter !== start);
+        reject(error);
+      };
+      const abort = () => remove(cancelledRequest());
+      const timer = setTimeout(() => remove(new AiProviderError('AI_QUEUE_FULL', 503)), 15000);
       queue.waiting.push(start);
+      signal?.addEventListener('abort', abort, { once: true });
     });
-  } else queue.active++;
-  return () => { const next=queue.waiting.shift(); if(next) next(); else queue.active--; };
+  } else {
+    queue.active++;
+  }
+  return () => {
+    const next = queue.waiting.shift();
+    if (next) next();
+    else queue.active--;
+  };
 }
 const micros = (m:ModelConfig, input:number, output:number) => Math.ceil(input*m.inputUsdPerMillion + output*m.outputUsdPerMillion);
 
@@ -180,7 +205,7 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
   if (!models.length) throw new AiProviderError('AI_NOT_CONFIGURED',503);
   if (!db) throw new AiProviderError('AI_COORDINATOR_REQUIRED',503);
   if (messages.length < 2 || messages.length > 80 || messages.some(m=>m.content.length>20000)) throw new AiProviderError('INVALID_AI_CONTEXT',400);
-  const leave = await enter(tier);
+  const leave = await enter(tier, opts.signal);
   try {
     const maxOutput = Math.min(2400, opts.maxOutput ?? (tier === 'premium' ? 1600 : 360));
     const inputEstimate = estimateTokens(messages);
@@ -194,6 +219,7 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
     const waitable = new Set<ModelConfig>();
     const queue: { m: ModelConfig; second: boolean; wait?: boolean }[] = models.map(m => ({ m, second: false }));
     for (let qi = 0; ; qi++) {
+      checkCancellation(opts.signal);
       if (qi === models.length) {
         for (const r of models.filter(x => retryable.has(x))) queue.push({ m: r, second: true });
         for (const w of models.filter(x => waitable.has(x))) queue.push({ m: w, second: false, wait: true });
@@ -203,11 +229,16 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
       if (wait) {
         const untilNextMinute = 60000 - (Date.now() % 60000) + 300;
         if (untilNextMinute > 25000 || Date.now() + untilNextMinute > deadline - 15000) continue;
-        if (!queue.slice(0, qi).some(x => x.wait)) await new Promise<void>((resolve, reject) => {
-          const t = setTimeout(resolve, untilNextMinute);
-          opts.signal?.addEventListener('abort', () => { clearTimeout(t); reject(new AiProviderError('AI_CANCELLED', 499, 1)); }, { once: true });
-        });
+        if (!queue.slice(0, qi).some(x => x.wait)) {
+          try {
+            await delay(untilNextMinute, undefined, { signal: opts.signal });
+          } catch (error) {
+            checkCancellation(opts.signal);
+            throw error;
+          }
+        }
       }
+      checkCancellation(opts.signal);
       const now = new Date();
       const minute = new Date(Math.floor(now.getTime()/60000)*60000);
       const day = new Date(now.toISOString().slice(0,10));
@@ -216,12 +247,15 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
       const key = quotaKey(m); // Groq limits are per model; other providers share one conservative bucket.
       const bkey = breakerKey(m);
       const attempt = await db.$transaction(async tx => {
-        if (bkey !== key) {
-          const b = await tx.aiProviderState.upsert({where:{key:bkey},create:{key:bkey,minuteAt:minute,dayAt:day},update:{}});
-          if (!second && b.retryAt && b.retryAt > now) return null;
-        }
-        await tx.aiProviderState.upsert({where:{key},create:{key,minuteAt:minute,dayAt:day},update:{}});
+        // Prisma can emulate an upsert with an empty update as a read and insert.
+        // Insert idempotently before locking so simultaneous first requests cannot collide.
+        await tx.aiProviderState.createMany({data:{key,minuteAt:minute,dayAt:day},skipDuplicates:true});
         await tx.$queryRaw`SELECT key FROM "AiProviderState" WHERE key = ${key} FOR UPDATE`;
+        if (bkey !== key) {
+          await tx.aiProviderState.createMany({data:{key:bkey,minuteAt:minute,dayAt:day},skipDuplicates:true});
+          const breaker = await tx.aiProviderState.findUniqueOrThrow({where:{key:bkey}});
+          if (!second && breaker.retryAt && breaker.retryAt > now) return null;
+        }
         let state = (await tx.aiProviderState.findUnique({where:{key}}))!;
         const reset = {...(state.minuteAt<minute ? {minuteAt:minute,minuteRequests:0,minuteTokens:0}:{}),
           ...(state.dayAt<day ? {dayAt:day,dayRequests:0,dayTokens:0,costMicros:0}:{})};
@@ -232,10 +266,13 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
         if (active >= m.concurrency || state.dayRequests>=m.rpd || state.dayTokens+estimate>m.tpd ||
           (maxCost>0 && state.costMicros+maxCost>m.dailyBudgetMicros)) return null;
         if (state.minuteRequests>=m.rpm || state.minuteTokens+estimate>m.tpm) return 'minute' as const;
+        checkCancellation(opts.signal);
         await tx.aiProviderState.update({where:{key},data:{minuteRequests:{increment:1},dayRequests:{increment:1},
           minuteTokens:{increment:estimate},dayTokens:{increment:estimate},costMicros:{increment:maxCost}}});
-        return tx.aiAttempt.create({data:{requestId,provider:m.provider,model:m.model,tier,status:'PENDING',
+        const reserved = await tx.aiAttempt.create({data:{requestId,provider:m.provider,model:m.model,tier,status:'PENDING',
           estimatedTokens:estimate,costMicros:maxCost,expiresAt:new Date(Date.now()+90000)}});
+        checkCancellation(opts.signal);
+        return reserved;
       });
       if (attempt === 'minute') { if (!wait && estimate <= m.tpm) waitable.add(m); continue; }
       if (!attempt) continue;
@@ -244,6 +281,7 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
       let httpStatus=0; let detail='';
       const streaming=!!opts.onDelta;
       try {
+        checkCancellation(opts.signal);
         const req=providerRequest(m,messages,streaming,maxOutput,opts.temperature);
         const response=await fetch(req.url,{
           method:'POST',headers:req.headers,body:JSON.stringify(req.body),
@@ -341,7 +379,7 @@ export async function completeAiChat(messages:AiMessage[], tier:AiTier='free', d
         lastError=new AiProviderError(code==='AI_TIMEOUT'?'AI_UPSTREAM_ERROR':code,code==='AI_TIMEOUT'?502:status,Math.max(1,Math.ceil(retry/1000)||30));
         if(!second&&TRANSIENT.has(code))retryable.add(m);
         // A cancelled request, or a stream that already showed text, is never silently continued elsewhere.
-        if(opts.signal?.aborted)throw new AiProviderError('AI_CANCELLED',499,1);
+        checkCancellation(opts.signal);
         if(emitted)throw new AiProviderError('AI_STREAM_INTERRUPTED',502,5);
       }
     }
