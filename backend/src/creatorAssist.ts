@@ -3,7 +3,7 @@ import type { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { completeAiChat, AiProviderError } from './aiGateway.js';
 import { rewardDay } from './rewardRoutes.js';
-import { cardProblems, fieldProblems, impliedGender } from './creatorQuality.js';
+import { cardProblems, fieldProblems, genderOfCardText, impliedGender } from './creatorQuality.js';
 export * from './creatorQuality.js';
 
 /**
@@ -224,7 +224,11 @@ export async function registerCreatorRoutes(app: FastifyInstance, db: PrismaClie
       const produced = JSON.stringify(result);
       await db.aiUsage.update({ where: { id: attempt.id }, data: { success: true, errorCode: null, latencyMs: Date.now() - started } });
       if (CREATOR_BLOCKED.test(produced)) return reply.code(422).send({ error: 'CREATOR_RESULT_REJECTED' });
-      return { ...result, needs: p.data.mode === 'full' ? (['age', 'gender'] as const).filter(k => p.data.current[k] === undefined) : [] };
+      // The author still picks age and gender; textGender tells the app whom the generated text is about,
+      // so a gender chosen against the biography («она открыла…») can be noticed.
+      const textGender = p.data.mode === 'full' && p.data.current.gender === undefined && 'card' in result && result.card
+        ? impliedGender(p.data.idea ?? '') ?? genderOfCardText(result.card) : undefined;
+      return { ...result, needs: p.data.mode === 'full' ? (['age', 'gender'] as const).filter(k => p.data.current[k] === undefined) : [], ...(textGender ? { textGender } : {}) };
     } catch (e) {
       const err = e instanceof AiProviderError ? e : null;
       await db.aiUsage.update({ where: { id: attempt.id }, data: {
