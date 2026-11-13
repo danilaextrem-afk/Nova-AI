@@ -117,27 +117,30 @@ export const STARTER_CAST = [
 ] as const;
 
 export async function seedStarterCast(db: PrismaClient) {
-  const email = 'nova-studio-catalog@nova.invalid';
-  const system = await db.user.upsert({
-    where: { email },
-    create: {
-      email, passwordHash: 'SYSTEM_ACCOUNT_NO_LOGIN', status: 'BLOCKED',
-      profile: { create: { displayName: 'NOVA Studio' } },
-    },
-    update: { status: 'BLOCKED' },
+  await db.$transaction(async tx => {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('nova:starter-cast', 0))`;
+    const email = 'nova-studio-catalog@nova.invalid';
+    const system = await tx.user.upsert({
+      where: { email },
+      create: {
+        email, passwordHash: 'SYSTEM_ACCOUNT_NO_LOGIN', status: 'BLOCKED',
+        profile: { create: { displayName: 'NOVA Studio' } },
+      },
+      update: { status: 'BLOCKED' },
+    });
+    const characters = STARTER_CAST.map(({ id, gender, avatarStyle, tags, ...data }) => ({
+      id, ...data, gender: gender === 'woman' ? 'female' : 'male', tags: [...tags],
+      ownerId: system.id, isLibrary: true, isHidden: false,
+    }));
+    await tx.character.createMany({ data: characters, skipDuplicates: true });
+    for (const gender of ['female', 'male']) {
+      const ids = characters.filter(entry => entry.gender === gender).map(entry => entry.id);
+      await tx.character.updateMany({ where: { id: { in: ids }, OR: [{ gender: null }, { gender: { not: gender } }] }, data: { gender } });
+    }
+    const publishedAt = new Date();
+    await tx.publication.createMany({
+      data: characters.map(({ id }) => ({ characterId: id, status: 'PUBLISHED', publishedAt })),
+      skipDuplicates: true,
+    });
   });
-  for (const entry of STARTER_CAST) {
-    const { id, gender, avatarStyle, tags, ...data } = entry;
-    const canonicalGender = gender === 'woman' ? 'female' : 'male';
-    await db.character.upsert({
-      where: { id },
-      create: { id, ...data, gender: canonicalGender, tags: [...tags], ownerId: system.id, isLibrary: true, isHidden: false },
-      update: { gender: canonicalGender },
-    });
-    await db.publication.upsert({
-      where: { characterId: id },
-      create: { characterId: id, status: 'PUBLISHED', publishedAt: new Date() },
-      update: {},
-    });
-  }
 }

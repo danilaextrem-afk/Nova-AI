@@ -298,9 +298,10 @@ await registerArtRoutes(app,db);
 await registerDiscoverRoutes(app,db);
 await registerCreatorRoutes(app,db);
 
-for (const [sku, tokens] of Object.entries(PRODUCT_SEED)) {
-  await db.paymentProduct.upsert({ where: { sku }, create: { sku, tokens }, update: {} });
-}
+await db.paymentProduct.createMany({
+  data: Object.entries(PRODUCT_SEED).map(([sku, tokens]) => ({ sku, tokens })),
+  skipDuplicates: true,
+});
 
 await seedStarterCast(db);
 
