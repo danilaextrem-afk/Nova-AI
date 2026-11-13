@@ -137,7 +137,11 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
     const userId=req.user.sub as string;
     const chat=await db.chat.findFirst({where:{id:req.params.id,userId},include:{character:true}});
     if(!chat)return reply.code(404).send({error:'CHAT_NOT_FOUND'});
-    if(chat.character.mature&&chat.character.ownerId!==userId&&!await showsMature(db,userId))return reply.code(403).send({error:'MATURE_SECTION_DISABLED'});
+    const canViewMature = chat.character.ownerId !== userId || chat.participantIds.length > 0
+      ? await showsMature(db, userId) : false;
+    if (chat.character.mature && chat.character.ownerId !== userId && !canViewMature) {
+      return reply.code(403).send({error: 'MATURE_SECTION_DISABLED'});
+    }
     const {tier,requestId,regenerateMessageId}=body.data;
     // For regeneration the prompt is the user turn that preceded the latest assistant reply.
     let content=body.data.content??'';let target:{id:string,sequence:number}|null=null;let promptUser:{sequence:number}|null=null;
@@ -165,6 +169,11 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       const [assistantMessage,...extraMessages]=await withNames([first,...extra]);
       return {duplicate:true,userMessage,assistantMessage,extraMessages,tier:old.tier,tokensCharged:old.priceTokens};
     }
+    // Historical replies stay readable. New generation must respect current publication and block state.
+    const lead = chat.character.ownerId === userId ? chat.character : await db.character.findFirst({
+      where: {id: chat.characterId, ...visibleCharacter(userId, canViewMature)},
+    });
+    if (!lead) return reply.code(404).send({error: 'CHARACTER_NOT_FOUND'});
     // Legacy requests from previous releases must never be re-billed. No guessing the answer by timestamp.
     if(!old&&await db.message.findUnique({where:{requestId}}))return reply.code(409).send({error:'LEGACY_REQUEST_ALREADY_SAVED'});
     if(tier==='premium'&&!premiumReady())return reply.code(503).send({error:'PREMIUM_NOT_CONFIGURED'});
@@ -194,19 +203,19 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       const [history,memories,others,summary]=await Promise.all([
         db.message.findMany({where:{chatId:chat.id,...(promptUser?{sequence:{lt:promptUser.sequence}}:{})},orderBy:{sequence:'desc'},take:tier==='premium'?36:24}),
         db.memory.findMany({where:{chatId:chat.id,kind:{not:'SUMMARY'}},orderBy:[{pinned:'desc'},{updatedAt:'desc'}],take:100}),
-        db.character.findMany({where:{id:{in:chat.participantIds},...visibleCharacter(userId,await showsMature(db,userId))}}),
+        db.character.findMany({where:{id:{in:chat.participantIds},...visibleCharacter(userId,canViewMature)}}),
         db.memory.findFirst({where:{chatId:chat.id,kind:'SUMMARY'},orderBy:{updatedAt:'desc'}}),
       ]);
       others.sort((x,y)=>chat.participantIds.indexOf(x.id)-chat.participantIds.indexOf(y.id)); // Stable cast order.
-      const cast=[chat.character,...others];
+      const cast=[lead,...others];
       const isGroup=others.length>0;
       const names=new Map(cast.map(c=>[c.id,c.name]));
       // What each character remembers about this player across all of the player's stories (private to the player).
       const lasting=await db.characterMemory.findMany({where:{userId,characterId:{in:cast.map(c=>c.id)}},orderBy:[{pinned:'desc'},{updatedAt:'desc'}],take:60});
-      let speakers=[chat.character];
+      let speakers=[lead];
       if(isGroup&&target){
         const t=await db.message.findUnique({where:{id:target.id},select:{speakerId:true}});
-        speakers=[cast.find(c=>c.id===t?.speakerId)??chat.character];
+        speakers=[cast.find(c=>c.id===t?.speakerId)??lead];
       }else if(isGroup){
         const spoke=await db.message.findMany({where:{chatId:chat.id,role:'assistant'},orderBy:{sequence:'desc'},take:12,select:{speakerId:true}});
         // AI cost control: a turn is 2 replies on the free tier and 3 on Premium, however large the cast.
