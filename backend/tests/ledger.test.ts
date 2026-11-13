@@ -6,12 +6,12 @@ import { balance, credit, debit, refundSpend, InsufficientTokensError } from '..
 const db = new PrismaClient();
 const userIds: string[] = [];
 
-async function makeUser() {
+async function makeUser(createWallet = true) {
   const user = await db.user.create({
     data: {
       email: 'ledger-' + randomUUID() + '@example.test',
       passwordHash: 'test-only',
-      wallet: { create: {} },
+      ...(createWallet ? { wallet: { create: {} } } : {}),
     },
   });
   userIds.push(user.id);
@@ -28,6 +28,25 @@ afterAll(async () => {
 });
 
 describe('server-authoritative token ledger', () => {
+  it('applies distinct concurrent credits when the wallet does not exist yet', async () => {
+    const userId = await makeUser(false);
+    const results = await Promise.allSettled(Array.from({ length: 8 }, () => credit(db, {
+      userId, bucket: 'BONUS', amount: 10, source: 'test_credit', idempotencyKey: randomUUID(),
+    })));
+    expect(results.filter(result => result.status === 'rejected')).toEqual([]);
+    expect(await balance(db, userId)).toEqual({ purchased: 0, adReward: 0, bonus: 80, total: 80 });
+    expect(await db.walletTransaction.count({ where: { userId } })).toBe(8);
+  });
+
+  it('applies concurrent retries of the same credit only once', async () => {
+    const userId = await makeUser(false);
+    const grant = { userId, bucket: 'BONUS' as const, amount: 10, source: 'test_credit', idempotencyKey: randomUUID() };
+    const results = await Promise.all(Array.from({ length: 8 }, () => credit(db, grant)));
+    expect(results.filter(result => !result.duplicate)).toHaveLength(1);
+    expect(new Set(results.map(result => result.transaction.id)).size).toBe(1);
+    expect((await balance(db, userId)).total).toBe(10);
+  });
+
   it('credits once for the same idempotency key', async () => {
     const userId = await makeUser();
     const first = await credit(db, {

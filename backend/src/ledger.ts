@@ -21,7 +21,7 @@ const COLUMN: Record<TokenBucket, 'purchased' | 'adReward' | 'bonus'> = {
 type Tx = Prisma.TransactionClient;
 
 async function lockWallet(tx: Tx, userId: string) {
-  await tx.walletAccount.upsert({ where: { userId }, create: { userId }, update: {} });
+  await tx.walletAccount.createMany({ data: { userId }, skipDuplicates: true });
   const rows = await tx.$queryRaw<{ purchased: number; adReward: number; bonus: number }[]>`
     SELECT "purchased", "adReward", "bonus" FROM "WalletAccount" WHERE "userId" = ${userId} FOR UPDATE`;
   return rows[0];
@@ -34,9 +34,9 @@ export type CreditInput = {
 /** Idempotent credit inside a caller's transaction (e.g. both sides of a referral at once). */
 export async function creditInTransaction(tx: Tx, p: CreditInput) {
   if (!Number.isInteger(p.amount) || p.amount <= 0) throw new Error('INVALID_AMOUNT');
+  await lockWallet(tx, p.userId);
   const dup = await tx.walletTransaction.findUnique({ where: { idempotencyKey: p.idempotencyKey } });
   if (dup) return { transaction: dup, duplicate: true };
-  await lockWallet(tx, p.userId);
   const transaction = await tx.walletTransaction.create({
     data: {
       userId: p.userId, type: p.type ?? CREDIT_TYPE[p.bucket], bucket: p.bucket, source: p.source,
