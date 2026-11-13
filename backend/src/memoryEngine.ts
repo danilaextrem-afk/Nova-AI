@@ -16,12 +16,15 @@ export const EXTRACT_EVERY_MESSAGES = 12; // ≈ 6 turns; one small free-tier ca
 const AUTO_LIMIT = 40; // Automatic notes per chat; the oldest unpinned ones are dropped.
 const CHARACTER_MEMORY_LIMIT = 50;
 
-const extraction = z.object({
-  add: z.array(z.object({ kind: z.enum(['FACT', 'EVENT', 'RELATION']), content: z.string().trim().min(3).max(300) })).max(6).default([]),
-  replace: z.array(z.object({ n: z.number().int().min(1), content: z.string().trim().min(3).max(300) })).max(4).default([]),
-  character: z.array(z.string().trim().min(3).max(300)).max(2).default([]),
+const extraction = z.strictObject({
+  add: z.array(z.strictObject({ kind: z.enum(['FACT', 'EVENT', 'RELATION']), content: z.string().trim().min(3).max(300) })).max(6).optional(),
+  replace: z.array(z.strictObject({ n: z.number().int().min(1), content: z.string().trim().min(3).max(300) })).max(4).optional(),
+  character: z.array(z.string().trim().min(3).max(300)).max(2).optional(),
   summary: z.string().trim().min(1).max(1600).optional(),
-});
+}).refine(
+  value => value.add !== undefined || value.replace !== undefined || value.character !== undefined || value.summary !== undefined,
+  'Expected at least one memory extraction field',
+).transform(({ add = [], replace = [], character = [], summary }) => ({ add, replace, character, summary }));
 export type Extraction = z.infer<typeof extraction>;
 
 /**
