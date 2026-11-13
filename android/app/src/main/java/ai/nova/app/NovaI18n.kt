@@ -292,6 +292,8 @@ private val EN: Map<String, String> = mapOf(
     "Нет связи с сервером NOVA. Твой текст не изменён." to "Can't reach the NOVA server. Your text is unchanged.",
     "AI временно недоступен. Твой текст не изменён." to "AI is temporarily unavailable. Your text is unchanged.", "Опиши идею хотя бы парой слов" to "Describe the idea in at least a couple of words",
     "Карточка заполнена. Выбери возраст и пол — AI их не выбирает за тебя." to "Card filled. Choose age and gender — AI doesn't choose them for you.",
+    "Карточка заполнена. Текст написан о женщине. Выбери возраст и пол — AI их не выбирает за тебя." to "Card filled. The text is about a woman. Choose age and gender — AI doesn't choose them for you.",
+    "Карточка заполнена. Текст написан о мужчине. Выбери возраст и пол — AI их не выбирает за тебя." to "Card filled. The text is about a man. Choose age and gender — AI doesn't choose them for you.",
     "Карточка заполнена. Проверь и поправь любые поля." to "Card filled. Review and adjust any field.", "Фото персонажа загружено" to "Character photo uploaded",
     "Фото слишком большое. Выбери другое." to "The photo is too large. Choose another.", "Не удалось загрузить фото. Попробуй другое изображение." to "Couldn't upload the photo. Try another image.",
     "Сначала опиши внешность (или заполни карточку с AI) — по ней рисуется портрет." to "Describe the appearance first (or fill the card with AI) — the portrait is drawn from it.",

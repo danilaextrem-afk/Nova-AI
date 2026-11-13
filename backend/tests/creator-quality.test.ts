@@ -73,3 +73,13 @@ describe('gender cues', () => {
     expect(scenarioProblems('Ты зашёл в ночной магазин. Полки пахнут пылью и чаем. Хозяйка поднимает взгляд от книги.')).toContain('scenario_player_gender');
   });
 });
+
+describe('whom the card text is about', () => {
+  it('reads the gender of the generated text and stays silent on mixed or missing cues', async () => {
+    const { genderOfCardText } = await import('../src/creatorQuality.js');
+    expect(genderOfCardText({ biography: 'Она открыла магазин и долго жила одна.', backstory: 'Её отец был моряком.' })).toBe('female');
+    expect(genderOfCardText({ biography: 'Он двадцать лет водил суда, потом остался на острове.', personality: 'Его голос тих.' })).toBe('male');
+    expect(genderOfCardText({ biography: 'Реставратор старых карт из Луногорска.' })).toBeUndefined();
+    expect(genderOfCardText({ biography: 'Она пришла, он ушёл.' })).toBeUndefined();
+  });
+});
