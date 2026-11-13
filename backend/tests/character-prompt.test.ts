@@ -156,3 +156,24 @@ describe('greeting echo', () => {
     expect(shapeReply('Архив открыт, у нас есть час. **Ключ** у меня.', 'balanced', 'Архив открыт, у нас есть час.')).toBe('Ключ у меня.');
   });
 });
+
+describe('memory notes follow the conversation', () => {
+  const note = (content: string, extra = {}) => ({ content, kind: 'EVENT', pinned: false, source: 'auto', ...extra }) as any;
+  it('keeps an older event the last messages are about when the request has no keywords', async () => {
+    const { relevantNotes } = await import('../src/characterPrompt.js');
+    // Newest first, as the route loads them: four newer notes about other things, the key event fifth.
+    const notes = [note('Купили хлеб в лавке'), note('Погода испортилась к вечеру'), note('Кот спит на подоконнике'),
+      note('Сосед чинил забор'), note('Нашли старый ключ с гравировкой «Янтарный Берег» в синей вазе')];
+    const context = 'Покажи ещё раз ключ из вазы. Гравировка на ключе почти стёрлась.';
+    const picked = relevantNotes(notes, 'А дальше?', 4, context).map(n => n.content);
+    expect(picked[0]).toContain('Янтарный Берег');
+    // Without the recent context the same short request would drop it.
+    expect(relevantNotes(notes, 'А дальше?', 4).map(n => n.content)).not.toContain(notes[4].content);
+  });
+  it('still lets the request itself and pinned notes win', async () => {
+    const { relevantNotes } = await import('../src/characterPrompt.js');
+    const notes = [note('Ключ лежал в вазе'), note('Маяк погас в полночь'), note('Код сейфа Медный Парус', { pinned: true })];
+    const picked = relevantNotes(notes, 'Что случилось с маяком?', 2, 'ключ ваза ключ ваза').map(n => n.content);
+    expect(picked).toEqual(['Код сейфа Медный Парус', 'Маяк погас в полночь']);
+  });
+});
