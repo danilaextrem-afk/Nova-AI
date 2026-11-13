@@ -99,6 +99,26 @@ describe('PostgreSQL router and persisted chat invariants (HTTP fixtures, not li
   expect(branch.statusCode,branch.body).toBe(201);expect(branch.json().chat.id).not.toBe(chatId);
   const copied=await db.memory.findMany({where:{chatId:branch.json().chat.id}});expect(copied.map(x=>x.content)).toContain('Маяк на острове');
  });
+ it('deletes a copied group turn together without changing the source story', async () => {
+  const earlier = await db.message.create({data:{chatId,role:'user',content:'Предыдущая сцена'}});
+  const turn = randomUUID();
+  await db.message.create({data:{chatId,role:'user',content:'Кто нашёл карту?',requestId:turn}});
+  await db.message.create({data:{chatId,role:'assistant',content:'Я нашла карту.',speakerId:characterId,replyToRequestId:turn}});
+  const last = await db.message.create({data:{chatId,role:'assistant',content:'Я видел маяк.',turnRequestId:turn}});
+  await db.message.create({data:{chatId,role:'user',content:'Это уже новая сцена'}});
+  const branch = await app.inject({method:'POST',url:`/v1/chats/${chatId}/branch`,headers:auth(),payload:{messageId:last.id}});
+  expect(branch.statusCode, branch.body).toBe(201);
+  const branchId = branch.json().chat.id;
+  const copied = await db.message.findMany({where:{chatId:branchId},orderBy:{sequence:'asc'}});
+  expect(copied.map(message => message.content)).toEqual([
+   earlier.content,'Кто нашёл карту?','Я нашла карту.','Я видел маяк.',
+  ]);
+  const reply = await app.inject({method:'DELETE',url:`/v1/chats/${branchId}/messages/${copied[1].id}`,headers:auth()});
+  expect(reply.json()).toEqual({deleted:3});
+  expect(await db.message.count({where:{chatId:branchId}})).toBe(1);
+  expect(await db.message.count({where:{chatId}})).toBe(5);
+  expect(await db.chatRequest.count({where:{chatId:branchId}})).toBe(0);
+ });
  it('blocks provider quota oversubscription under concurrency',async()=>{
   // Pin the clock to the start of a minute: crossing a minute boundary mid-test legitimately resets the rpm window.
   vi.useFakeTimers({toFake:['Date'],now:Math.floor(Date.now()/60000)*60000+5000});

@@ -1,4 +1,4 @@
-import {beforeAll,afterAll,it,expect} from 'vitest';
+import {beforeAll,afterAll,it,expect,vi} from 'vitest';
 import {PrismaClient} from '@prisma/client';
 import {randomUUID} from 'node:crypto';
 import {buildApp} from '../src/server.js';
@@ -100,6 +100,48 @@ it('blocks social and new-chat access in both directions',async()=>{
  const catalog=await app.inject({url:'/v1/characters/catalog',headers:headers(reader)});expect(catalog.json().items.some((x:any)=>x.id===character)).toBe(false);
  await db.userBlock.deleteMany({where:{blockerId:reader}});
 });
+it.each(['blocked by the reader', 'blocked by the author', 'hidden', 'sent back to moderation'])(
+ 'preserves existing chat history but denies new AI generation when the character is %s', async (reason) => {
+  const created = await app.inject({method: 'POST', url: '/v1/chats', headers: headers(reader), payload: {characterId: character}});
+  expect(created.statusCode, created.body).toBe(201);
+  const chatId = created.json().chat.id;
+  const url = `/v1/chats/${chatId}/messages`;
+  await db.message.create({data: {chatId, role: 'user', content: 'Сохранённый вопрос'}});
+  const last = await db.message.create({data: {chatId, role: 'assistant', content: 'Сохранённый ответ'}});
+  const blockerId = reason === 'blocked by the reader' ? reader : owner;
+  const blockedId = blockerId === reader ? owner : reader;
+  const isBlock = reason.startsWith('blocked');
+  if (isBlock) await db.userBlock.create({data: {blockerId, blockedId}});
+  else if (reason === 'hidden') await db.character.update({where: {id: character}, data: {isHidden: true}});
+  else await db.publication.update({where: {id: publication}, data: {status: 'PENDING_REVIEW'}});
+  vi.stubEnv('GROQ_API_KEY', 'test-only-key');
+  const fetchMock = vi.fn(async () => new Response(JSON.stringify({choices: [{message: {content: 'Новая реплика'}}]})));
+  vi.stubGlobal('fetch', fetchMock);
+  try {
+   const history = await app.inject({url, headers: headers(reader)});
+   expect(history.statusCode).toBe(200);
+   expect(history.json().items.map((item: {content: string}) => item.content)).toEqual(['Сохранённый вопрос', 'Сохранённый ответ']);
+   const send = await app.inject({method: 'POST', url, headers: headers(reader),
+    payload: {requestId: randomUUID(), content: 'Продолжи'}});
+   expect(send.statusCode, send.body).toBe(404);
+   expect(send.json()).toEqual({error: 'CHARACTER_NOT_FOUND'});
+   const regenerate = await app.inject({method: 'POST', url: url + '/stream', headers: headers(reader),
+    payload: {requestId: randomUUID(), regenerateMessageId: last.id}});
+   expect(regenerate.body).toContain('event: error');
+   expect(regenerate.body).toContain('"error":"CHARACTER_NOT_FOUND"');
+   expect(regenerate.body).not.toContain('event: delta');
+   expect(fetchMock).not.toHaveBeenCalled();
+   expect(await db.chatRequest.count({where: {chatId}})).toBe(0);
+   expect(await db.message.count({where: {chatId}})).toBe(2);
+  } finally {
+   vi.unstubAllGlobals();
+   vi.unstubAllEnvs();
+   if (isBlock) await db.userBlock.delete({where: {blockerId_blockedId: {blockerId, blockedId}}});
+   else if (reason === 'hidden') await db.character.update({where: {id: character}, data: {isHidden: false}});
+   else await db.publication.update({where: {id: publication}, data: {status: 'PUBLISHED'}});
+   await db.chat.delete({where: {id: chatId}});
+  }
+ });
 it('counts concurrent duplicate likes once and updates popular discovery',async()=>{
  const results=await Promise.all(Array.from({length:8},()=>app.inject({method:'PUT',url:`/v1/publications/${publication}/like`,headers:headers(reader)})));
  expect(results.every(x=>x.statusCode===200)).toBe(true);expect((await db.publication.findUnique({where:{id:publication}}))!.likesCount).toBe(1);
