@@ -138,9 +138,11 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
     const chat=await db.chat.findFirst({where:{id:req.params.id,userId},include:{character:true}});
     if(!chat)return reply.code(404).send({error:'CHAT_NOT_FOUND'});
     if(chat.character.mature&&chat.character.ownerId!==userId&&!await showsMature(db,userId))return reply.code(403).send({error:'MATURE_SECTION_DISABLED'});
+    let canViewMature: boolean | undefined;
     const {tier,requestId,regenerateMessageId}=body.data;
     // For regeneration the prompt is the user turn that preceded the latest assistant reply.
     let content=body.data.content??'';let target:{id:string,sequence:number}|null=null;let promptUser:{sequence:number}|null=null;
+    let regenerationSpeaker = chat.character;
     if(regenerateMessageId){
       const last=await db.message.findFirst({where:{chatId:chat.id},orderBy:{sequence:'desc'}});
       const prior=await db.chatRequest.findUnique({where:{id:requestId}});
@@ -153,6 +155,17 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       if(!last||last.id!==regenerateMessageId||last.role!=='assistant')return reply.code(409).send({error:'REGENERATE_ONLY_LATEST_REPLY'});
       const user=await db.message.findFirst({where:{chatId:chat.id,role:'user',sequence:{lt:last.sequence}},orderBy:{sequence:'desc'}});
       if(!user)return reply.code(409).send({error:'REGENERATE_NO_USER_TURN'});
+      if (last.speakerId && last.speakerId !== chat.characterId) {
+        if (!chat.participantIds.includes(last.speakerId)) {
+          return reply.code(409).send({error: 'REGENERATE_SPEAKER_UNAVAILABLE'});
+        }
+        canViewMature = await showsMature(db, userId);
+        const speaker = await db.character.findFirst({
+          where: {id: last.speakerId, ...visibleCharacter(userId, canViewMature)},
+        });
+        if (!speaker) return reply.code(409).send({error: 'REGENERATE_SPEAKER_UNAVAILABLE'});
+        regenerationSpeaker = speaker;
+      }
       target={id:last.id,sequence:last.sequence};promptUser={sequence:user.sequence};content=user.content.slice(0,4000);
     }
     const fingerprint=createHash('sha256').update(JSON.stringify(regenerateMessageId?[chat.id,'regenerate',regenerateMessageId,tier]:[chat.id,content,tier])).digest('hex');
@@ -194,7 +207,7 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       const [history,memories,others,summary]=await Promise.all([
         db.message.findMany({where:{chatId:chat.id,...(promptUser?{sequence:{lt:promptUser.sequence}}:{})},orderBy:{sequence:'desc'},take:tier==='premium'?36:24}),
         db.memory.findMany({where:{chatId:chat.id,kind:{not:'SUMMARY'}},orderBy:[{pinned:'desc'},{updatedAt:'desc'}],take:100}),
-        db.character.findMany({where:{id:{in:chat.participantIds},...visibleCharacter(userId,await showsMature(db,userId))}}),
+        db.character.findMany({where:{id:{in:chat.participantIds},...visibleCharacter(userId,canViewMature ?? await showsMature(db,userId))}}),
         db.memory.findFirst({where:{chatId:chat.id,kind:'SUMMARY'},orderBy:{updatedAt:'desc'}}),
       ]);
       others.sort((x,y)=>chat.participantIds.indexOf(x.id)-chat.participantIds.indexOf(y.id)); // Stable cast order.
@@ -203,11 +216,8 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       const names=new Map(cast.map(c=>[c.id,c.name]));
       // What each character remembers about this player across all of the player's stories (private to the player).
       const lasting=await db.characterMemory.findMany({where:{userId,characterId:{in:cast.map(c=>c.id)}},orderBy:[{pinned:'desc'},{updatedAt:'desc'}],take:60});
-      let speakers=[chat.character];
-      if(isGroup&&target){
-        const t=await db.message.findUnique({where:{id:target.id},select:{speakerId:true}});
-        speakers=[cast.find(c=>c.id===t?.speakerId)??chat.character];
-      }else if(isGroup){
+      let speakers = [regenerationSpeaker];
+      if (isGroup && !target) {
         const spoke=await db.message.findMany({where:{chatId:chat.id,role:'assistant'},orderBy:{sequence:'desc'},take:12,select:{speakerId:true}});
         // AI cost control: a turn is 2 replies on the free tier and 3 on Premium, however large the cast.
         speakers=pickSpeakers(cast,content,spoke.map(m=>m.speakerId),tier==='premium'?3:2);

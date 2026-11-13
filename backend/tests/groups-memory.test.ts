@@ -72,6 +72,28 @@ describe('Group chat orchestration',()=>{
   // Deleting the player's message removes the whole turn it produced.
   const del=await app.inject({method:'DELETE',url:`/v1/chats/${chatId}/messages/${list[0].id}`,headers:auth(u)});expect(del.json().deleted).toBe(3);
  });
+ it.each([false, true])('refuses regeneration after the original speaker leaves (with other guest: %s)', async (keepGuest) => {
+  const uid = await user();
+  const [lead, departed, guest] = await Promise.all(['Аврора', 'Борис', 'Вера'].map(name => character(uid, name)));
+  const thread = await db.chat.create({data: {
+   userId: uid, characterId: lead.id, participantIds: keepGuest ? [guest.id] : [],
+  }});
+  await db.message.create({data: {chatId: thread.id, role: 'user', content: 'Борис, где карта?'}});
+  const original = await db.message.create({data: {
+   chatId: thread.id, role: 'assistant', speakerId: departed.id, content: 'Карта у маяка.',
+  }});
+  const calls = provider(() => 'Карта у меня.');
+  const requestId = randomUUID();
+  const response = await app.inject({method: 'POST', url: `/v1/chats/${thread.id}/messages`, headers: auth(uid),
+   payload: {requestId, regenerateMessageId: original.id}});
+  expect(response.statusCode, response.body).toBe(409);
+  expect(response.json()).toEqual({error: 'REGENERATE_SPEAKER_UNAVAILABLE'});
+  expect(calls).toHaveLength(0);
+  expect(await db.chatRequest.findUnique({where: {id: requestId}})).toBeNull();
+  expect(await db.message.findUnique({where: {id: original.id}})).toMatchObject({
+   speakerId: departed.id, content: 'Карта у маяка.', alternatives: [],
+  });
+ });
  it('keeps the first reply when a later speaker fails, and changes the cast only with visible characters',async()=>{
   const u=await user();const other=await user();const [a,b]=await Promise.all([character(u,'Аврора'),character(u,'Борис')]);
   const secret=await character(other,'Чужой');
