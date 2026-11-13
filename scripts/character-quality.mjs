@@ -116,14 +116,15 @@ try {
   check('No repeated replies', new Set(all).size === all.length);
   check('Reacts to mood', /грус|печал|сер|обним|понима|солнышк/i.test(replies[2]), replies[2].slice(0, 120));
   // The player's gender is never set here, so the characters must not guess it.
-  const guessed = all.find(t => /ты\s+(?:\p{L}+\s+)?(запутала|пришла|сказала|устала|была|сделала|запутал|пришёл|пришел|устал|сказал)(?!\p{L})/iu.test(t));
+  // Same rule as marksPlayerGender (backend/src/creatorQuality.ts), plus «не один/одна». Live 43377486716: «ты не один».
+  const guessed = all.find(t => /(?:^|[^\p{L}])ты\s+(?:не\s+)?(?:\p{L}+\s+)?(?:\p{L}{2,}(?:л|ла|лся|лась)|\p{L}*шел|\p{L}*шёл|\p{L}*шла|готов|готова|рад|рада|должен|должна|один|одна)(?!\p{L})/iu.test(t));
   check('Does not guess the player gender', !guessed, guessed?.slice(0, 120) ?? '');
   // The app renders **bold**, *actions* and turns list markers into bullets; headings and stray markup are the failure.
   const markup = all.find(t => /^\s*#|\*\*\s|\s\*\*(?!\S)/mu.test(t));
   check('No markdown headings or broken markup', !markup, markup?.slice(0, 120) ?? '');
   const lists = all.filter(t => /^\s*(\d+\.|[-•])\s/mu.test(t)).length;
   rows.push({ name: 'Replies with lists (shown as bullets)', result: 'INFO', detail: String(lists) });
-  check('Says goodbye naturally', /до завтр|пока|жду|приходи|удач/i.test(replies[4]), replies[4].slice(0, 100));
+  check('Says goodbye naturally', /до завтр|до встреч|пока|жду|приходи|удач|увидимся|спокойной ноч/i.test(replies[4]), replies[4].slice(0, 100));
 
   // 7. Liveliness (heuristic, real model). The greeting is already on screen, so repeating it is filler.
   const plain = t => t.toLocaleLowerCase('ru').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();

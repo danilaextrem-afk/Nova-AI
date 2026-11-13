@@ -129,6 +129,7 @@ describe('dialogue liveliness rules', () => {
       request: 'Ага.', tier: 'free', tokenBudget: 8000 });
     const system = messages.filter((m: any) => m.role === 'system').map((m: any) => m.content).join('\n');
     expect(system).toContain('Never repeat openingLine');
+    expect(system).toContain('such as a pet name or a catchphrase, are not repetition');
     expect(system).toContain('First react to what the player just said');
     expect(system).toContain('take the initiative');
     expect(system).toContain('fresh wording, keeping every recurring word or opening that speechStyle asks for');

@@ -19,7 +19,8 @@ const rules = [
   // Live check 43375019889: the anti-repetition rules pushed Глеб off his required «Ну.» opening.
   'Do not open the way any entry of recentOpenings opens, and do not repeat their phrasing or gestures, except the recurring words or opening that speechStyle itself asks for.',
   // Live run 43335046417: three replies in a row began by repeating the greeting «Архив открыт, у нас есть час.».
-  'Never repeat openingLine, the scenario text or your own earlier lines; the player has already read them.',
+  // Live check 43377486716: Марина dropped her required «солнышко» right after a greeting that began with it.
+  'Never repeat openingLine, the scenario text or your own earlier lines; the player has already read them. Words that speechStyle asks you to repeat, such as a pet name or a catchphrase, are not repetition.',
   'First react to what the player just said or did, with a feeling that fits personality, then answer or act.',
   'If the player only agrees, hesitates or says little, take the initiative: add a new detail, an action or a decision of your own that moves the scene, and end with a hook the player can answer.',
   // Live check 2026-11-12: a character said «ты меня запутала» to a player of unknown gender.
