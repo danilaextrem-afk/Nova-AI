@@ -42,7 +42,11 @@ import androidx.compose.ui.text.style.TextOverflow
  var heardId by remember(chat.id){mutableStateOf(model.chatMessages.lastOrNull()?.id)}
  LaunchedEffect(model.chatMessages.lastOrNull()?.id){
   val last=model.chatMessages.lastOrNull()?:return@LaunchedEffect
-  if(last.id!=heardId){val prev=heardId;heardId=last.id;if(prev!=null&&!call&&voice.autoRead&&last.role!="user")voice.speak(last.id,last.content,last.speakerId ?: chat.characterId,NovaLang.code,hint=model.voiceHintOf(last.speakerId ?: chat.characterId))}
+  if(last.id!=heardId){val prev=heardId;heardId=last.id
+   // Group turns arrive together: read every new reply in order, each in its own character's voice.
+   if(prev!=null&&!call&&voice.autoRead){val all=model.chatMessages;val from=all.indexOfFirst{it.id==prev}
+    val fresh=(if(from<0)listOf(last) else all.drop(from+1)).filter{it.role!="user"}
+    if(fresh.isNotEmpty())voice.speakLines(fresh.last().id,fresh.map{NovaVoice.Line(it.content,it.speakerId ?: chat.characterId,hint=model.voiceHintOf(it.speakerId ?: chat.characterId))},NovaLang.code)}}
  }
  DisposableEffect(chat.id){onDispose{voice.stop()}}
  LaunchedEffect(chat.id, model.chatMessages.lastOrNull()?.id, model.streamingText?.length, followLatest) {
