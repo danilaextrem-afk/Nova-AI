@@ -55,7 +55,7 @@ export async function registerSocialRoutes(app:FastifyInstance,db:PrismaClient){
  app.delete('/v1/comments/:id',auth,async(req:any)=>{await db.socialComment.deleteMany({where:{id:req.params.id,userId:req.user.sub}});return {deleted:true}});
  app.put('/v1/creators/:id/follow',auth,async(req:any,reply)=>{
   if(req.params.id===req.user.sub||!await db.user.findFirst({where:{id:req.params.id,status:'ACTIVE',blocksGot:{none:{blockerId:req.user.sub}},blocksMade:{none:{blockedId:req.user.sub}}}}))return reply.code(400).send({error:'INVALID_CREATOR'});
-  await db.creatorFollow.upsert({where:{followerId_creatorId:{followerId:req.user.sub,creatorId:req.params.id}},create:{followerId:req.user.sub,creatorId:req.params.id},update:{}});return {following:true};
+  await db.creatorFollow.createMany({data:{followerId:req.user.sub,creatorId:req.params.id},skipDuplicates:true});return {following:true};
  });
  app.delete('/v1/creators/:id/follow',auth,async(req:any)=>{await db.creatorFollow.deleteMany({where:{followerId:req.user.sub,creatorId:req.params.id}});return {following:false}});
  app.get('/v1/community/following', auth, async (req: any) => {
