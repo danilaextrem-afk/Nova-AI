@@ -42,7 +42,7 @@ import androidx.compose.ui.text.style.TextOverflow
  var heardId by remember(chat.id){mutableStateOf(model.chatMessages.lastOrNull()?.id)}
  LaunchedEffect(model.chatMessages.lastOrNull()?.id){
   val last=model.chatMessages.lastOrNull()?:return@LaunchedEffect
-  if(last.id!=heardId){val prev=heardId;heardId=last.id;if(prev!=null&&!call&&voice.autoRead&&last.role!="user")voice.speak(last.id,last.content,last.speakerId ?: chat.characterId,NovaLang.code,model.genderOf(last.speakerId ?: chat.characterId))}
+  if(last.id!=heardId){val prev=heardId;heardId=last.id;if(prev!=null&&!call&&voice.autoRead&&last.role!="user")voice.speak(last.id,last.content,last.speakerId ?: chat.characterId,NovaLang.code,hint=model.voiceHintOf(last.speakerId ?: chat.characterId))}
  }
  DisposableEffect(chat.id){onDispose{voice.stop()}}
  LaunchedEffect(chat.id, model.chatMessages.lastOrNull()?.id, model.streamingText?.length, followLatest) {
@@ -107,7 +107,7 @@ import androidx.compose.ui.text.style.TextOverflow
     }
     FlowRow(verticalArrangement=Arrangement.Center){
      if(mine)TextButton(onClick={model.startEditMessage(message)},enabled=!model.loading){Text("Изменить",fontSize=11.sp)}
-     if(!mine)TextButton(onClick={if(voice.speakingId==message.id)voice.stop() else voice.speak(message.id,message.content,message.speakerId ?: chat.characterId,NovaLang.code,model.genderOf(message.speakerId ?: chat.characterId))},enabled=voice.ready){
+     if(!mine)TextButton(onClick={if(voice.speakingId==message.id)voice.stop() else voice.speak(message.id,message.content,message.speakerId ?: chat.characterId,NovaLang.code,hint=model.voiceHintOf(message.speakerId ?: chat.characterId))},enabled=voice.ready){
       Text(if(voice.speakingId==message.id)"■ Стоп" else "▶ Слушать",fontSize=11.sp)}
      if(!mine&&model.chatMessages.lastOrNull()?.id==message.id)TextButton(onClick={model.regenerate(message)},enabled=!model.loading){Text(if(model.premiumChatSelected)"Другой ответ · ${model.aiStatus?.premiumPriceTokens?:5} ◈" else "Другой ответ",fontSize=11.sp)}
      Box{
@@ -157,7 +157,7 @@ import androidx.compose.ui.text.style.TextOverflow
  if(settings)AlertDialog(onDismissRequest={settings=false},title={Text("Твоя история")},text={Column(Modifier.verticalScroll(rememberScrollState())){
   NovaEyebrow("РЕЖИМ ОБЩЕНИЯ")
   Text(if(model.premiumChatSelected) "Premium: более мощная модель, длинные ответы и увеличенный контекст. ${model.aiStatus?.premiumPriceTokens?:5} токенов только за успешный ответ. Баланс: ${model.aiStatus?.tokenBalance?:0} ◈." else "Обычный чат: без дневного лимита NOVA и без списания токенов. Возможны технические задержки провайдера.",style=MaterialTheme.typography.bodyMedium)
-  VoiceSettings(voice,chat.characterId,model.chatMessages.lastOrNull{it.role!="user"}?.content?:"Привет! Так звучит мой голос.",model.genderOf(chat.characterId))
+  VoiceSettings(voice,chat.characterId,model.chatMessages.lastOrNull{it.role!="user"}?.content?:"Привет! Так звучит мой голос.",hint=model.voiceHintOf(chat.characterId))
   StoryControls(model)
   OutlinedTextField(value=model.inChatQuery,onValueChange={model.inChatQuery=it},label={Text("Поиск в этой переписке")})
   TextButton(onClick={model.searchInChat()},enabled=!model.loading){Text("Найти")}

@@ -46,27 +46,24 @@ class NovaVoice(context: Context) {
     }
 
     data class Profile(val pitch: Float, val rate: Float)
-    fun profile(characterId: String, gender: String? = null): Profile {
+    /** What the app knows about a character that shapes its default voice. */
+    data class VoiceHint(val gender: String? = null, val speechStyle: String? = null, val age: Int? = null)
+    /** Saved per-character profile wins; otherwise a default that fits the character (gender, speech style, age). */
+    fun profile(characterId: String, gender: String? = null, hint: VoiceHint? = null): Profile {
         val saved = prefs.getString("p:$characterId", null)?.split('|')?.mapNotNull { it.toFloatOrNull() }
         if (saved != null && saved.size == 2) return Profile(saved[0], saved[1])
-        val h = abs(characterId.hashCode() % 1000) / 1000f
-        val pitch = when (genderKind(gender)) {
-            1 -> 1.05f + h * 0.25f // female: 1.05 … 1.30
-            2 -> 0.75f + h * 0.20f // male: 0.75 … 0.95
-            else -> 0.85f + h * 0.35f // unknown: 0.85 … 1.20
-        }
-        return Profile(pitch, 1.0f)
+        return defaultProfile(characterId, gender ?: hint?.gender, hint?.speechStyle, hint?.age)
     }
     fun saveProfile(characterId: String, p: Profile) { prefs.edit().putString("p:$characterId", "${p.pitch}|${p.rate}").apply() }
     fun updateAutoRead(on: Boolean) { autoRead = on; prefs.edit().putBoolean("autoRead", on).apply() }
 
     private fun fail(message: String) { speakingId = null; lastUtteranceId = null; problem = message }
 
-    fun speak(id: String, text: String, characterId: String, language: String = "ru", gender: String? = null) {
+    fun speak(id: String, text: String, characterId: String, language: String = "ru", gender: String? = null, hint: VoiceHint? = null) {
         if (!ready) { fail("Голосовой движок телефона ещё не готов"); return }
         val parts = chunks(clean(text), maxChunk())
         if (parts.isEmpty()) return
-        val p = profile(characterId, gender)
+        val p = profile(characterId, gender, hint)
         val lang = tts.setLanguage(Locale.forLanguageTag(if (language == "en") "en-US" else "ru-RU"))
         if (lang == TextToSpeech.LANG_MISSING_DATA || lang == TextToSpeech.LANG_NOT_SUPPORTED) {
             fail(if (language == "en") "В телефоне не установлен английский голос. Установи его в настройках синтеза речи."
@@ -100,6 +97,35 @@ class NovaVoice(context: Context) {
             .replace(Regex("[*_~`#>|\\[\\]]"), " ")
             .replace(Regex("[\\p{So}\\p{Cn}\\x{1F000}-\\x{1FFFF}]"), " ")
             .replace(Regex("\\s+"), " ").trim()
+
+        private val FAST_CUES = listOf("быстр", "тарато", "энергич", "эмоционал", "восклиц", "взахлёб", "взахлеб", "бойк")
+        private val SLOW_CUES = listOf("медлен", "неторопл", "спокойн", "сдержан", "тих", "коротк", "немногослов", "лаконич", "растягива")
+
+        /**
+         * Pure default voice: pitch from gender + stable id hash, rate from speech-style cues, small age shifts.
+         * Both values are clamped to the slider range 0.6..1.6.
+         */
+        fun defaultProfile(characterId: String, gender: String?, speechStyle: String?, age: Int?): Profile {
+            val h = abs(characterId.hashCode() % 1000) / 1000f
+            var pitch = when (genderKind(gender)) {
+                1 -> 1.05f + h * 0.25f // female: 1.05 … 1.30
+                2 -> 0.75f + h * 0.20f // male: 0.75 … 0.95
+                else -> 0.85f + h * 0.35f // unknown: 0.85 … 1.20
+            }
+            val style = speechStyle?.lowercase(Locale.ROOT).orEmpty()
+            val fast = FAST_CUES.any { style.contains(it) }
+            val slow = SLOW_CUES.any { style.contains(it) }
+            var rate = when {
+                fast && !slow -> 1.10f + h * 0.05f // 1.10 … 1.15
+                slow && !fast -> 0.88f + h * 0.05f // 0.88 … 0.93
+                else -> 1.0f
+            }
+            if (age != null) {
+                if (age >= 60) { pitch -= 0.05f; rate -= 0.05f }
+                else if (age < 25) pitch += 0.03f
+            }
+            return Profile(pitch.coerceIn(0.6f, 1.6f), rate.coerceIn(0.6f, 1.6f))
+        }
 
         /** 1 = female, 2 = male, 0 = unknown. Gender comes from the API as free text. */
         internal fun genderKind(gender: String?): Int {
@@ -144,6 +170,13 @@ fun NovaViewModel.genderOf(characterId: String?): String? =
     if (characterId == null) null
     else (catalog + owned + favorites + recommended).firstOrNull { it.id == characterId }?.gender
 
+/** Gender, speech style and age of a character known to the app; null when the character is not loaded. */
+fun NovaViewModel.voiceHintOf(characterId: String?): NovaVoice.VoiceHint? {
+    if (characterId == null) return null
+    val c = (catalog + owned + favorites + recommended).firstOrNull { it.id == characterId } ?: return null
+    return NovaVoice.VoiceHint(c.gender, c.speechStyle, c.age)
+}
+
 /** Small error line with a button that opens the system voice-data installer. */
 @Composable
 fun VoiceProblem(voice: NovaVoice) {
@@ -165,8 +198,8 @@ fun rememberNovaVoice(): NovaVoice {
 
 /** Voice section of the chat settings: auto-read, pitch and speed for this character. */
 @Composable
-fun VoiceSettings(voice: NovaVoice, characterId: String, sample: String, gender: String? = null) {
-    var p by remember(characterId) { mutableStateOf(voice.profile(characterId, gender)) }
+fun VoiceSettings(voice: NovaVoice, characterId: String, sample: String, gender: String? = null, hint: NovaVoice.VoiceHint? = null) {
+    var p by remember(characterId) { mutableStateOf(voice.profile(characterId, gender, hint)) }
     NovaEyebrow("ГОЛОС ПЕРСОНАЖА")
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Читать ответы вслух", Modifier.weight(1f))
@@ -178,7 +211,7 @@ fun VoiceSettings(voice: NovaVoice, characterId: String, sample: String, gender:
     Text("Скорость: " + String.format(Locale.US, "%.1f×", p.rate), style = MaterialTheme.typography.bodySmall)
     Slider(value = p.rate, onValueChange = { p = p.copy(rate = it) }, valueRange = 0.6f..1.6f,
         onValueChangeFinished = { voice.saveProfile(characterId, p) })
-    TextButton(onClick = { voice.saveProfile(characterId, p); voice.speak("sample", tr(sample), characterId, NovaLang.code, gender) }, enabled = voice.ready) { Text("Прослушать голос") }
+    TextButton(onClick = { voice.saveProfile(characterId, p); voice.speak("sample", tr(sample), characterId, NovaLang.code, gender, hint) }, enabled = voice.ready) { Text("Прослушать голос") }
     if (!voice.ready) Text("Голосовой движок телефона ещё загружается или не установлен (Настройки → Синтез речи).", style = MaterialTheme.typography.labelSmall, color = NovaDesign.Muted)
     VoiceProblem(voice)
     Spacer(Modifier.height(8.dp))
