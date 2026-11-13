@@ -24,10 +24,38 @@ const extraction = z.object({
 });
 export type Extraction = z.infer<typeof extraction>;
 
+/**
+ * Locate a complete JSON object in a provider reply. A greedy first-{ to last-}
+ * match fails when the model adds a preface, fenced JSON, or a trailing note
+ * containing braces. Braces inside JSON strings must not affect framing.
+ */
 export function parseExtraction(text: string): Extraction | null {
-  const json = text.match(/\{[\s\S]*\}/)?.[0];
-  if (!json) return null;
-  try { const p = extraction.safeParse(JSON.parse(json)); return p.success ? p.data : null; } catch { return null; }
+  if (text.length > 20000) return null;
+  let start = -1;
+  let depth = 0;
+  let quoted = false;
+  let escaped = false;
+  for (let i = 0; i < text.length; i++) {
+    const char = text[i];
+    if (start < 0) {
+      if (char === '{') { start = i; depth = 1; quoted = false; escaped = false; }
+      continue;
+    }
+    if (quoted) {
+      if (escaped) escaped = false;
+      else if (char === '\\') escaped = true;
+      else if (char === '"') quoted = false;
+    } else if (char === '"') quoted = true;
+    else if (char === '{') depth++;
+    else if (char === '}' && --depth === 0) {
+      try {
+        const parsed = extraction.safeParse(JSON.parse(text.slice(start, i + 1)));
+        if (parsed.success) return parsed.data;
+      } catch { /* Try the next complete object. */ }
+      start = -1;
+    }
+  }
+  return null;
 }
 
 // Single flight per conversation on this worker. PostgreSQL commits the cursor with the notes.
