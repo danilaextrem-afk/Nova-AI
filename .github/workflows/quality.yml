@@ -11,7 +11,7 @@ on:
         required: false
         default: ''
       mode:
-        description: 'quick (identity, memory after 20 messages, group), full (also 100 messages) or characters (personalities, settings, grammar)'
+        description: 'quick (identity, memory after 20 messages, group), full (also 100 messages), characters (personalities, settings, grammar) or creator (generated cards)'
         required: false
         default: 'full'
 
@@ -39,6 +39,11 @@ jobs:
           ARGS=()
           [ -n "$EXPECT" ] && ARGS+=("--expect=$EXPECT")
           [ "$MODE" = "full" ] && ARGS+=("--full")
+          if [ "$MODE" = "creator" ]; then
+            status=0; node scripts/creator-quality.mjs "$URL" "${ARGS[@]}" > quality.json || status=$?
+            node -e 'const r=require("./quality.json");console.log("Commit: "+r.commit);for(const x of r.rows)console.log(x.result.padEnd(8)+x.name+(x.detail?" — "+x.detail:""));for(const c of r.cards)console.log("CARD "+c.name+" || GREETING: "+String(c.greeting).replace(/\s+/g," ")+" || SCENARIO: "+String(c.scenario).replace(/\s+/g," ").slice(0,260)+" || SPEECH: "+String(c.speechStyle).replace(/\s+/g," ").slice(0,200)+" || PERSONALITY: "+String(c.personality).replace(/\s+/g," ").slice(0,200))'
+            exit $status
+          fi
           if [ "$MODE" = "characters" ]; then
             status=0; node scripts/character-quality.mjs "$URL" "${ARGS[@]}" > quality.json || status=$?
             node -e 'const r=require("./quality.json");console.log("Commit: "+r.commit+"  client retries: "+r.clientRetries);for(const x of r.rows)console.log(x.result.padEnd(8)+x.name+(x.detail?" — "+x.detail:""));for(const x of r.samples)console.log("SAMPLE ["+x.label+" · "+x.model+"] Q: "+x.user+" || A: "+x.reply.replace(/\s+/g," "))'
