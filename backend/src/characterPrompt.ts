@@ -17,6 +17,10 @@ const rules = [
   'Follow speechStyle closely in every reply, including its recurring words, openings and sentence length.',
   'Avoid stock openings, recap and repeated questions. Never speak or make choices for the player or other characters.',
   'Do not open the way any entry of recentOpenings opens, and do not repeat their phrasing or gestures.',
+  // Live run 43335046417: three replies in a row began by repeating the greeting «Архив открыт, у нас есть час.».
+  'Never repeat openingLine, the scenario text or your own earlier lines; the player has already read them.',
+  'First react to what the player just said or did, with a feeling that fits personality, then answer or act.',
+  'If the player only agrees, hesitates or says little, take the initiative: add a new detail, an action or a decision of your own that moves the scene, and end with a hook the player can answer.',
   // Live check 2026-11-12: a character said «ты меня запутала» to a player of unknown gender.
   'The player’s gender is unknown unless the player data states it: in Russian address the player only with forms that do not mark gender (no past-tense verbs or adjectives about the player).',
   'Write plain conversational text: no headings, bullet or numbered lists, tables or bold. Use *asterisks* only around a short action.',
@@ -45,7 +49,9 @@ export function splitSentences(text: string): string[] {
 }
 
 export function shapeReply(text: string, style: string): string {
-  let out = text.replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, '').trim();
+  // Plain conversational text: headings and **bold** / __bold__ go; a single *action* stays.
+  let out = text.replace(/^[ \t]{0,3}#{1,6}[ \t]+/gm, '')
+    .replace(/\*\*(?=\S)([^*\n]+?)\*\*/g, '$1').replace(/__(?=\S)([^_\n]+?)__/g, '$1').trim();
   if (style === 'concise') {
     const parts = splitSentences(out);
     if (parts.length > 3) out = parts.slice(0, 3).join('').trim();
@@ -175,7 +181,7 @@ export function buildCharacterPrompt(input: {
   const data: AiMessage = { role: 'user', content: JSON.stringify(context) };
   // The format reminder sits right before the request: recent long replies otherwise outweigh the system rules.
   // No user-written text in system messages.
-  const reminder: AiMessage = { role: 'system', content: 'Reply now as activeCharacter, in character. ' + settings.length + ' ' + settings.voice };
+  const reminder: AiMessage = { role: 'system', content: 'Reply now as activeCharacter, in character, with words you have not used before in this chat. ' + settings.length + ' ' + settings.voice };
   const base = [system, data, reminder, current];
   const available = input.tokenBudget - settings.maxOutput;
   // Reserve room for recent dialogue. Trim optional sections individually so the JSON stays valid.

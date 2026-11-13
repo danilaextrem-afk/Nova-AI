@@ -124,6 +124,20 @@ try {
   const lists = all.filter(t => /^\s*(\d+\.|[-•])\s/mu.test(t)).length;
   rows.push({ name: 'Replies with lists (shown as bullets)', result: 'INFO', detail: String(lists) });
   check('Says goodbye naturally', /до завтр|пока|жду|приходи|удач/i.test(replies[4]), replies[4].slice(0, 100));
+
+  // 7. Liveliness (heuristic, real model). The greeting is already on screen, so repeating it is filler.
+  const plain = t => t.toLocaleLowerCase('ru').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+  const echo = all.find(t => [marina.greeting, gleb.greeting].some(g => plain(t).includes(plain(g))));
+  check('Does not repeat its greeting', !echo, echo?.slice(0, 120) ?? '');
+  check('No **bold** or __bold__ in saved replies', !all.some(t => /\*\*\S|__\S/u.test(t)), all.find(t => /\*\*\S|__\S/u.test(t))?.slice(0, 100) ?? '');
+  // A player who says almost nothing: the character should move the scene (a question, an action or a new detail).
+  const chatM2 = need(await call('POST', '/v1/chats', { characterId: ids[0] }), 'Chat').chat.id;
+  await say(chatM2, 'Привет.', 'Марина · пассивный игрок');
+  const passive = [await say(chatM2, 'Ага.', 'Марина · «Ага.»'), await say(chatM2, 'Ну...', 'Марина · «Ну...»')];
+  const moves = t => t.length >= 40 && (/[?]/.test(t) || /\*[^*]+\*/.test(t));
+  check('Takes the initiative when the player says little', passive.every(moves), passive.map(t => t.slice(0, 80)).join(' | '));
+  check('Passive turns get different openings', plain(passive[0]).split(' ').slice(0, 3).join(' ') !== plain(passive[1]).split(' ').slice(0, 3).join(' '),
+    passive.map(t => plain(t).split(' ').slice(0, 3).join(' ')).join(' / '));
 } catch (e) {
   check('Run completion', false, e.message);
 } finally {
