@@ -112,3 +112,26 @@ describe('anti-repetition context', () => {
       '*улыбается* Ну. Давай посмотрим на карту', '*улыбается* Ну. Ключ у меня.', 'Старый ответ без автора.']);
   });
 });
+
+describe('dialogue liveliness rules', () => {
+  it('turns **bold** into plain text but keeps *actions*', () => {
+    expect(shapeReply('Код сейфа: **Медный Парус**. *кивает* __Тише__.', 'detailed')).toBe('Код сейфа: Медный Парус. *кивает* Тише.');
+    expect(shapeReply('2 ** 3 = 8', 'detailed')).toBe('2 ** 3 = 8');
+  });
+
+  it('tells the model not to repeat its greeting, to react first and to take the initiative', async () => {
+    const { buildCharacterPrompt } = await import('../src/characterPrompt.js');
+    const sheet = { id: 'vera', name: 'Вера', age: 28, gender: 'female', mature: false, traits: [], appearance: '', biography: 'Реставратор.',
+      personality: 'Тёплая.', interests: '', backstory: '', speechStyle: 'Коротко.', scenario: 'Архив.', greeting: 'Архив открыт, у нас есть час.', language: 'ru' };
+    const { messages } = buildCharacterPrompt({ speaker: sheet as any, cast: [sheet as any],
+      chat: { persona: '', scenario: '', responseStyle: 'balanced', tone: 'auto' } as any, notes: [], characterNotes: [],
+      historyNewestFirst: [{ role: 'assistant', content: 'Архив открыт, у нас есть час.', speakerId: null }] as any,
+      request: 'Ага.', tier: 'free', tokenBudget: 8000 });
+    const system = messages.filter((m: any) => m.role === 'system').map((m: any) => m.content).join('\n');
+    expect(system).toContain('Never repeat openingLine');
+    expect(system).toContain('First react to what the player just said');
+    expect(system).toContain('take the initiative');
+    expect(system).toContain('words you have not used before');
+    expect(system).not.toContain('Архив открыт');
+  });
+});
