@@ -113,6 +113,9 @@ const CARD_QUALITY = [
   '- greeting: ' + 'an in-scene first line addressed to the player, with a small *action* in asterisks; under 220 characters; NEVER starts with the character name or "Привет, я ..." / "Меня зовут ..."; never asks "чем могу помочь"; ends with a question or a remark the player can answer.',
   '- scenario: 2-4 sentences in second person or neutral: where we are, what is happening right now, and the player\'s role or hook in it. No meta text such as "Scenario:".',
   '- Never sound like an AI assistant.',
+  // Live creator check 43370606700: «строгая шеф-повар» became Алексей, a hostess «Алина» said «Рад видеть», two of four cards were Алексей.
+  '- Keep the gender the idea implies (feminine words such as хозяйка, строгая, шеф-повар она, певица mean a woman) and use the matching Russian grammatical gender everywhere, including the greeting (рада/рад, пришла/пришёл).',
+  '- Pick a natural but less common name that fits the character; avoid the most frequent ones such as Алексей, Анна, Иван, Мария, Дмитрий, Елена.',
 ];
 const FIELD_QUALITY: Partial<Record<CardField, string>> = {
   greeting: 'Greeting rules: an in-scene first line addressed to the player with a small *action* in asterisks, under 220 characters; never start with the character name or "Привет, я ..." / "Меня зовут ..."; never ask "чем могу помочь"; end with a question or remark the player can answer.',
