@@ -222,17 +222,20 @@ export async function registerCharacterRoutes(app: FastifyInstance, db: PrismaCl
   app.post('/v1/characters/:id/publish', protectedRoute, async (req: any, reply) => {
     const params = uuidParam.safeParse(req.params);
     if (!params.success) return reply.code(400).send({ error: 'INVALID_ID' });
-    const owned = await db.character.findFirst({
-      where: { id: params.data.id, ownerId: req.user.sub, isLibrary: false },
-      select: { id: true, isHidden: true },
+    const submitted = await db.$transaction(async tx => {
+      const changed = await tx.character.updateMany({
+        where: { id: params.data.id, ownerId: req.user.sub, isLibrary: false },
+        data: { isHidden: false },
+      });
+      if (!changed.count) return false;
+      await tx.publication.upsert({
+        where: { characterId: params.data.id },
+        create: { characterId: params.data.id, status: 'PENDING_REVIEW' },
+        update: { status: 'PENDING_REVIEW', publishedAt: null },
+      });
+      return true;
     });
-    if (!owned) return reply.code(404).send({ error: 'NOT_FOUND' });
-    await db.character.update({where:{id:owned.id},data:{isHidden:false}});
-    await db.publication.upsert({
-      where: { characterId: owned.id },
-      create: { characterId: owned.id, status: 'PENDING_REVIEW' },
-      update: { status: 'PENDING_REVIEW', publishedAt: null },
-    });
+    if (!submitted) return reply.code(404).send({ error: 'NOT_FOUND' });
     return { publicationStatus: 'PENDING_REVIEW' };
   });
 
@@ -261,10 +264,9 @@ export async function registerCharacterRoutes(app: FastifyInstance, db: PrismaCl
       where: { id: params.data.id, ...visibleTo(req.user.sub, await showsMature(db, req.user.sub)) }, select: { id: true },
     });
     if (!character) return reply.code(404).send({ error: 'NOT_FOUND' });
-    await db.favorite.upsert({
-      where: { userId_characterId: { userId: req.user.sub, characterId: character.id } },
-      create: { userId: req.user.sub, characterId: character.id },
-      update: {},
+    await db.favorite.createMany({
+      data: { userId: req.user.sub, characterId: character.id },
+      skipDuplicates: true,
     });
     return { favorite: true };
   });
