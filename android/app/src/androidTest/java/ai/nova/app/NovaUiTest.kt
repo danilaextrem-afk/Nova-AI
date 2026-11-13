@@ -494,11 +494,13 @@ class NovaUiTest {
    androidx.test.espresso.intent.Intents.intending(picker).respondWith(
     android.app.Instrumentation.ActivityResult(android.app.Activity.RESULT_OK, android.content.Intent().setData(uri)))
    clickWhenEnabled("Из галереи")
-   androidx.test.espresso.intent.Intents.intended(picker)
    waitFor("crop result") {
     compose.onAllNodesWithText("Масштаб").fetchSemanticsNodes().isNotEmpty() ||
      compose.onAllNodesWithText("Не удалось открыть изображение.", substring = true).fetchSemanticsNodes().isNotEmpty()
    }
+   // The crop dialog can hold focus now. Verify the recorded intent without waiting for the activity root.
+   assertEquals("The editor must open the system Photo Picker once", 1,
+    androidx.test.espresso.intent.Intents.getIntents().count { picker.matches(it) })
    compose.onNodeWithText("Масштаб").assertExists()
    // The consent checkbox sits right under the photo, visible without scrolling the dialog.
    waitFor("consent visible"){runCatching{compose.onNode(isToggleable() and hasAnyAncestor(isDialog())).assertIsDisplayed()}.isSuccess}
