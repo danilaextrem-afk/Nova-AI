@@ -1,15 +1,109 @@
 import {beforeAll,afterAll,it,expect} from 'vitest';
 import {PrismaClient} from '@prisma/client';
 import {randomUUID} from 'node:crypto';
+import {setTimeout as delay} from 'node:timers/promises';
 import {buildApp,clientIpHeaderName} from '../src/server.js';
-const db=new PrismaClient();let app:Awaited<ReturnType<typeof buildApp>>;let userId:string;let tokens:any;
-beforeAll(async()=>{app=await buildApp(db);await app.ready();
+let beforeSessionCreate: (() => Promise<void>) | undefined;
+const db=new PrismaClient();
+const appDb = db.$extends({query:{session:{async create({args,query}) {
+ await beforeSessionCreate?.();
+ return query(args);
+}}}});
+let app:Awaited<ReturnType<typeof buildApp>>;let userId:string;let tokens:any;
+beforeAll(async()=>{app=await buildApp(appDb as unknown as PrismaClient);await app.ready();
  const email=randomUUID()+'@test.invalid';const response=await app.inject({method:'POST',url:'/v1/auth/register',payload:{email,password:'safe-test-password-123',adultConfirmed:true}});
  expect(response.statusCode,response.body).toBe(200);tokens=response.json();userId=(await db.user.findUnique({where:{email}}))!.id;
 });
 afterAll(async()=>{await db.user.deleteMany({where:{id:userId}});await app.close()});
 it('rejects registration without explicit adult confirmation',async()=>{
  const result=await app.inject({method:'POST',url:'/v1/auth/register',payload:{email:randomUUID()+'@test.invalid',password:'safe-test-password-123'}});expect(result.statusCode).toBe(400);
+});
+it('returns an email conflict for concurrent registrations of the same address', async () => {
+ const email = randomUUID() + '@test.invalid';
+ try {
+  const responses = await Promise.all([email, email.toUpperCase()].map(address => app.inject({
+   method: 'POST', url: '/v1/auth/register', remoteAddress: '192.0.2.12',
+   payload: { email: address, password: 'concurrent-password-123', adultConfirmed: true },
+  })));
+  expect(responses.map(response => response.statusCode).sort()).toEqual([200, 409]);
+  expect(responses.find(response => response.statusCode === 409)?.json()).toEqual({error:'EMAIL_TAKEN'});
+  const user = await db.user.findUniqueOrThrow({where:{email},include:{wallet:true,profile:true,sessions:true}});
+  expect(user.wallet).toBeTruthy();
+  expect(user.profile).toBeTruthy();
+  expect(user.sessions).toHaveLength(1);
+ } finally {
+  await db.user.deleteMany({where:{email}});
+ }
+});
+it('counts simultaneous failed logins from different addresses against one account', async () => {
+ const email = randomUUID() + '@test.invalid';
+ const password = 'correct-password-123';
+ try {
+  const registration = await app.inject({
+   method:'POST', url:'/v1/auth/register', remoteAddress:'192.0.2.13',
+   payload:{email,password,adultConfirmed:true},
+  });
+  expect(registration.statusCode).toBe(200);
+  const failures = await Promise.all(Array.from({length:8}, (_, index) => app.inject({
+   method:'POST', url:'/v1/auth/login', remoteAddress:'192.0.2.' + (index + 20),
+   payload:{email,password:'incorrect-password-123'},
+  })));
+  expect(failures.map(response => response.statusCode)).toEqual(Array(8).fill(401));
+  const locked = await app.inject({
+   method:'POST', url:'/v1/auth/login', remoteAddress:'192.0.2.30', payload:{email,password},
+  });
+  expect(locked.statusCode).toBe(429);
+  expect(locked.json()).toEqual({error:'TOO_MANY_LOGIN_ATTEMPTS'});
+  expect(Number(locked.headers['retry-after'])).toBeGreaterThan(0);
+ } finally {
+  await db.user.deleteMany({where:{email}});
+ }
+});
+it('returns wallet transaction history without internal purchase and deduplication identifiers', async () => {
+ const purchaseToken = 'fixture-purchase-' + randomUUID();
+ const transaction = await db.walletTransaction.create({data:{
+  userId, type:'CREDIT_PURCHASE', bucket:'PURCHASED', source:'play_billing', amount:100,
+  externalId:purchaseToken, idempotencyKey:'play:'+purchaseToken,
+ }});
+ try {
+  const response = await app.inject({url:'/v1/wallet/transactions',headers:{authorization:'Bearer '+tokens.accessToken}});
+  expect(response.statusCode).toBe(200);
+  expect(response.json()).toMatchObject({items:[{id:transaction.id,amount:100,source:'play_billing',
+   type:'CREDIT_PURCHASE',bucket:'PURCHASED',status:'COMPLETED',createdAt:transaction.createdAt.toISOString()}]});
+  expect(response.json().items[0]).not.toHaveProperty('externalId');
+  expect(response.json().items[0]).not.toHaveProperty('idempotencyKey');
+  expect(response.body).not.toContain(purchaseToken);
+ } finally {
+  await db.walletTransaction.delete({where:{id:transaction.id}});
+ }
+});
+it('accepts only the account owner’s wallet cursor and validates page size',async()=>{
+ const foreign = await db.user.create({data:{email:randomUUID()+'@test.invalid',passwordHash:'test'}});
+ const first = randomUUID(), second = randomUUID(), third = randomUUID(), foreignId = randomUUID();
+ const createdAt = new Date('2026-11-01T00:00:00.000Z');
+ const ids = [first, second, third, foreignId];
+ try {
+  await db.walletTransaction.createMany({data:ids.map(id=>({
+   id,userId:id===foreignId?foreign.id:userId,type:'CREDIT_BONUS',bucket:'BONUS',source:'fixture',
+   amount:1,idempotencyKey:'fixture:'+id,createdAt,
+  }))});
+  const history = (query:string) => app.inject({url:'/v1/wallet/transactions?'+query,
+   headers:{authorization:'Bearer '+tokens.accessToken}});
+  expect((await history('limit=999')).statusCode).toBe(400);
+  expect((await history('cursor=bad')).statusCode).toBe(400);
+  expect((await history('cursor='+foreignId)).statusCode).toBe(404);
+  expect((await history('cursor='+randomUUID())).statusCode).toBe(404);
+  const page = (await history('limit=2')).json();
+  const ordered = [first, second, third].sort().reverse();
+  expect(page.items.map((item:{id:string})=>item.id)).toEqual(ordered.slice(0,2));
+  expect(page.nextCursor).toBe(ordered[1]);
+  const last = (await history('limit=2&cursor='+page.nextCursor)).json();
+  expect(last.items.map((item:{id:string})=>item.id)).toEqual(ordered.slice(2));
+  expect(last.nextCursor).toBeNull();
+ } finally {
+  await db.walletTransaction.deleteMany({where:{id:{in:ids}}});
+  await db.user.delete({where:{id:foreign.id}});
+ }
 });
 it('explains which credential field is invalid without relaxing validation',async()=>{
  const post=(url:string,payload:any)=>app.inject({method:'POST',url,payload});
@@ -54,6 +148,47 @@ it('logout ends every session at once: access tokens and refresh tokens stop wor
   expect((await app.inject({method:'POST',url:'/v1/auth/refresh',payload:{refreshToken}})).statusCode).toBe(401);
  tokens=await newSession();
  expect((await app.inject({url:'/v1/wallet',headers:{authorization:'Bearer '+tokens.accessToken}})).statusCode).toBe(200);
+});
+it('revokes a new session when logout overlaps refresh rotation',async()=>{
+ const rotating = await newSession(), otherDevice = await newSession();
+ let reachedInsert!: () => void, allowInsert!: () => void;
+ const insertStarted = new Promise<void>(resolve => { reachedInsert = resolve; });
+ const insertReleased = new Promise<void>(resolve => { allowInsert = resolve; });
+ beforeSessionCreate = async () => { reachedInsert(); await insertReleased; };
+ const refresh = app.inject({method:'POST',url:'/v1/auth/refresh',payload:{refreshToken:rotating.refreshToken}});
+ try {
+  await insertStarted;
+  const logout = app.inject({
+   method:'POST',url:'/v1/auth/logout',headers:{authorization:'Bearer '+otherDevice.accessToken},
+  });
+  try {
+   // Wait for logout to reach the database while rotation is still in flight.
+   let waiting = false;
+   for (let i = 0; i < 100 && !waiting; i++) {
+    const [row] = await db.$queryRaw<{waiting:boolean}[]>`
+     SELECT EXISTS (
+      SELECT 1 FROM pg_stat_activity
+      WHERE datname = current_database() AND wait_event_type = 'Lock'
+      AND (query LIKE 'UPDATE %."Session"%' OR query LIKE 'SELECT id FROM "User"%FOR UPDATE')
+     ) AS waiting`;
+    waiting = row.waiting;
+    if (!waiting) await delay(10);
+   }
+   expect(waiting).toBe(true);
+  } finally {
+   allowInsert();
+  }
+  const [rotated, signedOut] = await Promise.all([refresh, logout]);
+  expect(rotated.statusCode).toBe(200);
+  expect(signedOut.statusCode).toBe(200);
+  const next = rotated.json();
+  expect((await app.inject({url:'/v1/me',headers:{authorization:'Bearer '+next.accessToken}})).statusCode).toBe(401);
+  expect((await app.inject({method:'POST',url:'/v1/auth/refresh',payload:{refreshToken:next.refreshToken}})).statusCode).toBe(401);
+  tokens=await newSession();
+ } finally {
+  allowInsert();
+  beforeSessionCreate = undefined;
+ }
 });
 it('does not expose secrets in data export and rejects a blocked user access token',async()=>{
  const result=await app.inject({url:'/v1/me/export',headers:{authorization:'Bearer '+tokens.accessToken}});

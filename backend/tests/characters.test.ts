@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import Fastify from 'fastify';
 import jwt from '@fastify/jwt';
 import { PrismaClient } from '@prisma/client';
@@ -6,6 +6,13 @@ import { randomUUID } from 'node:crypto';
 import { registerCharacterRoutes } from '../src/characters.js';
 
 const db = new PrismaClient();
+const beforePublicationWrite = vi.fn();
+const routeDb = db.$extends({ query: { publication: {
+  upsert({ args, query }) {
+    beforePublicationWrite();
+    return query(args);
+  },
+} } });
 const app = Fastify();
 const users: string[] = [];
 let owner: string;
@@ -30,7 +37,7 @@ beforeAll(async () => {
   app.decorate('auth', async (req: any, reply: any) => {
     try { await req.jwtVerify(); } catch { return reply.code(401).send({ error: 'UNAUTHORIZED' }); }
   });
-  await registerCharacterRoutes(app, db);
+  await registerCharacterRoutes(app, routeDb as unknown as PrismaClient);
   await app.ready();
   owner = await createTestUser();
   stranger = await createTestUser();
@@ -107,6 +114,23 @@ describe('characters and moderation safety', () => {
     expect(state?.status).toBe('PENDING_REVIEW');
   });
 
+  it('keeps a character hidden if its submission to moderation fails', async () => {
+    const item = await db.character.create({ data: {
+      ownerId: owner, name: 'Hidden explorer', greeting: 'Hello', category: 'adventure', isHidden: true,
+      publication: { create: { status: 'HIDDEN' } },
+    } });
+    const url = '/v1/characters/' + item.id + '/publish';
+    beforePublicationWrite.mockImplementationOnce(() => { throw new Error('Publication write failed'); });
+    const failed = await app.inject({ method: 'POST', url, headers: headers(owner) });
+    expect(failed.statusCode).toBe(500);
+    expect(await db.character.findUnique({ where: { id: item.id }, include: { publication: true } }))
+      .toMatchObject({ isHidden: true, publication: { status: 'HIDDEN', publishedAt: null } });
+    const retry = await app.inject({ method: 'POST', url, headers: headers(owner) });
+    expect(retry.statusCode).toBe(200);
+    expect(await db.character.findUnique({ where: { id: item.id }, include: { publication: true } }))
+      .toMatchObject({ isHidden: false, publication: { status: 'PENDING_REVIEW', publishedAt: null } });
+  });
+
   it('discovers only moderated public characters by text, category and tag', async () => {
     const stamp = randomUUID().slice(0, 10);
     const q = 'NovaScout' + stamp;
@@ -156,5 +180,16 @@ describe('characters and moderation safety', () => {
       method: 'PUT', url: '/v1/characters/' + characterId + '/favorite', headers: headers(stranger),
     });
     expect(forbidden.statusCode).toBe(404);
+  });
+
+  it('accepts concurrent repeats when adding the same favorite', async () => {
+    const item = await db.character.create({ data: {
+      ownerId: owner, name: 'Favorite explorer', greeting: 'Hello', category: 'adventure',
+    } });
+    const responses = await Promise.all(Array.from({ length: 8 }, () => app.inject({
+      method: 'PUT', url: '/v1/characters/' + item.id + '/favorite', headers: headers(owner),
+    })));
+    expect(responses.map(response => response.statusCode)).toEqual(Array(8).fill(200));
+    expect(await db.favorite.count({ where: { userId: owner, characterId: item.id } })).toBe(1);
   });
 });

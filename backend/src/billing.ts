@@ -40,7 +40,7 @@ export async function verifyAndCreditPurchase(
     if(existing?.state==='REFUNDED'||existing?.state==='CANCELED')return {status:'REJECTED' as const,reason:'PURCHASE_REVOKED'};
     if(existing?.state==='VERIFIED')return {status:'VERIFIED' as const,duplicate:true,tokens:existing.tokens};
     await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${p.userId} FOR UPDATE`;
-    await tx.walletAccount.upsert({where:{userId:p.userId},create:{userId:p.userId},update:{}});
+    await tx.walletAccount.createMany({data:{userId:p.userId},skipDuplicates:true});
     await tx.purchaseEvent.create({data:{userId:p.userId,sku:p.sku,purchaseToken:p.purchaseToken,orderId:data.orderId,state:'VERIFIED',tokens:product.tokens}});
     await tx.walletTransaction.create({data:{userId:p.userId,bucket:'PURCHASED',type:'CREDIT_PURCHASE',amount:product.tokens,
       source:'play_billing',externalId:p.purchaseToken,idempotencyKey:'play:'+p.purchaseToken}});

@@ -1,6 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
+import { showsMature } from './characters.js';
 export async function registerProductRoutes(app:FastifyInstance,db:PrismaClient){
  const auth={preHandler:app.auth};
  app.get('/v1/me',auth,async(req:any)=>{
@@ -57,10 +58,14 @@ export async function registerProductRoutes(app:FastifyInstance,db:PrismaClient)
  app.put('/v1/blocks/:id',auth,async(req:any,reply)=>{
   if(req.params.id===req.user.sub)return reply.code(400).send({error:'CANNOT_BLOCK_SELF'});
   if(!await db.user.findUnique({where:{id:req.params.id}}))return reply.code(404).send({error:'NOT_FOUND'});
-  await db.userBlock.upsert({where:{blockerId_blockedId:{blockerId:req.user.sub,blockedId:req.params.id}},create:{blockerId:req.user.sub,blockedId:req.params.id},update:{}});return {blocked:true};
+  await db.userBlock.createMany({data:{blockerId:req.user.sub,blockedId:req.params.id},skipDuplicates:true});return {blocked:true};
  });
  app.put('/v1/publications/:id/like',auth,async(req:any,reply)=>{
-  const p=await db.publication.findFirst({where:{id:req.params.id,status:'PUBLISHED',character:{isHidden:false,owner:{blocksGot:{none:{blockerId:req.user.sub}},blocksMade:{none:{blockedId:req.user.sub}}}}}});if(!p)return reply.code(404).send({error:'NOT_FOUND'});
+  const mature = await showsMature(db, req.user.sub);
+  const p=await db.publication.findFirst({where:{id:req.params.id,status:'PUBLISHED',character:{isHidden:false,
+   ...(mature ? {} : {mature:false}),
+   owner:{blocksGot:{none:{blockerId:req.user.sub}},blocksMade:{none:{blockedId:req.user.sub}}}}},select:{id:true}});
+  if(!p)return reply.code(404).send({error:'NOT_FOUND'});
   await db.$transaction(async tx=>{
    await tx.$queryRaw`SELECT id FROM "Publication" WHERE id = ${p.id} FOR UPDATE`;
    await tx.like.upsert({where:{userId_publicationId:{userId:req.user.sub,publicationId:p.id}},create:{userId:req.user.sub,publicationId:p.id},update:{}});

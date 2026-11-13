@@ -6,7 +6,9 @@ export async function registerAdminRoutes(app:FastifyInstance,db:PrismaClient){
  if(process.env.NOVA_ADMIN_EMAIL&&process.env.NOVA_ADMIN_PASSWORD){
   if(process.env.NOVA_ADMIN_PASSWORD.length<16)throw new Error('Admin password must be at least 16 characters');
   const email=process.env.NOVA_ADMIN_EMAIL.toLowerCase();
-  if(!await db.adminUser.findUnique({where:{email}}))await db.adminUser.create({data:{email,passwordHash:await argon2.hash(process.env.NOVA_ADMIN_PASSWORD)}});
+  if(!await db.adminUser.findUnique({where:{email}}))await db.adminUser.createMany({
+   data:{email,passwordHash:await argon2.hash(process.env.NOVA_ADMIN_PASSWORD)},skipDuplicates:true,
+  });
  }
  const admin=async(req:any,reply:any)=>{try{await req.jwtVerify();if(req.user.scope!=='admin'||!await db.adminUser.findUnique({where:{id:req.user.sub}}))throw new Error();}catch{return reply.code(401).send({error:'ADMIN_AUTH_REQUIRED'});}};
  app.post('/v1/admin/login',{config:{rateLimit:{max:5,timeWindow:'1 minute'}}},async(req:any,reply)=>{

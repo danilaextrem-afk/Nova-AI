@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import type { PrismaClient } from '@prisma/client';
+import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { completeAiChat } from './aiGateway.js';
-import { debitInTransaction, refundSpend, InsufficientTokensError } from './ledger.js';
+import { creditInTransaction, debitInTransaction, InsufficientTokensError } from './ledger.js';
 import { rewardDay } from './rewardRoutes.js';
 
 /**
@@ -89,58 +90,80 @@ export async function registerArtRoutes(app: FastifyInstance, db: PrismaClient,
     if (!parsed.success) return reply.code(400).send({ error: 'INVALID_ART_INPUT' });
     const { prompt, style, requestId } = parsed.data;
     const userId: string = req.user.sub;
+    // Scope client-generated IDs to an account and to image usage.
+    const usageId = 'art:v2:' + createHash('sha256').update(userId + ':' + requestId.toLowerCase()).digest('hex');
+    const legacySpendKey = 'art:' + requestId;
     const c = artConfig();
     if (!c.configured) return reply.code(503).send({ error: 'ART_NOT_CONFIGURED' });
     const user = await db.user.findUnique({ where: { id: userId }, select: { status: true } });
     if (user?.status !== 'ACTIVE') return reply.code(403).send({ error: 'ACCOUNT_NOT_ACTIVE' });
     if (BLOCKED.test(prompt)) return reply.code(422).send({ error: 'ART_PROMPT_REJECTED' });
+    if (await db.aiUsage.findUnique({ where: { id: usageId }, select: { id: true } })) {
+      return reply.code(409).send({ error: 'DUPLICATE_REQUEST' });
+    }
 
     let safe: { allowed: boolean; prompt: string };
     try { safe = await deps.prepare(prompt, STYLE_HINT[style], db); }
-    catch (e) { req.log.warn({ err: (e as Error).message }, 'Art prompt preparation failed'); return reply.code(503).send({ error: 'ART_UNAVAILABLE' }); }
+    catch { req.log.warn({ code: 'ART_PREPARE_FAILED' }, 'Art prompt preparation failed'); return reply.code(503).send({ error: 'ART_UNAVAILABLE' }); }
     if (!safe.allowed || BLOCKED.test(safe.prompt)) return reply.code(422).send({ error: 'ART_PROMPT_REJECTED' });
     const finalPrompt = `${safe.prompt.trim()}, ${STYLE_HINT[style]}, fully clothed adults, safe for work`;
 
-    // Reserve the slot (and pay, if the free allowance is used up) under a user row lock,
-    // so parallel taps cannot all take the free images.
-    let reservation: { usageId: string; price: number };
+    let price: number;
     try {
-      reservation = await db.$transaction(async tx => {
-        await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+      price = await db.$transaction(async tx => {
+        // Serialize the global count and insert across users and server instances.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended('nova:art:daily-cap', 0))`;
+        const [account] = await tx.$queryRaw<{status:string}[]>`SELECT status FROM "User" WHERE id = ${userId} FOR UPDATE`;
+        if (account?.status !== 'ACTIVE') throw new Error('ACCOUNT_NOT_ACTIVE');
+        if (await tx.aiUsage.findUnique({ where: { id: usageId }, select: { id: true } })) {
+          throw new Error('DUPLICATE_REQUEST');
+        }
+        if (await tx.walletTransaction.findFirst({
+          where: { idempotencyKey: legacySpendKey, userId, source: 'ai_art' }, select: { id: true },
+        })) throw new Error('DUPLICATE_REQUEST');
         const since = dayStart();
         const where = { feature: 'image', createdAt: { gte: since }, OR: [{ success: true }, { errorCode: 'PENDING' }] };
         if (await tx.aiUsage.count({ where }) >= c.dailyCap) throw new Error('ART_DAILY_LIMIT');
         const mine = await tx.aiUsage.count({ where: { ...where, userId } });
         const price = mine >= c.freePerDay ? c.priceTokens : 0;
         if (price) {
-          const d = await debitInTransaction(tx, { userId, amount: price, source: 'ai_art', idempotencyKey: 'art:' + requestId });
+          const d = await debitInTransaction(tx, { userId, amount: price, source: 'ai_art', idempotencyKey: usageId });
           if (d.duplicate) throw new Error('DUPLICATE_REQUEST');
         }
-        const usage = await tx.aiUsage.create({ data: { userId, feature: 'image', provider: 'cloudflare', model: c.model,
+        await tx.aiUsage.create({ data: { id: usageId, userId, feature: 'image', provider: 'cloudflare', model: c.model,
           success: false, errorCode: 'PENDING' } });
-        return { usageId: usage.id, price };
+        return price;
       });
     } catch (e) {
       if (e instanceof InsufficientTokensError) return reply.code(402).send({ error: 'INSUFFICIENT_TOKENS', priceTokens: c.priceTokens });
       const code = (e as Error).message;
+      if (code === 'ACCOUNT_NOT_ACTIVE') return reply.code(403).send({ error: code });
       if (code === 'ART_DAILY_LIMIT') return reply.code(429).send({ error: code });
       if (code === 'DUPLICATE_REQUEST') return reply.code(409).send({ error: code });
       throw e;
     }
 
     const started = Date.now();
+    let image: string;
     try {
-      const image = await deps.generate(finalPrompt);
-      await db.aiUsage.update({ where: { id: reservation.usageId }, data: { success: true, errorCode: null, latencyMs: Date.now() - started } });
-      const used = await usedToday(userId);
-      return { image, mime: 'image/jpeg', prompt: safe.prompt, style, chargedTokens: reservation.price,
-        freeLeft: Math.max(0, c.freePerDay - used) };
+      image = await deps.generate(finalPrompt);
     } catch (e) {
-      const code = (e as Error).message.slice(0, 60);
-      await db.aiUsage.update({ where: { id: reservation.usageId }, data: { errorCode: code, latencyMs: Date.now() - started } });
-      if (reservation.price) await refundSpend(db, userId, reservation.price, 'art:' + requestId);
+      const message = (e as Error).message;
+      const code = /^ART_PROVIDER_\d{3}$|^ART_EMPTY_IMAGE$/.test(message) ? message : 'ART_GENERATION_FAILED';
+      await db.$transaction(async tx => {
+        await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
+        if (price) await creditInTransaction(tx, {
+          userId, amount: price, bucket: 'BONUS', source: 'refund', type: 'CREDIT_REFUND',
+          idempotencyKey: 'refund:' + usageId,
+        });
+        await tx.aiUsage.update({ where: { id: usageId }, data: { errorCode: code, latencyMs: Date.now() - started } });
+      });
       req.log.warn({ code }, 'Art generation failed; tokens refunded');
       return reply.code(503).send({ error: 'ART_UNAVAILABLE' });
     }
+    await db.aiUsage.update({ where: { id: usageId }, data: { success: true, errorCode: null, latencyMs: Date.now() - started } });
+    const used = await usedToday(userId);
+    return { image, mime: 'image/jpeg', prompt: safe.prompt, style, chargedTokens: price,
+      freeLeft: Math.max(0, c.freePerDay - used) };
   });
 }

@@ -79,16 +79,35 @@ it('enforces the 18+ opt-in for the following feed and discussions', async () =>
  await db.creatorFollow.create({data: {followerId: other, creatorId: owner}});
  const feed = async () => (await app.inject({url: '/v1/community/following', headers: headers(other)})).json().items;
  const discussion = () => app.inject({url: `/v1/publications/${mature.publication!.id}/comments`, headers: headers(other)});
+ const like = () => app.inject({method:'PUT',url:`/v1/publications/${mature.publication!.id}/like`,headers:headers(other)});
  try {
   expect(await feed()).not.toEqual(expect.arrayContaining([expect.objectContaining({id: mature.id})]));
   expect((await discussion()).statusCode).toBe(404);
+  expect((await like()).statusCode).toBe(404);
   await db.profile.update({where: {userId: other}, data: {showMature: true}});
   expect(await feed()).toEqual(expect.arrayContaining([expect.objectContaining({id: mature.id})]));
   expect((await discussion()).statusCode).toBe(200);
+  expect((await like()).statusCode).toBe(200);
+  expect(await db.like.count({where:{publicationId:mature.publication!.id}})).toBe(1);
  } finally {
   await db.profile.update({where: {userId: other}, data: {showMature: false}});
   await db.creatorFollow.deleteMany({where: {followerId: other, creatorId: owner}});
   await db.character.delete({where: {id: mature.id}});
+ }
+});
+it('keeps concurrent repeated block and follow actions idempotent',async()=>{
+ const many = (url:string) => Promise.all(Array.from({length:8}, () =>
+  app.inject({method:'PUT',url,headers:headers(other)})));
+ try {
+  const follows = await many(`/v1/creators/${owner}/follow`);
+  expect(follows.map(r => r.statusCode)).toEqual(Array(8).fill(200));
+  expect(await db.creatorFollow.count({where:{followerId:other,creatorId:owner}})).toBe(1);
+  const blocks = await many(`/v1/blocks/${owner}`);
+  expect(blocks.map(r => r.statusCode)).toEqual(Array(8).fill(200));
+  expect(await db.userBlock.count({where:{blockerId:other,blockedId:owner}})).toBe(1);
+ } finally {
+  await db.userBlock.deleteMany({where:{blockerId:other,blockedId:owner}});
+  await db.creatorFollow.deleteMany({where:{followerId:other,creatorId:owner}});
  }
 });
 it('blocks social and new-chat access in both directions',async()=>{
