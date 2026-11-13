@@ -132,6 +132,8 @@ describe('dialogue liveliness rules', () => {
       request: 'Ага.', tier: 'free', tokenBudget: 8000 });
     const system = messages.filter((m: any) => m.role === 'system').map((m: any) => m.content).join('\n');
     expect(system).toContain('Never copy openingLine');
+    expect(system).toContain('openingLine shows your voice');
+    expect(system).toContain('the scene has already moved');
     expect(system).toContain('Reusing their words, a pet name or a catchphrase is fine');
     expect(system).toContain('First react to what the player just said');
     expect(system).toContain('take the initiative');
