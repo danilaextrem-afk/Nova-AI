@@ -27,6 +27,7 @@ const sendInput=z.object({content:z.string().trim().min(1).max(4000).optional(),
   regenerateMessageId:id.optional()}).strict()
   .refine(v=>!!v.content!==!!v.regenerateMessageId,{message:'Exactly one of content or regenerateMessageId'});
 class RegenerateTargetChanged extends Error {}
+class ChatAttemptExpired extends Error {}
 export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
   const background = new Set<Promise<void>>();
   const runInBackground = (task: Promise<unknown>, onFailure: () => void) => {
@@ -176,19 +177,23 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       const previous=await tx.chatRequest.findUnique({where:{id:requestId}});
       if(previous&&(previous.fingerprint!==fingerprint||previous.userId!==userId))return 'REQUEST_ID_USED';
       if(previous?.status==='SUCCEEDED')return 'REQUEST_COMPLETED_RETRY';
-      // Pending attempts with uncertain outcome are never automatically resubmitted.
-      if(previous?.status==='PENDING'&&Date.now()-previous.startedAt.getTime()<180000)return 'REQUEST_IN_PROGRESS';
-      await tx.chatRequest.updateMany({where:{userId,status:'PENDING',startedAt:{lt:new Date(Date.now()-180000)}},data:{status:'FAILED',errorCode:'REQUEST_TIMED_OUT'}});
+      const now = Date.now();
+      const expiresBefore = new Date(now - 180000);
+      if (previous?.status === 'PENDING' && previous.startedAt >= expiresBefore) return 'REQUEST_IN_PROGRESS';
+      await tx.chatRequest.updateMany({where:{userId,status:'PENDING',startedAt:{lt:expiresBefore}},data:{status:'FAILED',errorCode:'REQUEST_TIMED_OUT'}});
       if(await tx.chatRequest.count({where:{userId,status:'PENDING'}}))return 'CHAT_BUSY';
       if(tier==='premium'){
         const w=await tx.walletAccount.findUnique({where:{userId}});
         if((w?.purchased??0)+(w?.adReward??0)+(w?.bonus??0)<price)return 'INSUFFICIENT_TOKENS';
       }
-      await tx.chatRequest.upsert({where:{id:requestId},create:{id:requestId,userId,chatId:chat.id,content,fingerprint,tier,priceTokens:price,targetMessageId:target?.id??null},
-        update:{status:'PENDING',errorCode:null,startedAt:new Date(),priceTokens:price}});
-      return 'READY';
+      // Persist a distinct attempt timestamp even when retries start in the same millisecond.
+      const startedAt = new Date(Math.max(now, (previous?.startedAt.getTime() ?? 0) + 1));
+      await tx.chatRequest.upsert({where:{id:requestId},create:{id:requestId,userId,chatId:chat.id,content,fingerprint,tier,priceTokens:price,targetMessageId:target?.id??null,startedAt},
+        update:{status:'PENDING',errorCode:null,startedAt,priceTokens:price}});
+      return startedAt;
     });
-    if(reservation!=='READY')return reply.code(reservation==='INSUFFICIENT_TOKENS'?402:409).send({error:reservation});
+    if (typeof reservation === 'string') return reply.code(reservation==='INSUFFICIENT_TOKENS'?402:409).send({error:reservation});
+    const attempt = {id: requestId, userId, status: 'PENDING', startedAt: reservation};
     const started=Date.now();
     try {
       const [history,memories,others,summary]=await Promise.all([
@@ -242,8 +247,7 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
         if(stream.signal?.aborted)throw new AiProviderError('AI_CANCELLED',499,1);
         await tx.$queryRaw`SELECT id FROM "User" WHERE id = ${userId} FOR UPDATE`;
         if(stream.signal?.aborted)throw new AiProviderError('AI_CANCELLED',499,1);
-        const reserved=await tx.chatRequest.findUnique({where:{id:requestId}});
-        if(!reserved||reserved.status!=='PENDING')throw new Error('REQUEST_EXPIRED');
+        if (!await tx.chatRequest.findFirst({where: attempt, select: {id: true}})) throw new ChatAttemptExpired();
         let userMessage:any=null;let assistantMessage:any;
         if(target){
           // Lock the chat so a concurrent new turn cannot slip in between the check and the replace.
@@ -280,12 +284,13 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
         inference:{provider:output.provider,model:output.model}};
     }catch(error){
       const code=error instanceof AiProviderError?error.code:error instanceof InsufficientTokensError?'INSUFFICIENT_TOKENS':
-        error instanceof RegenerateTargetChanged?'REGENERATE_TARGET_CHANGED':'CHAT_STORAGE_FAILURE';
-      await db.chatRequest.updateMany({where:{id:requestId,userId,status:'PENDING'},data:{status:'FAILED',errorCode:code}});
+        error instanceof RegenerateTargetChanged?'REGENERATE_TARGET_CHANGED':
+        error instanceof ChatAttemptExpired?'REQUEST_EXPIRED':'CHAT_STORAGE_FAILURE';
+      await db.chatRequest.updateMany({where:attempt,data:{status:'FAILED',errorCode:code}});
       if(error instanceof AiProviderError)reply.header('Retry-After',error.retryAfter);
       req.log.warn({code},'Chat request failed; no token debit committed');
       return reply.code(error instanceof AiProviderError?error.httpStatus:error instanceof InsufficientTokensError?402:
-        error instanceof RegenerateTargetChanged?409:503).send({error:code,requestId});
+        error instanceof RegenerateTargetChanged||error instanceof ChatAttemptExpired?409:503).send({error:code,requestId});
     }
   }
   return drainChatJobs;
