@@ -3,7 +3,7 @@ import type { PrismaClient } from '@prisma/client';
 import { z } from 'zod';
 import { completeAiChat, AiProviderError } from './aiGateway.js';
 import { rewardDay } from './rewardRoutes.js';
-import { cardProblems, fieldProblems } from './creatorQuality.js';
+import { cardProblems, fieldProblems, impliedGender } from './creatorQuality.js';
 export * from './creatorQuality.js';
 
 /**
@@ -116,7 +116,8 @@ const CARD_QUALITY = [
   // Live creator check 43370606700: «строгая шеф-повар» became Алексей, a hostess «Алина» said «Рад видеть», two of four cards were Алексей.
   // Live creator check 43372529812: the previous wording turned «смотритель маяка, бывший штурман» and «саксофонист, который чинит» into women.
   '- Keep the gender the idea implies from its Russian grammar: masculine forms (смотритель, бывший, который, строгий) mean a man, feminine forms (хозяйка, бывшая, которая, строгая) mean a woman; only if the idea gives no clue, choose freely. Use the matching grammatical gender for the character everywhere.',
-  '- The player\'s gender is unknown: in the greeting and scenario address the player only with forms that do not mark gender (not готов/готова, пришёл/пришла).',
+  '- If implied_gender_of_the_character is given, the character has exactly that gender.',
+  '- The player\'s gender is unknown: in the greeting and scenario address the player only with forms that do not mark gender: no past-tense verbs or short adjectives about the player (not ты нашёл/нашла, зашёл/зашла, готов/готова); use the present tense or «вы» forms instead.',
   '- Pick a natural but less common name that fits the character; avoid the most frequent ones such as Алексей, Анна, Иван, Мария, Дмитрий, Елена.',
 ];
 const FIELD_QUALITY: Partial<Record<CardField, string>> = {
@@ -137,7 +138,9 @@ export async function runAssist(db: PrismaClient, input: AssistInput): Promise<{
       'If the user fixed a name, age, gender or traits, use exactly those. If age or gender are not given, write the card so that it does not state them.',
       ...CARD_QUALITY,
     ].join('\n');
-    const user = JSON.stringify({ user_data: { idea: input.idea, already_chosen: fixed, other_filled_fields: { ...c, name: undefined, age: undefined, gender: undefined, traits: undefined } } });
+    // The model often ignores the gender the idea's grammar implies, so the server reads it and states it.
+    const implied = fixed.gender ? undefined : impliedGender(input.idea ?? '');
+    const user = JSON.stringify({ user_data: { idea: input.idea, already_chosen: fixed, implied_gender_of_the_character: implied, other_filled_fields: { ...c, name: undefined, age: undefined, gender: undefined, traits: undefined } } });
     let blocked: GeneratedCard | null = null, soft: { card: GeneratedCard; n: number } | null = null;
     const checkQuality = input.language === 'ru'; // the checks are written for Russian output
     for (let attempt = 0; attempt < 2; attempt++) {

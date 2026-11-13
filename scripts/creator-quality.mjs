@@ -76,8 +76,10 @@ try {
   };
   const genders = cards.map(genderOf);
   check('Cards keep the gender the idea implies', genders.every((g, i) => g === impliedGender[i]), genders.map((g, i) => cards[i].name + ': ' + g + ' (ожидалось ' + impliedGender[i] + ')').join(', '));
-  const marked = greet.find(g => /ты\s+(?:\p{L}+\s+)?(готов|готова|пришёл|пришел|пришла|рад|рада|устал|устала)(?!\p{L})/iu.test(g));
-  check('Greetings do not guess the player gender', !marked, marked?.slice(0, 100) ?? '');
+  // Same rule as marksPlayerGender in backend/src/creatorQuality.ts: past tense or short adjectives about «ты».
+  const playerGender = t => /(?:^|[^\p{L}])ты\s+(?:\p{L}+\s+)?(?:\p{L}{2,}(?:л|ла|лся|лась)|\p{L}*шел|\p{L}*шёл|\p{L}*шла|готов|готова|рад|рада|должен|должна|один|одна)(?!\p{L})/iu.test(t);
+  const marked = [...greet, ...scen].find(playerGender);
+  check('Greetings and scenarios do not guess the player gender', !marked, marked?.slice(0, 100) ?? '');
   info('Card names', cards.map(c => c.name).join(', '));
 } catch (e) {
   check('Run completion', false, e.message);
