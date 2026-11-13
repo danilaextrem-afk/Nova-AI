@@ -49,6 +49,7 @@ export function greetingProblems(greeting: string, name: string): string[] {
   const tail = g.replace(/[\s*_"»)]+$/, '');
   if (!(/\?/.test(g.slice(-120)) || /(…|\.\.\.)$/.test(tail))) out.push('greeting_no_hook');
   if (englishWords(g, n).length) out.push('greeting_english');
+  if (marksPlayerGender(g)) out.push('greeting_player_gender');
   return out;
 }
 
@@ -62,6 +63,7 @@ export function scenarioProblems(scenario: string): string[] {
   if (/^\s*я[\s,]/i.test(s)) out.push('scenario_first_person');
   if (assistantPhrases(s).length) out.push('scenario_assistant_phrase');
   if (englishWords(s).length) out.push('scenario_english');
+  if (marksPlayerGender(s)) out.push('scenario_player_gender');
   return out;
 }
 
@@ -97,4 +99,23 @@ export function fieldProblems(field: string, value: string, name = ''): string[]
     case 'personality': return personalityProblems(value);
     default: return assistantPhrases(value).length ? ['assistant_phrase'] : [];
   }
+}
+
+/**
+ * Gender implied by the grammar of a Russian idea («строгая шеф-повар» → female, «бывший штурман» → male).
+ * Returns undefined when the idea has no clue or mixed clues. Live creator checks 43372529812 and 43374766900
+ * showed the model ignoring these cues, so the server passes the result explicitly.
+ */
+export function impliedGender(idea: string): 'female' | 'male' | undefined {
+  const t = ' ' + (idea ?? '').toLocaleLowerCase('ru').replace(/ё/g, 'е') + ' ';
+  const female = (t.match(/[^\p{L}](она|которая|бывшая|хозяйка|девушка|женщина|дочь|сестра|мать|бабушка|жена|вдова|ведьма|продавщица|официантка|актриса|певица|учительница|художница|писательница)(?!\p{L})|\p{L}{3,}(ая|яя)(?!\p{L})/gu) ?? []).length;
+  const male = (t.match(/[^\p{L}](он|который|бывший|хозяин|парень|мужчина|сын|брат|отец|дедушка|муж|вдовец|колдун)(?!\p{L})|\p{L}{3,}(ый|ий)(?!\p{L})/gu) ?? []).length;
+  if (female > male) return 'female';
+  if (male > female) return 'male';
+  return undefined;
+}
+
+/** Second-person past tense or short adjectives that mark the player's gender: «ты нашёл», «ты готова». */
+export function marksPlayerGender(text: string): boolean {
+  return /(?:^|[^\p{L}])ты\s+(?:\p{L}+\s+)?(?:\p{L}{2,}(?:л|ла|лся|лась)|\p{L}*шел|\p{L}*шёл|\p{L}*шла|готов|готова|рад|рада|должен|должна|один|одна)(?!\p{L})/iu.test(text ?? '');
 }

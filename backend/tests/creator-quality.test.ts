@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { greetingProblems, scenarioProblems, speechStyleProblems, personalityProblems, assistantPhrases, englishWords, cardProblems, fieldProblems } from '../src/creatorQuality.js';
 
 const goodGreeting = '*Вера не отрывает взгляда от треснувшей иконы и машет вам пинцетом.* Закрой дверь, сквозняк портит левкас. Ты принёс то, о чём писал?';
-const goodScenario = 'Вы в мастерской реставрации на третьем этаже старого дома в Замоскворечье. Вера как раз вскрыла иконе обратную сторону и нашла там записку. Ты пришёл с заказом и теперь единственный, кому она может доверить тайну.';
+const goodScenario = 'Вы в мастерской реставрации на третьем этаже старого дома в Замоскворечье. Вера как раз вскрыла иконе обратную сторону и нашла там записку. Ты здесь с заказом, и теперь только тебе она может доверить тайну.';
 
 describe('greetingProblems', () => {
   it('accepts an in-scene greeting', () => expect(greetingProblems(goodGreeting, 'Вера')).toEqual([]));
@@ -53,5 +53,23 @@ describe('other helpers', () => {
     expect(fieldProblems('greeting', goodGreeting, 'Вера')).toEqual([]);
     expect(fieldProblems('interests', 'Чем могу помочь', '')).toEqual(['assistant_phrase']);
     expect(fieldProblems('name', 'Вера')).toEqual([]);
+  });
+});
+
+describe('gender cues', () => {
+  it('reads the gender implied by a Russian idea', async () => {
+    const { impliedGender } = await import('../src/creatorQuality.js');
+    expect(impliedGender('Смотритель маяка на северном острове, бывший штурман')).toBe('male');
+    expect(impliedGender('Хозяйка ночного книжного магазина в старом квартале')).toBe('female');
+    expect(impliedGender('Уличный музыкант-саксофонист, который чинит велосипеды')).toBe('male');
+    expect(impliedGender('Строгая шеф-повар маленького ресторана у вокзала')).toBe('female');
+    expect(impliedGender('Шеф-повар у вокзала')).toBeUndefined();
+  });
+  it('flags greetings and scenarios that mark the player gender', async () => {
+    const { marksPlayerGender, greetingProblems, scenarioProblems } = await import('../src/creatorQuality.js');
+    for (const t of ['Здесь ты нашёл меня. Что привело?', 'Ты зашла в лавку.', 'Ну что, ты готов?', 'Ты пришел вовремя.']) expect(marksPlayerGender(t)).toBe(true);
+    for (const t of ['Что ты ищешь?', 'Ты стоишь у двери.', 'Вы когда-нибудь пробовали розмарин?', 'Ты как раз вовремя.']) expect(marksPlayerGender(t)).toBe(false);
+    expect(greetingProblems('*Поднимает взгляд* Ты нашёл меня. Что привело?', 'Виктор')).toContain('greeting_player_gender');
+    expect(scenarioProblems('Ты зашёл в ночной магазин. Полки пахнут пылью и чаем. Хозяйка поднимает взгляд от книги.')).toContain('scenario_player_gender');
   });
 });
