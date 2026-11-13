@@ -72,6 +72,29 @@ describe('Group chat orchestration',()=>{
   // Deleting the player's message removes the whole turn it produced.
   const del=await app.inject({method:'DELETE',url:`/v1/chats/${chatId}/messages/${list[0].id}`,headers:auth(u)});expect(del.json().deleted).toBe(3);
  });
+ it('streams a speaker label only after that speaker produces text', async () => {
+  const uid = await user();
+  const [lead, guest] = await Promise.all([character(uid, 'Аврора'), character(uid, 'Борис')]);
+  const thread = await db.chat.create({ data: { userId: uid, characterId: lead.id, participantIds: [guest.id] } });
+  const calls = vi.fn(async (_url: string, init: RequestInit) => {
+   const body = JSON.parse(String(init.body));
+   const name = JSON.parse(body.messages[1].content).activeCharacter.name;
+   if (name === guest.name) return new Response('Provider unavailable', { status: 503 });
+   const delta = (content: string) => 'data: ' + JSON.stringify({ choices: [{ delta: { content } }] }) + '\n\n';
+   return new Response(delta('Карта ') + delta('у маяка.') + 'data: [DONE]\n\n');
+  });
+  vi.stubGlobal('fetch', calls);
+  const response = await app.inject({ method: 'POST', url: `/v1/chats/${thread.id}/messages/stream`, headers: auth(uid),
+   payload: { content: 'Продолжим', requestId: randomUUID() } });
+  const events = response.body.split('\n\n').filter(block => block.startsWith('event: ')).map(block => ({
+   name: block.split('\n')[0].slice(7), data: JSON.parse(block.split('\n')[1].slice(6)),
+  }));
+  expect(events.filter(event => event.name === 'delta').map(event => event.data.text))
+   .toEqual(['Аврора: Карта ', 'у маяка.']);
+  expect(events.at(-1)).toMatchObject({
+   name: 'done', data: { assistantMessage: { speakerName: 'Аврора', content: 'Карта у маяка.' }, extraMessages: [] },
+  });
+ });
  it('keeps the first reply when a later speaker fails, and changes the cast only with visible characters',async()=>{
   const u=await user();const other=await user();const [a,b]=await Promise.all([character(u,'Аврора'),character(u,'Борис')]);
   const secret=await character(other,'Чужой');

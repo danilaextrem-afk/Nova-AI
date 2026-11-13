@@ -220,7 +220,15 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       const turn: { name: string; text: string }[] = [];
       for(const [i,sp] of speakers.entries()){
         if(stream.signal?.aborted)throw new AiProviderError('AI_CANCELLED',499,1);
-        if(isGroup)stream.onDelta?.((i?'\n\n':'')+sp.name+': ');
+        let onDelta = stream.onDelta;
+        if (isGroup && stream.onDelta) {
+          const emit = stream.onDelta;
+          let first = true;
+          onDelta = text => {
+            emit(first ? (i ? '\n\n' : '') + sp.name + ': ' + text : text);
+            first = false;
+          };
+        }
         const { messages, settings } = buildCharacterPrompt({
           speaker: sp, cast, chat, historyNewestFirst: history, notes: memories,
           characterNotes: lasting.filter(note => note.characterId === sp.id).map(note => ({ ...note, kind: 'FACT' })),
@@ -230,7 +238,7 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
         let output;
         try {
           output = await completeAiChat(messages, tier, db, i ? undefined : requestId, {
-            ...stream, maxOutput: settings.maxOutput, temperature: settings.temperature,
+            ...stream, onDelta, maxOutput: settings.maxOutput, temperature: settings.temperature,
           });
         }
         catch(e){if(i===0||stream.signal?.aborted)throw e;break;}
