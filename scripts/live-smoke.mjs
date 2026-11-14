@@ -1,42 +1,53 @@
 // Live end-to-end check against the deployed NOVA AI API over HTTPS.
-// Usage: node scripts/live-smoke.mjs https://host [expectedCommitPrefix]
+// Usage: node scripts/live-smoke.mjs https://host expectedCommitSha [--uptime]
 // Creates two throwaway accounts and deletes them at the end. Prints a Markdown report to stdout.
 const base = (process.argv[2] || '').replace(/\/$/, '');
 const expectedSha = process.argv[3] || '';
-if (expectedSha && !/^[a-f0-9]{7,40}$/i.test(expectedSha)) { console.error('Expected a Git commit SHA'); process.exit(2); }
+if (!/^[a-f0-9]{7,40}$/i.test(expectedSha)) { console.error('Expected a Git commit SHA'); process.exit(2); }
 const expectCommit = expectedSha.slice(0, 7).toLowerCase();
+const uptime = process.argv[4] === '--uptime';
 if (!/^https:\/\//.test(base)) { console.error('HTTPS base URL required'); process.exit(2); }
 const report = []; let failed = false;
 const ok = (name, detail = '') => report.push(`| ✅ | ${name} | ${detail} |`);
 const bad = (name, detail = '') => { failed = true; report.push(`| ❌ | ${name} | ${detail} |`); };
 const note = (name, detail = '') => report.push(`| ⚠️ | ${name} | ${detail} |`);
-// A commit-bound run requires real AI results. Scheduled runs still report provider availability.
-const unavailableAi = expectCommit ? bad : note;
+const unavailableAi = bad;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function call(method, path, body, token) {
   // Like the Android client (Retrofit without @Body), send no Content-Type when there is no body.
   const r = await fetch(base + path, { method, headers: { ...(body === undefined ? {} : { 'content-type': 'application/json' }), ...(token ? { authorization: 'Bearer ' + token } : {}) },
     body: body === undefined ? undefined : JSON.stringify(body), signal: AbortSignal.timeout(120000) });
   const text = await r.text(); let json = null; try { json = JSON.parse(text); } catch {}
-  return { status: r.status, json, text };
+  return { status: r.status, json, text, requestId: r.headers.get('rndr-id') ?? r.headers.get('cf-ray') };
 }
 const tokens = [];
+function formatReport() {
+  return `## NOVA AI ${uptime ? 'uptime' : 'release validation'} — ${base}\n\n| | Check | Detail |\n|---|---|---|\n` + report.join('\n');
+}
 try {
   // 1. Wake the free instance (cold start ~1 min) and wait for this commit when one is expected.
   let health = null; const start = Date.now();
-  while (Date.now() - start < 12 * 60000) {
+  while (Date.now() - start < (uptime ? 2 : 12) * 60000) {
     try { health = await call('GET', '/health'); } catch { health = null; }
-    if (health?.status === 200 && (!expectCommit || health.json?.commit === expectCommit)) break;
+    if (health?.status === 200 && health.json?.ok === true && (uptime || health.json.commit === expectCommit)) break;
     await sleep(15000);
   }
-  if (health?.status !== 200) throw new Error('API unreachable: ' + (health?.status ?? 'no response'));
-  if (expectCommit && health.json?.commit !== expectCommit) {
-    throw new Error(`Expected deployed commit ${expectCommit}, received ${health.json?.commit ?? 'unknown'}`);
+  if (health?.status !== 200 || health.json?.ok !== true) {
+    throw new Error(`API health failed: HTTP ${health?.status ?? 'no response'}, request ${health?.requestId ?? 'unknown'}`);
   }
-  ok('HTTPS /health', `commit ${health.json?.commit ?? '?'}`);
+  ok('HTTPS /health', `HTTP 200, commit ${health.json.commit ?? 'unknown'}`);
+  if (health.json.commit !== expectCommit) {
+    const detail = `deployed ${health.json.commit ?? 'unknown'}, expected ${expectCommit}`;
+    if (!uptime) throw new Error(`Expected deployed commit ${expectCommit}, received ${health.json.commit ?? 'unknown'}`);
+    note('STALE deployment', detail);
+  }
   const ready = await call('GET', '/ready');
-  if (ready.status !== 200 || ready.json?.ok !== true) throw new Error(`PostgreSQL readiness failed: HTTP ${ready.status}`);
-  ok('PostgreSQL reachable (/ready)');
+  if (ready.status !== 200 || ready.json?.ok !== true) throw new Error(`PostgreSQL readiness failed: HTTP ${ready.status}, request ${ready.requestId ?? 'unknown'}`);
+  ok('PostgreSQL reachable (/ready)', 'HTTP 200');
+  if (uptime) {
+    console.log(formatReport());
+    process.exit(0);
+  }
 
   // 2. Register + login two adults.
   const pw = 'Live-check-' + Math.random().toString(36).slice(2) + '-A1';
@@ -44,9 +55,11 @@ try {
   for (const email of emails) {
     const r = await call('POST', '/v1/auth/register', { email, password: pw, adultConfirmed: true });
     if (![200, 201].includes(r.status)) throw new Error('register ' + r.status + ' ' + r.text.slice(0, 200));
+    if (!r.json?.accessToken) throw new Error('registration did not return a cleanup token');
+    tokens.push(r.json.accessToken);
     const l = await call('POST', '/v1/auth/login', { email, password: pw });
     if (l.status !== 200 || !l.json?.accessToken) throw new Error('login ' + l.status);
-    tokens.push(l.json.accessToken);
+    tokens[tokens.length - 1] = l.json.accessToken;
   }
   ok('Register + login', '2 accounts');
   const [a, b] = tokens;
@@ -184,7 +197,9 @@ try {
 } finally {
   let removed = 0;
   for (const t of tokens) { try { const r = await call('DELETE', '/v1/me', { confirmation: 'DELETE' }, t); if (r.status < 300) removed++; } catch {} }
-  report.push(`| ${removed === tokens.length ? '✅' : '⚠️'} | Test accounts deleted | ${removed}/${tokens.length} |`);
-  console.log(`## NOVA AI live check — ${base}\n\n| | Check | Detail |\n|---|---|---|\n` + report.join('\n'));
+  if (tokens.length) {
+    (removed === tokens.length ? ok : bad)('Test accounts deleted', `${removed}/${tokens.length}`);
+  }
+  console.log(formatReport());
   process.exit(failed ? 1 : 0);
 }
