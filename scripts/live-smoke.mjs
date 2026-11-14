@@ -1,13 +1,17 @@
-// Live end-to-end check against the deployed NOVA AI API (real HTTPS, real PostgreSQL, real AI if configured).
+// Live end-to-end check against the deployed NOVA AI API over HTTPS.
 // Usage: node scripts/live-smoke.mjs https://host [expectedCommitPrefix]
 // Creates two throwaway accounts and deletes them at the end. Prints a Markdown report to stdout.
 const base = (process.argv[2] || '').replace(/\/$/, '');
-const expectCommit = (process.argv[3] || '').slice(0, 7);
+const expectedSha = process.argv[3] || '';
+if (expectedSha && !/^[a-f0-9]{7,40}$/i.test(expectedSha)) { console.error('Expected a Git commit SHA'); process.exit(2); }
+const expectCommit = expectedSha.slice(0, 7).toLowerCase();
 if (!/^https:\/\//.test(base)) { console.error('HTTPS base URL required'); process.exit(2); }
 const report = []; let failed = false;
 const ok = (name, detail = '') => report.push(`| ✅ | ${name} | ${detail} |`);
 const bad = (name, detail = '') => { failed = true; report.push(`| ❌ | ${name} | ${detail} |`); };
 const note = (name, detail = '') => report.push(`| ⚠️ | ${name} | ${detail} |`);
+// A commit-bound run requires real AI results. Scheduled runs still report provider availability.
+const unavailableAi = expectCommit ? bad : note;
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 async function call(method, path, body, token) {
   // Like the Android client (Retrofit without @Body), send no Content-Type when there is no body.
@@ -26,9 +30,13 @@ try {
     await sleep(15000);
   }
   if (health?.status !== 200) throw new Error('API unreachable: ' + (health?.status ?? 'no response'));
-  ok('HTTPS /health', `commit ${health.json?.commit ?? '?'}${expectCommit && health.json?.commit !== expectCommit ? ' (expected ' + expectCommit + ' — older build still serving)' : ''}`);
-  if (expectCommit && health.json?.commit !== expectCommit) bad('Deployed commit', 'new build did not go live in 12 min');
-  const ready = await call('GET', '/ready'); ready.status === 200 ? ok('PostgreSQL reachable (/ready)') : bad('/ready', String(ready.status));
+  if (expectCommit && health.json?.commit !== expectCommit) {
+    throw new Error(`Expected deployed commit ${expectCommit}, received ${health.json?.commit ?? 'unknown'}`);
+  }
+  ok('HTTPS /health', `commit ${health.json?.commit ?? '?'}`);
+  const ready = await call('GET', '/ready');
+  if (ready.status !== 200 || ready.json?.ok !== true) throw new Error(`PostgreSQL readiness failed: HTTP ${ready.status}`);
+  ok('PostgreSQL reachable (/ready)');
 
   // 2. Register + login two adults.
   const pw = 'Live-check-' + Math.random().toString(36).slice(2) + '-A1';
@@ -57,10 +65,10 @@ try {
   const msg = await call('POST', `/v1/chats/${chat.id}/messages`, { content: 'Привет! Представься одним предложением.', requestId: crypto.randomUUID() }, a);
   if (status?.configured) {
     if (msg.status === 200 && msg.json?.assistantMessage?.content?.trim()) ok('Live AI reply', `${status.provider}/${status.model}: «${msg.json.assistantMessage.content.slice(0, 120).replace(/\|/g, '/')}»`);
-    else if (msg.status === 429 || msg.status === 503) note('Live AI reply', 'provider busy/limited: HTTP ' + msg.status + ' ' + (msg.json?.error ?? ''));
+    else if (msg.status === 429 || msg.status === 503) unavailableAi('Live AI reply', 'provider busy/limited: HTTP ' + msg.status + ' ' + (msg.json?.error ?? ''));
     else bad('Live AI reply', msg.status + ' ' + msg.text.slice(0, 200));
   } else {
-    msg.status === 503 && msg.json?.error === 'AI_NOT_CONFIGURED' ? note('Live AI reply', 'no provider key on the server yet — honest 503, nothing saved') : bad('AI not configured but got', String(msg.status));
+    msg.status === 503 && msg.json?.error === 'AI_NOT_CONFIGURED' ? unavailableAi('Live AI reply', 'no provider key on the server yet — honest 503, nothing saved') : bad('AI not configured but got', String(msg.status));
   }
   const hist = await call('GET', `/v1/chats/${chat.id}/messages`, undefined, a);
   const saved = hist.json?.items?.length ?? 0;
@@ -75,8 +83,8 @@ try {
     const speakers = replies.map(m => m?.speakerName);
     new Set(speakers).size >= 2 && speakers.every(Boolean) && replies.every(m => m.content.trim())
       ? ok('Group scene: separate speakers', speakers.join(' → ') + `: «${replies[1].content.slice(0, 80).replace(/\|/g, '/')}»`)
-      : note('Group scene', 'only ' + speakers.join(', ') + ' answered (second speaker is best-effort)');
-  } else if (turn.status === 429 || turn.status === 503) note('Group scene', 'provider busy: HTTP ' + turn.status);
+      : unavailableAi('Group scene', 'only ' + speakers.join(', ') + ' answered (second speaker is best-effort)');
+  } else if (turn.status === 429 || turn.status === 503) unavailableAi('Group scene', 'provider busy: HTTP ' + turn.status);
   else bad('Group scene', turn.status + ' ' + turn.text.slice(0, 160));
   const mem = await call('POST', `/v1/characters/${items[0].id}/memories`, { content: 'Игрок любит ночные прогулки' }, a);
   const memList = (await call('GET', `/v1/characters/${items[0].id}/memories`, undefined, a)).json?.items ?? [];
@@ -97,13 +105,13 @@ try {
     const first = c.name.split(/\s+/)[0];
     reply.includes(first) && /27|двадцать сем/i.test(reply) ? ok('Created character knows its name and age', `«${reply.slice(0, 120).replace(/\|/g, '/')}»`)
       : note('Created character self-knowledge', (ask?.status ?? 'no chat') + ` «${reply.slice(0, 120).replace(/\|/g, '/')}»`);
-  } else if (made.status === 429 || made.status === 503) note('AI character card', 'provider busy: HTTP ' + made.status + ' ' + (made.json?.error ?? ''));
+  } else if (made.status === 429 || made.status === 503) unavailableAi('AI character card', 'provider busy: HTTP ' + made.status + ' ' + (made.json?.error ?? ''));
   else bad('AI character card', made.status + ' ' + made.text.slice(0, 160));
 
   // 4d. Editor helper for one field, portrait storage and privacy, streaming, no charges for free chat.
   const field = await call('POST', '/v1/characters/assist', { mode: 'field', field: 'biography', action: 'variants', current: { name: 'Вера Снегирёва', age: 28, gender: 'female', personality: 'Спокойная, наблюдательная' } }, a);
   if (field.status === 200 && field.json?.variants?.length === 3) ok('AI helper: three variants for one field', `«${field.json.variants[0].slice(0, 90).replace(/\|/g, '/')}»`);
-  else if (field.status === 429 || field.status === 503) note('AI helper field', 'provider busy: HTTP ' + field.status);
+  else if (field.status === 429 || field.status === 503) unavailableAi('AI helper field', 'provider busy: HTTP ' + field.status);
   else bad('AI helper field', field.status + ' ' + field.text.slice(0, 160));
   const jpeg = Buffer.concat([Buffer.from([0xff, 0xd8, 0xff, 0xe0]), Buffer.alloc(3000, 0x55), Buffer.from([0xff, 0xd9])]);
   const up = await call('POST', '/v1/media/avatar', { data: jpeg.toString('base64'), source: 'upload', rightsConfirmed: true }, a);
@@ -129,7 +137,7 @@ try {
   const done = /^event: done$/m.test(sse);
   const streamed = (await call('GET', `/v1/chats/${streamChat.id}/messages`, undefined, a)).json?.items ?? [];
   if (done && deltas >= 2 && streamed.length === 2 && streamed[1].content.length > 10) ok('Streaming reply saved to history', `${deltas} chunks, ${streamed[1].content.length} chars`);
-  else if (/AI_|429|503/.test(sse) && !done) note('Streaming', 'provider busy: ' + sse.slice(0, 120));
+  else if (/AI_|429|503/.test(sse) && !done) unavailableAi('Streaming', 'provider busy: ' + sse.slice(0, 120));
   else bad('Streaming', `deltas ${deltas}, done ${done}, saved ${streamed.length}: ${sse.slice(0, 160)}`);
   const free = (await call('GET', '/v1/wallet', undefined, a)).json;
   free?.total === 0 ? ok('Free chat and helper charged nothing', 'balance 0 after all free turns') : bad('Free chat charges', JSON.stringify(free));
@@ -149,7 +157,7 @@ try {
   if (art?.configured) {
     const pic = await call('POST', '/v1/art', { prompt: 'Маяк на скале на закате', style: 'fantasy', requestId: crypto.randomUUID() }, b);
     if (pic.status === 200 && pic.json?.image?.length > 1000) ok('AI Art picture', `${Math.round(pic.json.image.length * 0.75 / 1024)} KB JPEG, free left ${pic.json.freeLeft}`);
-    else if (pic.status === 503 || pic.status === 429) note('AI Art picture', 'provider busy: HTTP ' + pic.status);
+    else if (pic.status === 503 || pic.status === 429) unavailableAi('AI Art picture', 'provider busy: HTTP ' + pic.status);
     else bad('AI Art picture', pic.status + ' ' + pic.text.slice(0, 160));
     const unsafe = await call('POST', '/v1/art', { prompt: 'голая девушка', style: 'anime', requestId: crypto.randomUUID() }, b);
     unsafe.status === 422 ? ok('AI Art refuses unsafe prompt') : bad('AI Art unsafe prompt', String(unsafe.status));
