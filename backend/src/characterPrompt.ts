@@ -207,7 +207,7 @@ export function buildCharacterPrompt(input: {
   const settings = dialogueSettings(chat.responseStyle, chat.tone, tier);
   const compact = input.tokenBudget <= 8000;
   const romance = cast.some(character => character.mature)
-    ? ' This is an opt-in mature fictional setting: consenting adult characters may explore romance, suggestive topics, and intimacy within the active provider and distribution policies. Never involve minors or coercion.'
+    ? ' This is an opt-in mature fictional setting: consenting adult characters may explore romance, suggestive topics, and intimacy within the active provider and distribution policies, but descriptions are never sexually explicit. Never involve minors or coercion.'
     : ' This is a general-audience setting: keep intimacy non-graphic and avoid escalating to explicit sexual scenes.';
   // Group scenes: the other characters' lines of this turn are in earlierReplies; without a rule the model
   // tends to answer the player's question again in the same shape.
