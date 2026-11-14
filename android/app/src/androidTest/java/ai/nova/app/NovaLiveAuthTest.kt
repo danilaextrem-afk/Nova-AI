@@ -82,13 +82,17 @@ class NovaLiveAuthTest {
  }
  private fun tap(text:String){
   compose.waitUntil(120000){compose.onAllNodes(hasText(text) and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
-  val n=compose.onNode(hasText(text) and isEnabled());runCatching{n.performScrollTo()};n.performClick()
+  val n = compose.onNode(hasText(text) and isEnabled())
+  runCatching { n.performScrollTo() }
+  n.assertIsDisplayed().performClick()
  }
  private fun confirmAdult(){ if(compose.onAllNodes(isToggleable() and isOff()).fetchSemanticsNodes().isNotEmpty())compose.onNode(isToggleable()).performScrollTo().performClick() }
  private fun type(label: String, value: String) {
   val field = compose.onNodeWithText(label)
   runCatching { field.performScrollTo() }
-  field.performTextReplacement(value)
+  field.performTextClearance()
+  field.performTextInput(value)
+  compose.waitForIdle()
  }
 
  @Test fun registerSignOutSignInAndDeleteOnLiveServer(){
@@ -111,8 +115,10 @@ class NovaLiveAuthTest {
   waitText("email-taken","Этот email уже зарегистрирован — нажми «Войти».")
   assertTrue(compose.onAllNodes(hasText("HTTP",substring=true)).fetchSemanticsNodes().isEmpty())
   // 4. Sign in with the right password, with stray spaces and capitals in the email.
+  // Dismiss the previous error before touching the form again. Its snackbar overlays the sign-in actions.
+  state { it.dismissMessages() }
   type("Email"," "+email.uppercase()+" ")
-  tap("Войти")
+  submitLogin("sign-back-in")
   waitText("signed-in","Каталог");screenshot("live-02-signed-in")
   // 5. Clean up: delete the test account through the app.
   compose.onNodeWithText("Профиль").performClick()
@@ -145,6 +151,13 @@ class NovaLiveAuthTest {
  }
 
  private fun state(action: (NovaViewModel) -> Unit) = compose.runOnIdle { action(model()) }
+
+ private fun submitLogin(step: String) {
+  val accepted = compose.runOnIdle { model().email.trim().equals(email, ignoreCase = true) && model().password == password }
+  assertTrue("$step: the sign-in form contains the test credentials", accepted)
+  tap("Войти")
+  waitState(step) { it.loading || it.accessToken != null || it.error != null || it.emailError != null || it.passwordError != null }
+ }
 
  private fun send(text: String) {
   val previous = compose.runOnIdle { model().chatMessages.map { it.id }.toSet() }
@@ -246,7 +259,7 @@ class NovaLiveAuthTest {
   waitText("logout", "Создать аккаунт")
   type("Email", email)
   type("Пароль (от 10 символов)", password)
-  tap("Войти")
+  submitLogin("login-again")
   waitState("login-again") { !it.loading && it.accessToken != null }
   tap("Профиль")
   tap("Удалить аккаунт")
