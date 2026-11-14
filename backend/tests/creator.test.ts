@@ -28,7 +28,9 @@ const assist=(uid:string,payload:any)=>app.inject({method:'POST',url:'/v1/charac
 describe('Creator assistant',()=>{
  it('accepts fenced or slightly long JSON and rejects malformed cards',()=>{
   expect(parseCard('```json\n'+JSON.stringify(card)+'\n```')!.tags).toEqual(['путешествия','юмор']);
-  const long=parseCard(JSON.stringify({...card,biography:'слово '.repeat(400)}))!;expect(long.biography.length).toBeLessThanOrEqual(FIELD_LIMITS.biography+1);
+  const long=parseCard(JSON.stringify({...card,biography:'слово '.repeat(400)}))!;expect(long.biography.length).toBeLessThanOrEqual(FIELD_LIMITS.biography);
+  expect(parseCard(JSON.stringify({...card,name:'Н'.repeat(81)}))!.name).toBe('Н'.repeat(79)+'…');
+  expect(parseVariants(JSON.stringify({variants:['Н'.repeat(80)+'А']}),80)).toEqual(['Н'.repeat(79)+'…']);
   expect(parseCard(JSON.stringify({...card,greeting:''}))).toBeNull();expect(parseCard('нет json')).toBeNull();
   expect(parseVariants('{"variants":["А","Короткий вариант"]}',100)).toEqual(['Короткий вариант']);
  });

@@ -60,13 +60,19 @@ const generatedCard = z.object({
 });
 export type GeneratedCard = z.infer<typeof generatedCard>;
 
+function fitGeneratedText(value: string, max: number) {
+  if (value.length <= max) return value;
+  const prefix = value.slice(0, max - 1).replace(/[\uD800-\uDBFF]$/, '');
+  return (prefix.replace(/\s+\S*$/, '').trimEnd() || prefix) + '…';
+}
+
 /** Models sometimes wrap JSON in prose or code fences, or slightly overrun a limit: accept that, reject the rest. */
 export function parseCard(raw: string): GeneratedCard | null {
   const json = raw.match(/\{[\s\S]*\}/)?.[0];
   if (!json) return null;
   let value: any; try { value = JSON.parse(json); } catch { return null; }
   if (!value || typeof value !== 'object') return null;
-  for (const [k, max] of Object.entries(FIELD_LIMITS)) if (typeof value[k] === 'string' && value[k].length > max) value[k] = value[k].slice(0, max).replace(/\s+\S*$/, '') + '…';
+  for (const [k, max] of Object.entries(FIELD_LIMITS)) if (typeof value[k] === 'string' && value[k].length > max) value[k] = fitGeneratedText(value[k], max);
   if (typeof value.tags === 'string') value.tags = value.tags.split(',');
   if (Array.isArray(value.tags)) value.tags = value.tags.map((t: unknown) => String(t).replace(/^#/, '').trim()).filter(Boolean).slice(0, 8);
   if (Array.isArray(value.traits)) value.traits = value.traits.map((t: unknown) => String(t).trim()).filter(Boolean).slice(0, 6);
@@ -79,7 +85,7 @@ export function parseVariants(raw: string, max: number): string[] | null {
   try {
     const v = JSON.parse(json)?.variants;
     if (!Array.isArray(v)) return null;
-    const out = v.map(x => String(x).trim()).filter(x => x.length >= 2).map(x => x.length > max ? x.slice(0, max).replace(/\s+\S*$/, '') + '…' : x);
+    const out = v.map(x => String(x).trim()).filter(x => x.length >= 2).map(x => fitGeneratedText(x, max));
     return out.length ? out : null;
   } catch { return null; }
 }
