@@ -1,12 +1,17 @@
 name: Live check
 
 # Real end-to-end check of the deployed API (HTTPS, Neon PostgreSQL, live AI when a key is configured).
-# Render auto-deploys main; this waits until /health reports the pushed commit, then runs the scenario.
+# Commit-bound runs wait for Render to serve the expected commit before testing it.
 on:
   push:
     branches: [main]
     paths: ['backend/**', 'scripts/live-smoke.mjs', '.github/workflows/live.yml', 'android/nova-api-url.txt']
   workflow_dispatch:
+    inputs:
+      expected_commit:
+        description: 'Expected Render commit SHA (defaults to the selected ref SHA)'
+        required: false
+        type: string
   # Daily monitoring run (GitHub e-mails the owner when a scheduled run fails). Once a day keeps the
   # free Render/Neon/AI quotas essentially untouched.
   schedule:
@@ -30,11 +35,17 @@ jobs:
         with:
           node-version: 22
       - name: Run live scenario against the deployed API
+        env:
+          EXPECTED_COMMIT: ${{ inputs.expected_commit }}
         run: |
           URL="$(tr -d '[:space:]' < android/nova-api-url.txt)"
           test -n "$URL"
           EXPECT=""
-          if [ "$GITHUB_EVENT_NAME" = "push" ] && git diff --name-only HEAD~1 HEAD 2>/dev/null | grep -q '^backend/'; then EXPECT="$GITHUB_SHA"; fi
+          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
+            EXPECT="${EXPECTED_COMMIT:-$GITHUB_SHA}"
+          elif [ "$GITHUB_EVENT_NAME" = "push" ] && git diff --name-only HEAD~1 HEAD | grep -q '^backend/'; then
+            EXPECT="$GITHUB_SHA"
+          fi
           node scripts/live-smoke.mjs "$URL" "$EXPECT" | tee live-report.md
           exit "${PIPESTATUS[0]}"
       - name: Publish report
