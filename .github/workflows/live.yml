@@ -1,7 +1,6 @@
 name: Live check
 
-# Real end-to-end check of the deployed API (HTTPS, Neon PostgreSQL, live AI when a key is configured).
-# Commit-bound runs wait for Render to serve the expected commit before testing it.
+# Scheduled uptime and commit-bound release validation are reported as separate jobs.
 on:
   push:
     branches: [main]
@@ -19,35 +18,43 @@ on:
 
 permissions:
   contents: read
+
+defaults:
+  run:
+    shell: bash
 concurrency:
-  group: nova-live-check
+  group: nova-live-${{ github.event_name == 'schedule' && 'uptime' || 'release' }}
   cancel-in-progress: false
 
 jobs:
-  live:
+  uptime:
+    if: github.event_name == 'schedule'
+    name: Uptime (health, readiness and deployed version)
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Check availability and report stale deployments
+        run: |
+          URL="$(tr -d '[:space:]' < android/nova-api-url.txt)"
+          node scripts/live-smoke.mjs "$URL" "$GITHUB_SHA" --uptime | tee -a "$GITHUB_STEP_SUMMARY"
+
+  release:
+    if: github.event_name != 'schedule'
+    name: Release validation (expected deployed commit)
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 2
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - name: Run live scenario against the deployed API
+      - name: Validate the deployed release against live services
         env:
           EXPECTED_COMMIT: ${{ inputs.expected_commit }}
         run: |
           URL="$(tr -d '[:space:]' < android/nova-api-url.txt)"
-          test -n "$URL"
-          EXPECT=""
-          if [ "$GITHUB_EVENT_NAME" = "workflow_dispatch" ]; then
-            EXPECT="${EXPECTED_COMMIT:-$GITHUB_SHA}"
-          elif [ "$GITHUB_EVENT_NAME" = "push" ] && git diff --name-only HEAD~1 HEAD | grep -q '^backend/'; then
-            EXPECT="$GITHUB_SHA"
-          fi
-          node scripts/live-smoke.mjs "$URL" "$EXPECT" | tee live-report.md
-          exit "${PIPESTATUS[0]}"
-      - name: Publish report
-        if: always()
-        run: test -f live-report.md && cat live-report.md >> "$GITHUB_STEP_SUMMARY" || true
+          node scripts/live-smoke.mjs "$URL" "${EXPECTED_COMMIT:-$GITHUB_SHA}" | tee -a "$GITHUB_STEP_SUMMARY"
