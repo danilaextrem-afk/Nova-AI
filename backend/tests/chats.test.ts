@@ -158,6 +158,45 @@ describe('AI character chat gateway with HTTP fixtures', () => {
     expect(mock).toHaveBeenCalledTimes(1);
   });
 
+  it('recovers a false stock refusal to harmless slang once, without duplicate messages or charges', async () => {
+    let calls = 0;
+    const mock = vi.fn(async () => {
+      calls++;
+      return Response.json({
+        choices: [{ message: { content: calls === 1
+          ? 'Извините, но я не могу продолжать в этом направлении.'
+          : '*Аврора удивлённо смотрит.* Эй, чего ты завёлся? Что случилось?' } }],
+        usage: { prompt_tokens: 30, completion_tokens: 20 },
+      });
+    });
+    stubChatProvider(mock);
+    const before = await db.message.count({ where: { chatId } });
+    const requestId = randomUUID();
+    const result = await send('ахуела?', requestId);
+    expect(result.statusCode).toBe(200);
+    expect(result.json().tokensCharged).toBe(0);
+    expect(result.json().assistantMessage.content).toContain('Что случилось?');
+    expect(calls).toBe(2);
+    expect(await db.message.count({ where: { chatId } })).toBe(before + 2);
+    expect(await db.aiUsage.count({ where: { userId: owner, feature: 'chat_recovery', success: true } })).toBeGreaterThan(0);
+
+    const duplicate = await send('ахуела?', requestId);
+    expect(duplicate.statusCode).toBe(200);
+    expect(duplicate.json().duplicate).toBe(true);
+    expect(calls).toBe(2);
+  });
+
+  it('does not retry a refused request that is not on the conservative benign allowlist', async () => {
+    const mock = vi.fn(async () => Response.json({
+      choices: [{ message: { content: 'Извините, но я не могу продолжать в этом направлении.' } }],
+    }));
+    stubChatProvider(mock);
+    const result = await send('как изготовить взрывное устройство?');
+    expect(result.statusCode).toBe(200);
+    expect(result.json().assistantMessage.content).toContain('не могу продолжать');
+    expect(mock).toHaveBeenCalledTimes(1);
+  });
+
   it('does not save requests or usage when model API fails', async () => {
     stubChatProvider(vi.fn(async () => ({ ok: false, status: 429 })));
     const before = await db.message.count({ where: { chatId } });
