@@ -53,7 +53,7 @@ describe('conservative character refusal recovery', () => {
 
   it('treats adult banter as conversational material but keeps upstream policy and general-audience limits', () => {
     const speaker: any = { id: 'char-1', name: 'Аврора', age: 28, gender: 'female', mature: true,
-      greeting: 'Привет!', speechStyle: 'Говорит прямо.', biography: 'Техник.', personality: 'Спокойная.' };
+      traits: [], language: 'ru', greeting: 'Привет!', speechStyle: 'Говорит прямо.', biography: 'Техник.', personality: 'Спокойная.' };
     const chat: any = { persona: '', scenario: '', responseStyle: 'balanced', tone: 'humorous' };
     const makePrompt = () => buildCharacterPrompt({
       speaker, cast:[speaker], chat, historyNewestFirst:[], notes:[], characterNotes:[],
