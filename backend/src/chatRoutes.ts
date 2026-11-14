@@ -10,6 +10,7 @@ import { showsMature } from './characters.js';
 import { balance, debitInTransaction, InsufficientTokensError } from './ledger.js';
 import { extractMemories, pickSpeakers, stripSpeakerPrefix, keepOwnVoice, registerMemoryRoutes } from './memoryEngine.js';
 import { shapeReply } from './characterPrompt.js';
+import { createRefusalAwareStream, isGenericRefusal, shouldRetryUnwarrantedRefusal } from './refusalRecovery.js';
 
 export const visibleCharacter = (userId:string,showMature=false):Prisma.CharacterWhereInput => ({OR:[
   {ownerId:userId},{isHidden:false,publication:{is:{status:'PUBLISHED'}},owner:{blocksGot:{none:{blockerId:userId}},blocksMade:{none:{blockedId:userId}}},
@@ -239,6 +240,9 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
       // Each speaker is a separate model call with its own character sheet and memory, and sees what
       // the previous speakers said this turn. The first reply is required; later ones are best-effort.
       const outputs:{speaker:any,output:Awaited<ReturnType<typeof completeAiChat>>,text:string}[]=[];
+      // Provider quota accounts for both completions; chat_recovery records the internally discarded one.
+      // The player is charged only once in the wallet transaction below.
+      const recoveryUsages:Awaited<ReturnType<typeof completeAiChat>>[]=[];
       const turn: { name: string; text: string }[] = [];
       for(const [i,sp] of speakers.entries()){
         if(stream.signal?.aborted)throw new AiProviderError('AI_CANCELLED',499,1);
@@ -257,14 +261,55 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
           summary: promptUser && chat.summaryThrough >= promptUser.sequence ? undefined : summary?.content,
           request: content, tier, tokenBudget, earlierReplies: turn,
         });
-        let output;
+        const render = (raw:string) => shapeReply(isGroup
+          ? keepOwnVoice(stripSpeakerPrefix(raw,sp.name),cast.filter(c=>c.id!==sp.id).map(c=>c.name))
+          : raw,chat.responseStyle,sp.greeting);
+        // Only potential canned refusals are buffered; normal prose still streams immediately.
+        // This avoids showing a first refusal that an internal retry then replaces.
+        const firstStream = createRefusalAwareStream(onDelta);
+        let output: Awaited<ReturnType<typeof completeAiChat>>;
+        let text: string;
         try {
           output = await completeAiChat(messages, tier, db, i ? undefined : requestId, {
-            ...stream, onDelta, maxOutput: settings.maxOutput, temperature: settings.temperature,
+            ...stream, onDelta:onDelta?firstStream.push:undefined,
+            maxOutput: settings.maxOutput, temperature: settings.temperature,
           });
+          text = render(output.text);
+          // Retry only a standalone stock refusal to a short, allow-listed benign utterance.
+          // Never retry explicit provider content-filter errors, unsafe requests, or content
+          // already streamed to the player. No extra charge and no duplicate chat message.
+          if (!firstStream.hasEmitted() && shouldRetryUnwarrantedRefusal(text, content) && !stream.signal?.aborted) {
+            const retryMessages = messages.map((m,index)=>index===0
+              ? {...m,content:m.content+' The current player turn is a harmless everyday reaction. If it is permitted, respond naturally in character, not with a stock refusal. All existing safety and provider restrictions still apply.'}
+              :m);
+            const retryStream = createRefusalAwareStream(onDelta);
+            try {
+              const alternative = await completeAiChat(retryMessages, tier, db, undefined, {
+                ...stream,onDelta:onDelta?retryStream.push:undefined,
+                maxOutput:settings.maxOutput,temperature:settings.temperature,
+              });
+              const alternativeText = render(alternative.text);
+              if (!isGenericRefusal(alternativeText)) {
+                recoveryUsages.push(output);
+                output = alternative;
+                text = alternativeText;
+                firstStream.discard();
+                retryStream.flush();
+              } else {
+                recoveryUsages.push(alternative);
+                retryStream.discard();
+                firstStream.flush();
+              }
+            } catch {
+              retryStream.discard();
+              firstStream.flush();
+              req.log.warn({code:'BENIGN_REFUSAL_RECOVERY_UNAVAILABLE'},'Using original provider response');
+            }
+          } else {
+            firstStream.flush();
+          }
         }
         catch(e){if(i===0||stream.signal?.aborted)throw e;break;}
-        const text=shapeReply(isGroup?keepOwnVoice(stripSpeakerPrefix(output.text,sp.name),cast.filter(c=>c.id!==sp.id).map(c=>c.name)):output.text,chat.responseStyle,sp.greeting);
         outputs.push({speaker:sp,output,text});turn.push({ name: sp.name, text });
       }
       const output=outputs[0].output;
@@ -293,6 +338,10 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
           extraMessages.push(await tx.message.create({data:{chatId:chat.id,role:'assistant',content:o.text,turnRequestId:requestId,speakerId:o.speaker.id}}));
           await tx.aiUsage.create({data:{userId,feature:'chat',provider:o.output.provider,model:o.output.model,inputTokens:o.output.inputTokens,
             outputTokens:o.output.outputTokens,costMicros:o.output.costMicros,success:true}});
+        }
+        for (const used of recoveryUsages) {
+          await tx.aiUsage.create({data:{userId,feature:'chat_recovery',provider:used.provider,model:used.model,
+            inputTokens:used.inputTokens,outputTokens:used.outputTokens,costMicros:used.costMicros,success:true}});
         }
         await tx.chatRequest.update({where:{id:requestId},data:{status:'SUCCEEDED',errorCode:null}});
         await tx.aiUsage.create({data:{id:requestId,userId,feature:'chat',provider:output.provider,model:output.model,inputTokens:output.inputTokens,
