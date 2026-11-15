@@ -231,8 +231,9 @@ class NovaUiTest {
   clickWhenEnabled("Обсуждение")
   waitFor("comment input shown"){compose.onAllNodesWithText("Комментарий").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Комментарий").reveal().performTextInput("Интересная история")
-  // A background refresh can disable submit between checking availability and tapping.
-  clickWhenEnabled("Отправить комментарий")
+  // On 480x800 Android emulator the IME covers the visible submit button.
+  // The production text field has ImeAction.Send; use that user-facing path.
+  compose.onNodeWithText("Комментарий").performImeAction()
   waitFor("comment POST received by fixture"){commentSent}
   waitFor("pending moderation label rendered"){
    compose.onAllNodesWithText("Интересная история · На модерации").fetchSemanticsNodes().isNotEmpty()
