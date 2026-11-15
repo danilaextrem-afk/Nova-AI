@@ -84,7 +84,10 @@ export function createRefusalAwareStream(emit?: (text: string) => void) {
       if (s.startsWith('*')) {
         const closing = s.indexOf('*', 1);
         if (closing < 0 && s.length <= 110) possibleAction = true;
-        else if (closing > 0 && closing <= 110) s = s.slice(closing + 1).trimStart();
+        else if (closing > 0 && closing <= 110) {
+          s = s.slice(closing + 1).trimStart();
+          if (!s) possibleAction = true; // Next chunk may be the refusal.
+        }
       }
       const candidate = possibleAction ||
         (s.length > 0 && refusalStarts.some(start => start.startsWith(s) || s.startsWith(start)));
