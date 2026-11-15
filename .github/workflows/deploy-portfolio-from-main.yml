@@ -1,0 +1,50 @@
+name: Publish VANTA and AERA Portfolio
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/deploy-portfolio-from-main.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: portfolio-pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout portfolio source
+        uses: actions/checkout@v4
+        with:
+          ref: portfolio-sites-2026
+          persist-credentials: false
+      - name: Prepare only public portfolio pages
+        run: |
+          mkdir -p published
+          cp index.html vanta.html aera.html published/
+          touch published/.nojekyll
+          test -s published/index.html
+          test -s published/vanta.html
+          test -s published/aera.html
+      - name: Upload static site
+        uses: actions/upload-pages-artifact@v4
+        with:
+          path: published
+
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
