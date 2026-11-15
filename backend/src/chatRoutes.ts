@@ -10,7 +10,7 @@ import { showsMature } from './characters.js';
 import { balance, debitInTransaction, InsufficientTokensError } from './ledger.js';
 import { extractMemories, pickSpeakers, stripSpeakerPrefix, keepOwnVoice, registerMemoryRoutes } from './memoryEngine.js';
 import { shapeReply } from './characterPrompt.js';
-import { createRefusalAwareStream, isGenericRefusal, shouldRetryUnwarrantedRefusal } from './refusalRecovery.js';
+import { createDeferredRecoveryStream, createRefusalAwareStream, isGenericRefusal, shouldRetryUnwarrantedRefusal } from './refusalRecovery.js';
 
 export const visibleCharacter = (userId:string,showMature=false):Prisma.CharacterWhereInput => ({OR:[
   {ownerId:userId},{isHidden:false,publication:{is:{status:'PUBLISHED'}},owner:{blocksGot:{none:{blockerId:userId}},blocksMade:{none:{blockedId:userId}}},
@@ -282,7 +282,9 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
             const retryMessages = messages.map((m,index)=>index===0
               ? {...m,content:m.content+' The current player turn is a harmless everyday reaction. If it is permitted, respond naturally in character, not with a stock refusal. All existing safety and provider restrictions still apply.'}
               :m);
-            const retryStream = createRefusalAwareStream(onDelta);
+            // Hold speculative retries until the provider finishes: a partial second
+            // answer must never be followed by the old refusal on failed streams.
+            const retryStream = createDeferredRecoveryStream(onDelta);
             try {
               const alternative = await completeAiChat(retryMessages, tier, db, undefined, {
                 ...stream,onDelta:onDelta?retryStream.push:undefined,
@@ -294,7 +296,7 @@ export async function registerChatRoutes(app:FastifyInstance,db:PrismaClient){
                 output = alternative;
                 text = alternativeText;
                 firstStream.discard();
-                retryStream.flush();
+                retryStream.commit();
               } else {
                 recoveryUsages.push(alternative);
                 retryStream.discard();

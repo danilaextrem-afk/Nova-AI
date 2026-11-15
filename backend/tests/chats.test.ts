@@ -186,6 +186,70 @@ describe('AI character chat gateway with HTTP fixtures', () => {
     expect(calls).toBe(2);
   });
 
+  it('does not leak a partially streamed retry before falling back to the original refusal', async () => {
+    const sse = (pieces: string[], completed: boolean) => new Response(new ReadableStream({
+      start(controller) {
+        const encoder = new TextEncoder();
+        for (const piece of pieces) controller.enqueue(encoder.encode(
+          'data: ' + JSON.stringify({choices:[{delta:{content:piece}}]}) + '\n\n'));
+        if (completed) controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    }), { status: 200, headers: { 'content-type': 'text/event-stream' } });
+    let calls = 0;
+    stubChatProvider(async () => (++calls === 1)
+      ? sse(['Извините, но ', 'я не могу продолжать в этом направлении.'], true)
+      : sse(['*Аврора вздохнула.* ', 'Давай поговорим нормально.'], false));
+    const before = await db.message.count({where: {chatId}});
+    const response = await app.inject({
+      method:'POST',url:'/v1/chats/'+chatId+'/messages/stream',
+      headers:auth(owner),payload:{content:'ахуела?',requestId:randomUUID(),tier:'free'},
+    });
+    expect(response.statusCode).toBe(200);
+    expect(calls).toBe(2);
+    const events = [...response.body.matchAll(/^event: (\w+)\ndata: (.+)$/gm)]
+      .map(match => ({event:match[1], data:JSON.parse(match[2])}));
+    const deltas = events.filter(event=>event.event==='delta').map(event=>event.data.text).join('');
+    expect(deltas).toBe('Извините, но я не могу продолжать в этом направлении.');
+    expect(response.body).not.toContain('Давай поговорим нормально');
+    const done = events.find(event=>event.event==='done');
+    expect(done?.data.assistantMessage.content).toBe(deltas);
+    expect(done?.data.tokensCharged).toBe(0);
+    expect(await db.message.count({where:{chatId}})).toBe(before+2);
+  });
+
+  it('commits a complete streamed recovery exactly once, without showing the first refusal', async () => {
+    const sse = (pieces: string[]) => new Response(new ReadableStream({
+      start(controller) {
+        const encoder=new TextEncoder();
+        for(const piece of pieces)controller.enqueue(encoder.encode(
+          'data: '+JSON.stringify({choices:[{delta:{content:piece}}]})+'\n\n'));
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'));
+        controller.close();
+      },
+    }), {status:200,headers:{'content-type':'text/event-stream'}});
+    let calls=0;
+    stubChatProvider(async () => (++calls===1)
+      ? sse(['Извините, но ','я не могу продолжать в этом направлении.'])
+      : sse(['Ну и выражения! ', 'Что случилось?']));
+    const before=await db.message.count({where:{chatId}});
+    const response=await app.inject({
+      method:'POST',url:'/v1/chats/'+chatId+'/messages/stream',
+      headers:auth(owner),payload:{content:'ахуела?',requestId:randomUUID(),tier:'free'},
+    });
+    expect(response.statusCode).toBe(200);
+    expect(calls).toBe(2);
+    const events=[...response.body.matchAll(/^event: (\w+)\ndata: (.+)$/gm)]
+      .map(m=>({event:m[1],data:JSON.parse(m[2])}));
+    const deltas=events.filter(e=>e.event==='delta').map(e=>e.data.text).join('');
+    expect(deltas).toBe('Ну и выражения! Что случилось?');
+    expect(response.body).not.toContain('Извините, но я не могу');
+    const done=events.find(e=>e.event==='done');
+    expect(done?.data.assistantMessage.content).toBe(deltas);
+    expect(done?.data.tokensCharged).toBe(0);
+    expect(await db.message.count({where:{chatId}})).toBe(before+2);
+  });
+
   it('does not retry a refused request that is not on the conservative benign allowlist', async () => {
     const mock = vi.fn(async () => Response.json({
       choices: [{ message: { content: 'Извините, но я не могу продолжать в этом направлении.' } }],

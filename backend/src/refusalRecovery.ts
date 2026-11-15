@@ -74,3 +74,31 @@ export function createRefusalAwareStream(emit?: (text: string) => void) {
     hasEmitted() { return emitted; },
   };
 }
+
+
+/**
+ * A speculative retry is only shown after the provider has completed it successfully.
+ * Never leak a partial candidate and then append the original fallback refusal to it.
+ * Normal first-pass replies still stream without this buffering.
+ */
+export function createDeferredRecoveryStream(emit?: (text: string) => void) {
+  const chunks: string[] = [];
+  let state: 'pending' | 'committed' | 'discarded' = 'pending';
+  return {
+    push(piece: string) {
+      if (state === 'pending') chunks.push(piece);
+    },
+    commit() {
+      if (state !== 'pending') return;
+      state = 'committed';
+      const answer = chunks.join('');
+      chunks.length = 0;
+      if (answer) emit?.(answer);
+    },
+    discard() {
+      if (state !== 'pending') return;
+      state = 'discarded';
+      chunks.length = 0;
+    },
+  };
+}
