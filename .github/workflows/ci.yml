@@ -41,6 +41,8 @@ jobs:
       - run: npx tsc --noEmit
       - name: Check live dialogue-quality script syntax
         run: node --check ../scripts/benign-dialogue-quality.mjs
+      - name: Test truthful preview backend status reporting
+        run: node --test ../scripts/check-preview-deployment.test.mjs
       - run: npm test -- --reporter=default --reporter=junit --outputFile.junit=test-results.xml
       - uses: actions/upload-artifact@v4
         if: always()
@@ -248,6 +250,12 @@ jobs:
           "$ANDROID_HOME/build-tools/35.0.0/aapt2" dump badging "$APK" | grep -E "package:|launchable-activity" | tee badging.txt
           cp "$APK" NOVA-AI-FINAL.apk
           git archive --format=zip --output=NOVA-AI-FULL-SOURCE.zip HEAD
+      - name: Probe the real preview backend without blocking test-APK delivery
+        id: backend_status
+        run: |
+          URL="${NOVA_API_BASE_URL:-$(cat android/nova-api-url.txt 2>/dev/null)}"
+          node scripts/check-preview-deployment.mjs "$URL" "$GITHUB_SHA" > deployment-status.json
+          node -e 'const r=require("./deployment-status.json");for(const k of ["status","expected","deployed","healthHttp","readyHttp"])console.log(k+"="+(r[k]??"unknown"))' >> "$GITHUB_OUTPUT"
       - name: Publish to the nova-preview release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -258,10 +266,12 @@ jobs:
             echo
             echo "- Подпись: **тестовый ключ** (не production, не для Google Play). Новые сборки ставятся поверх как обновление."
             if [ -n "$URL" ]; then echo "- Сервер: \`$URL\`"; else echo "- Сервер: **ещё не подключён** — приложение установится, но вход и чат заработают после развёртывания backend."; fi
-            echo "- Все проверки CI (сервер, Android, UI-тесты на эмуляторе, Docker) пройдены перед публикацией."
+            echo "- Все проверки CI (серверный код, Android, UI-тесты на эмуляторе, Docker) пройдены перед публикацией."
+            echo "- Проверка реального сервера на момент публикации: **${{ steps.backend_status.outputs.status }}**. Backend commit: \`${{ steps.backend_status.outputs.deployed }}\`; ожидаемая версия: \`${{ steps.backend_status.outputs.expected }}\`. HTTP /health: ${{ steps.backend_status.outputs.healthHttp }}, /ready: ${{ steps.backend_status.outputs.readyHttp }}."
+            echo "- **Это не сертификат готовности релиза.** Даже совпадение commit и HTTP 200 не заменяют успешный Live check и настоящий Android E2E."
             echo
             echo "Установка: скачай \`NOVA-AI-FINAL.apk\` на телефон и открой. Android попросит разрешить установку из этого источника."
           } > notes.md
           gh release delete nova-preview --yes --cleanup-tag || true
-          gh release create nova-preview NOVA-AI-FINAL.apk NOVA-AI-FULL-SOURCE.zip --prerelease \
+          gh release create nova-preview NOVA-AI-FINAL.apk NOVA-AI-FULL-SOURCE.zip deployment-status.json --prerelease \
             --target "$GITHUB_SHA" --title "NOVA AI — тестовая сборка" --notes-file notes.md
