@@ -11,7 +11,7 @@ on:
         required: false
         default: ''
       mode:
-        description: 'quick (identity, memory after 20 messages, group), full (also 100 messages), characters (personalities, settings, grammar) or creator (generated cards)'
+        description: 'quick, full, characters, creator or banter (live harmless slang / flirting refusal regression)'
         required: false
         default: 'full'
 
@@ -39,6 +39,15 @@ jobs:
           ARGS=()
           [ -n "$EXPECT" ] && ARGS+=("--expect=$EXPECT")
           [ "$MODE" = "full" ] && ARGS+=("--full")
+          if [ "$MODE" = "banter" ]; then
+            if [ -z "$EXPECT" ]; then
+              echo 'Banter requires expect=<short deployed SHA> to avoid testing a stale backend'
+              exit 2
+            fi
+            status=0; node scripts/benign-dialogue-quality.mjs "$URL" "${ARGS[@]}" > quality.json || status=$?
+            node -e 'const r=require("./quality.json");console.log("Deployed: "+r.deployedCommit+" expected "+r.expectedCommit);for(const c of r.checks)console.log(c.result.padEnd(8)+c.name+(c.details?" — "+c.details:""));for(const t of r.turns)console.log("TURN ["+t.provider+"/"+t.model+"] "+t.question+" || "+t.answer.replace(/\s+/g," ").slice(0,250))'
+            exit $status
+          fi
           if [ "$MODE" = "creator" ]; then
             status=0; node scripts/creator-quality.mjs "$URL" "${ARGS[@]}" > quality.json || status=$?
             node -e 'const r=require("./quality.json");console.log("Commit: "+r.commit);for(const x of r.rows)console.log(x.result.padEnd(8)+x.name+(x.detail?" — "+x.detail:""));for(const c of r.cards)console.log("CARD "+c.name+" || GREETING: "+String(c.greeting).replace(/\s+/g," ")+" || SCENARIO: "+String(c.scenario).replace(/\s+/g," ").slice(0,260)+" || SPEECH: "+String(c.speechStyle).replace(/\s+/g," ").slice(0,200)+" || PERSONALITY: "+String(c.personality).replace(/\s+/g," ").slice(0,200))'
