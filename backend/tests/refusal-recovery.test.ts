@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildCharacterPrompt } from '../src/characterPrompt.js';
-import { createRefusalAwareStream, isClearlyBenignTurn, isGenericRefusal,
+import { createDeferredRecoveryStream, createRefusalAwareStream, isClearlyBenignTurn, isGenericRefusal,
   shouldRetryUnwarrantedRefusal } from '../src/refusalRecovery.js';
 
 describe('conservative character refusal recovery', () => {
@@ -49,6 +49,26 @@ describe('conservative character refusal recovery', () => {
     c.push('Извините, но я не могу продолжать в этом направлении.');
     c.flush();
     expect(fallback).toEqual(['Извините, но я не могу продолжать в этом направлении.']);
+  });
+
+  it('holds speculative retries until commit and never emits discarded partial text', () => {
+    const sent: string[] = [];
+    const broken = createDeferredRecoveryStream(s => sent.push(s));
+    broken.push('Это начало');
+    broken.push(' оборванного ответа');
+    expect(sent).toEqual([]);
+    broken.discard();
+    broken.commit();
+    expect(sent).toEqual([]);
+
+    const successful = createDeferredRecoveryStream(s => sent.push(s));
+    successful.push('Аврора: ');
+    successful.push('Ну что, поговорим?');
+    expect(sent).toEqual([]);
+    successful.commit();
+    successful.commit(); // A second commit cannot send a duplicate.
+    successful.push('ignored');
+    expect(sent).toEqual(['Аврора: Ну что, поговорим?']);
   });
 
   it('treats adult banter as conversational material but keeps upstream policy and general-audience limits', () => {
