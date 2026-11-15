@@ -38,7 +38,7 @@ describe('Mature (18+) section',()=>{
   expect(mature.map((c:any)=>c.id)).toContain(matureId);expect(mature.every((c:any)=>c.mature===true)).toBe(true);
   expect((await app.inject({url:'/v1/characters/'+matureId,headers:auth(viewer)})).json().character.mature).toBe(true);
  });
- it('keeps explicit content out of the model instructions and stops chats when the user opts out',async()=>{
+ it('preserves provider safeguards and closes mature chats when user opts out',async()=>{
   vi.stubEnv('GROQ_API_KEY','fixture-not-a-key');vi.stubEnv('OPENROUTER_API_KEY','');
   vi.stubEnv('NOVA_AI_MODELS_JSON',JSON.stringify([{provider:'groq',tier:'free',model:'test-free',approved:true,rpm:1000,rpd:1000,tpm:10000000,tpd:100000000,inputUsdPerMillion:0,outputUsdPerMillion:0,dailyBudgetMicros:0}]));
   await db.aiProviderState.deleteMany();
@@ -48,7 +48,10 @@ describe('Mature (18+) section',()=>{
   const r=await app.inject({method:'POST',url:`/v1/chats/${chat.id}/messages`,headers:auth(viewer),payload:{content:'Привет',requestId:randomUUID()}});
   expect(r.statusCode,r.body).toBe(200);
   const system=JSON.parse(mock.mock.calls[0][1].body).messages[0].content as string;
-  expect(system).toContain('never sexually explicit');expect(system).toContain('Never involve minors');
+  expect(system).toContain('Do not automatically reject a consensual adult conversation');
+  expect(system).toContain('Respect the provider limits on graphic detail');
+  expect(system).toContain('never involve minors or coercion');
+  expect(system).toContain("Respect the active provider's content restrictions");
   await app.inject({method:'PUT',url:'/v1/me/content-settings',headers:auth(viewer),payload:{showMature:false}});
   const blocked=await app.inject({method:'POST',url:`/v1/chats/${chat.id}/messages`,headers:auth(viewer),payload:{content:'Ещё',requestId:randomUUID()}});
   expect(blocked.statusCode).toBe(403);expect(mock).toHaveBeenCalledTimes(1);
