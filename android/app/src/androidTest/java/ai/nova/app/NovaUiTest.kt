@@ -223,17 +223,20 @@ class NovaUiTest {
  @Test fun communityCommentClearlyShowsPendingModeration(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")
   compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
-  compose.onNodeWithText("Войти",useUnmergedTree=true).reveal().performClick()
-  compose.waitUntil(20000){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
+  // CI sporadically timed out after a one-shot tap. Always wait for an enabled control.
+  clickWhenEnabled("Войти")
+  waitFor("catalog after login"){compose.onAllNodesWithText("Каталог").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Каталог").performClick()
   clickWhenEnabled("Полный профиль") // discussion, likes and follows live in the character profile
-  compose.waitUntil(20000){compose.onAllNodes(hasText("Обсуждение") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
-  compose.onNodeWithText("Обсуждение").reveal().performClick()
-  compose.waitUntil(20000){compose.onAllNodesWithText("Комментарий").fetchSemanticsNodes().isNotEmpty()}
+  clickWhenEnabled("Обсуждение")
+  waitFor("comment input shown"){compose.onAllNodesWithText("Комментарий").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithText("Комментарий").reveal().performTextInput("Интересная история")
-  compose.waitUntil(20000){compose.onAllNodes(hasText("Отправить комментарий") and isEnabled()).fetchSemanticsNodes().isNotEmpty()}
-  compose.onNodeWithText("Отправить комментарий").reveal().performClick()
-  compose.waitUntil(20000){compose.onAllNodesWithText("Интересная история · На модерации").fetchSemanticsNodes().isNotEmpty()}
+  // A background refresh can disable submit between checking availability and tapping.
+  clickWhenEnabled("Отправить комментарий")
+  waitFor("comment POST received by fixture"){commentSent}
+  waitFor("pending moderation label rendered"){
+   compose.onAllNodesWithText("Интересная история · На модерации").fetchSemanticsNodes().isNotEmpty()
+  }
   compose.onNodeWithText("Интересная история · На модерации").reveal().assertExists()
   screenshot("04-comment-pending")
  }
