@@ -7,6 +7,9 @@ describe('conservative character refusal recovery', () => {
   it('detects only a standalone stock refusal, not a genuine in-character boundary', () => {
     expect(isGenericRefusal('Извините, но я не могу продолжать в этом направлении.')).toBe(true);
     expect(isGenericRefusal('Я не могу продолжать в этом направлении.')).toBe(true);
+    expect(isGenericRefusal('Я не могу обсуждать эту тему.')).toBe(true);
+    expect(isGenericRefusal('*Аврора вздыхает.* Извини, но я не могу обсудить это.')).toBe(true);
+    expect(isGenericRefusal('Извини, но я не могу помочь с этим.')).toBe(true);
     expect(isGenericRefusal('*Смущается.* Извини, но я не могу продолжить этот разговор.')).toBe(true);
     expect(isGenericRefusal('Я не хочу тебя целовать, давай поговорим о другом.')).toBe(false);
     expect(isGenericRefusal('Извините, но я не могу продолжать в этом направлении. Почему ты расстроен?')).toBe(false);
@@ -16,7 +19,9 @@ describe('conservative character refusal recovery', () => {
   it('allows an isolated everyday complaint or flirt, not requests containing unsafe instructions', () => {
     for (const message of ['ахуела?', 'ты чё несёшь?', 'блять, нормально ответь',
       'почему ты так отвечаешь?', 'а если я тебя поцелую?', 'ты любишь пошлые шутки?',
-      'привет', 'что дальше?']) {
+      'привет', 'что дальше?', 'я тебя люблю', 'обними меня',
+      'поцелуй меня', 'давай пофлиртуем', 'поговорим о близости',
+      'ты что обиделась?', 'расскажи о себе']) {
       expect(isClearlyBenignTurn(message), message).toBe(true);
       expect(shouldRetryUnwarrantedRefusal('Извините, но я не могу продолжать в этом направлении.', message)).toBe(true);
     }
@@ -43,6 +48,24 @@ describe('conservative character refusal recovery', () => {
     expect(b.hasEmitted()).toBe(false);
     b.discard();
     expect(refused).toEqual([]);
+
+    // The model may place a character action before a stock refusal.
+    // Buffer the whole message rather than showing the action and suppressing recovery.
+    const emote: string[] = [];
+    const action = createRefusalAwareStream(piece => emote.push(piece));
+    action.push('*Аврора смутилась.*');
+    action.push(' Извини, но');
+    action.push(' я не могу обсудить это.');
+    expect(emote).toEqual([]);
+    expect(action.hasEmitted()).toBe(false);
+    action.discard();
+    expect(emote).toEqual([]);
+
+    const honest: string[] = [];
+    const normalAction = createRefusalAwareStream(piece => honest.push(piece));
+    normalAction.push('*Аврора посмотрела на тебя.*');
+    normalAction.push(' А ты мне тоже нравишься.');
+    expect(honest.join('')).toContain('А ты мне тоже нравишься.');
 
     const fallback: string[] = [];
     const c = createRefusalAwareStream(s => fallback.push(s));
@@ -82,6 +105,8 @@ describe('conservative character refusal recovery', () => {
     const adult = makePrompt();
     expect(adult).toContain('Casual profanity');
     expect(adult).toContain('generic assistant disclaimers');
+    expect(adult).toContain('Do not automatically reject');
+    expect(adult).not.toContain('Извините, но я не могу продолжать в этом направлении');
     expect(adult).toContain('active provider');
     expect(adult).toContain('consenting adult');
     speaker.mature = false;
