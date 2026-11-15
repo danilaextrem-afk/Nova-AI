@@ -48,3 +48,21 @@ jobs:
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
+      - name: Verify published portfolio pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          base="https://danilaextrem-afk.github.io/Nova-AI"
+          for page in index.html vanta.html aera.html; do
+            ok=0
+            for attempt in $(seq 1 15); do
+              if curl --location --fail --silent --show-error --max-time 12 "$base/$page" -o "/tmp/$page" && grep -qi '<html' "/tmp/$page"; then
+                echo "PASS: $base/$page ($(wc -c < /tmp/$page) bytes)"
+                ok=1
+                break
+              fi
+              echo "Waiting for published $page (attempt $attempt)"
+              sleep 5
+            done
+            test "$ok" -eq 1
+          done
