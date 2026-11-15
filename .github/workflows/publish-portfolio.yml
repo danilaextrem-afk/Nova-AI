@@ -23,14 +23,15 @@ jobs:
     steps:
       - name: Checkout portfolio branch
         uses: actions/checkout@v4
-      - name: Configure Pages
-        uses: actions/configure-pages@v5
-        with:
-          enablement: true
-      - name: Upload portfolio files
+      - name: Prepare static site
+        run: |
+          mkdir -p published
+          cp index.html vanta.html aera.html published/
+          touch published/.nojekyll
+      - name: Upload portfolio HTML
         uses: actions/upload-pages-artifact@v4
         with:
-          path: .
+          path: published
       - name: Deploy to GitHub Pages
         id: deployment
         uses: actions/deploy-pages@v4
