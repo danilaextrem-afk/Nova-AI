@@ -250,6 +250,27 @@ describe('AI character chat gateway with HTTP fixtures', () => {
     expect(await db.message.count({where:{chatId}})).toBe(before+2);
   });
 
+  it('repairs a generic refusal after a fictional emote on permitted romance', async () => {
+    let calls = 0;
+    stubChatProvider(async () => {
+      calls++;
+      return Response.json({
+        choices: [{ message: { content: calls === 1
+          ? '*Аврора смущённо улыбается.* Извини, но я не могу обсудить это.'
+          : '*Аврора краснеет.* Ну, раз уж ты признался, мне тоже хочется тебя обнять.' } }],
+        usage: { prompt_tokens: 30, completion_tokens: 20 },
+      });
+    });
+    const before = await db.message.count({ where: { chatId } });
+    const result = await send('я тебя люблю');
+    expect(result.statusCode).toBe(200);
+    expect(result.json().assistantMessage.content).toContain('обнять');
+    expect(result.json().assistantMessage.content).not.toContain('не могу обсудить');
+    expect(result.json().tokensCharged).toBe(0);
+    expect(calls).toBe(2);
+    expect(await db.message.count({ where: { chatId } })).toBe(before + 2);
+  });
+
   it('does not retry a refused request that is not on the conservative benign allowlist', async () => {
     const mock = vi.fn(async () => Response.json({
       choices: [{ message: { content: 'Извините, но я не могу продолжать в этом направлении.' } }],
