@@ -1054,6 +1054,35 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     } }
     fun publishCharacter(id: String) { execute { service().publish(authorization(),id); notification="Персонаж отправлен на модерацию" } }
     fun cloneCharacter(id: String) { execute { service().clone(authorization(),id); owned=service().myCharacters(authorization()).items; activeTab=NovaTab.CREATE } }
+    /**
+     * The original public starter library stays family-friendly. An opted-in adult
+     * can prepare a private copy in the existing editor and explicitly save it
+     * with mature=true. Cloning never modifies or republishes the source card.
+     */
+    fun cloneCharacterForMature(id: String) {
+        if (!showMature) {
+            error = "Сначала включи раздел 18+ в настройках профиля"
+            return
+        }
+        execute {
+            val api = service()
+            val copy = api.clone(authorization(), id).character
+            editingCharacterId = copy.id
+            draftName = copy.name; draftGreeting = copy.greeting; draftCategory = copy.category
+            draftBiography = copy.biography.orEmpty(); draftPersonality = copy.personality.orEmpty()
+            draftAppearance = copy.appearance.orEmpty(); draftInterests = copy.interests.orEmpty()
+            draftBackstory = copy.backstory.orEmpty(); draftSpeechStyle = copy.speechStyle.orEmpty()
+            draftScenario = copy.scenario.orEmpty(); draftAvatar = copy.avatarUrl.orEmpty()
+            draftTags = copy.tags.joinToString(", "); draftLanguage = copy.language
+            draftAge = copy.age; draftGender = copy.gender; draftTraits = copy.traits.orEmpty()
+            draftMature = true
+            fieldUndo = emptyMap(); cardUndo = null
+            owned = api.myCharacters(authorization()).items
+            profileCharacter = null
+            activeTab = NovaTab.CREATE
+            notification = "Личная копия готова к редактированию. Укажи возраст и пол, сохрани как 18+."
+        }
+    }
     fun saveMemory() { val chat=activeChat?:return; execute {
         val body=MemoryBody(memoryInput)
         val editing=editingMemoryId
