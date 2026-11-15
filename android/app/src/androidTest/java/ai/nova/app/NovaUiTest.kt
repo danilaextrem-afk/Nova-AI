@@ -24,6 +24,8 @@ class NovaUiTest {
  @Volatile private var replyBody:String?=null
  private val rootComment="20000000-0000-4000-8000-000000000001"
  private val nextCharacter="00000000-0000-4000-8000-000000000102"
+ private val matureCopy="00000000-0000-4000-8000-000000000220"
+ @Volatile private var adultCopyCreated=false
  @Volatile private var regenerated=false
  @Volatile private var streamCalls=0
  @Volatile private var streamFailure=false
@@ -65,6 +67,10 @@ class NovaUiTest {
     return MockResponse().setHeader("Content-Type","text/event-stream").setBody(sse)
    }
    val json=when {
+    r.path=="/v1/characters/$character/clone" && r.method=="POST" ->
+     {adultCopyCreated=true; """{"character":{"id":"$matureCopy","name":"Аврора Вейл","greeting":"Привет","category":"Приключения","tags":[],"biography":"Взрослая исследовательница.","mature":false}}"""}
+    r.path=="/v1/characters/mine" ->
+     if(adultCopyCreated) """{"items":[{"id":"$matureCopy","name":"Аврора Вейл","greeting":"Привет","category":"Приключения","tags":[],"mature":false}]}""" else """{"items":[]}"""
     r.path=="/v1/characters" && r.method=="POST" -> {studioDraft=r.body.readUtf8(); """{"character":{"id":"$character","name":"Аделина Мар","greeting":"Привет","category":"Романтика","tags":[],"mature":true}}"""}
     r.path=="/v1/characters/$character" -> """{"character":{"id":"$character","name":"Аврора Вейл","greeting":"Привет, исследователь!","category":"Приключения","tags":[],"biography":"28 лет. Исследовательница далёких миров.","personality":"Любознательная и решительная."}}"""
     r.path=="/v1/auth/login" -> """{"accessToken":"fixture-token","refreshToken":"fixture-refresh-token"}"""
@@ -582,6 +588,29 @@ class NovaUiTest {
   compose.activityRule.scenario.recreate()
   waitFor("studio session restored"){compose.onAllNodesWithText("Аделина Мар").fetchSemanticsNodes().isNotEmpty()}
   compose.onNodeWithContentDescription("Портрет персонажа Аделина Мар").assertExists()
+ }
+ @Test fun publicStarterCanBePreparedAsPrivateAdultCharacterOnlyAfterOptIn(){
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  waitFor("account tab"){compose.onAllNodesWithText("Профиль").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Профиль").performClick()
+  waitFor("adult setting"){compose.onAllNodesWithText("Раздел 18+ (Mature)").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNode(isToggleable() and isEnabled()).reveal().performClick()
+  compose.onNodeWithText("Мне есть 18").performClick()
+  waitFor("adult opt-in"){showMature}
+  compose.onNodeWithText("Каталог").performClick()
+  clickWhenEnabled("Полный профиль")
+  clickWhenEnabled("Личная версия 18+")
+  waitFor("private adult draft loaded"){
+   val vm=ViewModelProvider(compose.activity)[NovaViewModel::class.java]
+   adultCopyCreated && vm.editingCharacterId==matureCopy && vm.draftMature
+  }
+  val vm=ViewModelProvider(compose.activity)[NovaViewModel::class.java]
+  assertEquals("Аврора Вейл",vm.draftName)
+  assertTrue(vm.draftMature)
+  assertEquals("Adult source remains untouched; private copy must be explicitly saved",null,vm.draftAge)
+  screenshot("42-private-mature-clone")
  }
  @Test fun newPortraitsDecodeAndAdultsHaveUniqueProfiles(){
   assertEquals(12,StudioCast.heroes.size)
