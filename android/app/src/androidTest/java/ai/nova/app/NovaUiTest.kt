@@ -34,6 +34,10 @@ class NovaUiTest {
  @Volatile private var artBody:String?=null
  @Volatile private var authRequests=0
  @Volatile private var groupMode=false
+ private val secondChat="10000000-0000-4000-8000-000000000002"
+ @Volatile private var chatIsolationMode = false
+ @Volatile private var secondChatUnavailable = false
+ @Volatile private var secondChatDeleted = false
  @Volatile private var discoverMode=false
  @Volatile private var favoritePut:String?=null
  @Volatile private var assistBodies=java.util.Collections.synchronizedList(mutableListOf<String>())
@@ -56,6 +60,9 @@ class NovaUiTest {
     registration=r.body.readUtf8()
     return MockResponse().setHeader("Content-Type","application/json").setBody("""{"accessToken":"fixture-token","refreshToken":"fixture-refresh-token"}""").setBodyDelay(1,java.util.concurrent.TimeUnit.SECONDS)
    }
+   if (chatIsolationMode && r.path == "/v1/chats/$secondChat/messages" && secondChatUnavailable) {
+    return MockResponse().setResponseCode(503).setHeader("Content-Type", "application/json").setBody("""{"error":"UNAVAILABLE"}""")
+   }
    if(r.path=="/v1/chats/$chat/messages/stream"){
     streamIds.add(com.google.gson.JsonParser.parseString(r.body.readUtf8()).asJsonObject.get("requestId").asString)
     if(streamFailure)return MockResponse().setResponseCode(503).setHeader("Content-Type","application/json").setBody("{\"error\":\"AI_NOT_CONFIGURED\"}")
@@ -76,6 +83,16 @@ class NovaUiTest {
     productMode && r.path?.startsWith("/v1/characters/catalog")==true ->
      """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет","category":"Приключения","tags":[],"ownerId":"fixture-creator","publication":{"id":"fixture-publication"}}],"nextCursor":"$character"}"""
     r.path?.startsWith("/v1/characters/catalog")==true -> """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет, исследователь!","category":"Приключения","tags":[],"ownerId":"fixture-creator","publication":{"id":"fixture-publication","likesCount":0}}]}"""
+    chatIsolationMode && r.path == "/v1/chats" && r.method == "GET" -> {
+     val first = """{"id":"$chat","characterId":"$character","title":"Аврора Вейл"}"""
+     val second = if (secondChatDeleted) "" else """,{"id":"$secondChat","characterId":"$nextCharacter","title":"Лея Винтер"}"""
+     """{"items":[$first$second]}"""
+    }
+    chatIsolationMode && r.path == "/v1/chats/$chat/messages" -> """{"items":[],"nextBefore":10}"""
+    chatIsolationMode && r.path == "/v1/chats/$secondChat/messages" -> """{"items":[]}"""
+    chatIsolationMode && r.path == "/v1/chats/$chat/memories" ->
+     """{"items":[{"id":"m1","content":"Факт первой истории","kind":"FACT","source":"user","pinned":false}]}"""
+    chatIsolationMode && r.path == "/v1/chats/$secondChat" && r.method == "DELETE" -> { secondChatDeleted = true; "{}" }
     groupMode && r.path=="/v1/chats" && r.method=="GET" -> """{"items":[{"id":"$chat","characterId":"$character","title":"Аврора Вейл, Кай Номад","characterName":"Аврора Вейл","participantIds":["00000000-0000-4000-8000-000000000107"]}]}"""
     groupMode && r.path?.startsWith("/v1/chats/$chat/messages")==true && r.method=="GET" -> """{"items":[{"id":"u","role":"user","content":"Привет всем","sequence":1},{"id":"a","role":"assistant","content":"*улыбается* Рада **встрече**!","sequence":2,"speakerName":"Аврора Вейл"},{"id":"b","role":"assistant","content":"Я тоже здесь.","sequence":3,"speakerName":"Кай Номад"}]}"""
     discoverMode && r.path=="/v1/discover/recommended" -> """{"items":[{"id":"00000000-0000-4000-8000-000000000102","name":"Лея Винтер","greeting":"Привет","category":"Романтика","tags":["город"],"biography":"Фотограф ночного города.","reason":"TASTE"}],"personalised":true}"""
@@ -219,6 +236,54 @@ class NovaUiTest {
   streamFailure=false;clickWhenEnabled("Отправить бесплатно")
   compose.waitUntil(20000){compose.onAllNodesWithText("Тестовый ответ сервера").fetchSemanticsNodes().isNotEmpty()}
   assertEquals(2,streamIds.size);assertEquals(streamIds[0],streamIds[1])
+ }
+ @Test fun chatDraftAndMemoryStayInTheirOwnHistoryWhenSwitchingAndDeleting() {
+  chatIsolationMode = true
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  waitFor("login complete") { vm().accessToken != null && !vm().loading }
+  compose.onNodeWithText("Чаты").performClick()
+  clickWhenEnabled("Аврора Вейл")
+  waitFor("first chat loaded") { vm().activeChat?.id == chat && !vm().loading }
+  compose.onNodeWithText("Напиши сообщение").performTextInput("Черновик первой истории")
+  compose.runOnIdle {
+   vm().memoryInput = vm().memories.single().content
+   vm().editingMemoryId = vm().memories.single().id
+   assertEquals(10, vm().nextBefore)
+  }
+  hideKeyboard()
+  clickWhenEnabled("Назад")
+
+  secondChatUnavailable = true
+  clickWhenEnabled("Лея Винтер")
+  val error = "AI-провайдер ещё не подключён или временно недоступен"
+  waitFor("failed chat leaves the list available") { compose.onAllNodesWithText(error).fetchSemanticsNodes().isNotEmpty() }
+  compose.onNodeWithText("Мои чаты").assertExists()
+  assertEquals("null", SessionStore(compose.activity).get("chat"))
+
+  secondChatUnavailable = false
+  clickWhenEnabled("Лея Винтер")
+  waitFor("second chat loaded") { vm().activeChat?.id == secondChat && !vm().loading }
+  compose.runOnIdle {
+   assertEquals("", vm().chatInput)
+   assertTrue(vm().memories.isEmpty())
+   assertEquals("", vm().memoryInput)
+   assertNull(vm().editingMemoryId)
+   assertNull(vm().nextBefore)
+  }
+  compose.onNodeWithText("Напиши сообщение").performTextInput("Черновик удаляемой истории")
+  hideKeyboard()
+  clickWhenEnabled("Ещё")
+  clickWhenEnabled("Удалить чат")
+  compose.onNode(hasText("Удалить чат") and hasAnyAncestor(isDialog())).performClick()
+  waitFor("deleted chat returns to the list") { secondChatDeleted && vm().activeChat == null && !vm().loading }
+  assertEquals("null", SessionStore(compose.activity).get("chat"))
+  assertTrue(SessionStore(compose.activity).get("draft-$secondChat").isNullOrEmpty())
+  clickWhenEnabled("Аврора Вейл")
+  waitFor("original chat's draft restored") {
+   compose.onAllNodesWithText("Черновик первой истории").fetchSemanticsNodes().isNotEmpty()
+  }
  }
  @Test fun communityCommentClearlyShowsPendingModeration(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")
