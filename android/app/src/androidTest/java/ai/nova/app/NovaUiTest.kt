@@ -616,6 +616,7 @@ class NovaUiTest {
    val vm=ViewModelProvider(compose.activity)[NovaViewModel::class.java]
    assertEquals("Аврора Вейл",vm.draftName)
    assertTrue(vm.draftMature)
+   assertEquals("ru", vm.draftLanguage)
    assertNull("The private copy still requires an explicit age",vm.draftAge)
    assertNull("The private copy still requires an explicit gender",vm.draftGender)
    assertNull("The editor has not submitted the draft",studioDraft)
