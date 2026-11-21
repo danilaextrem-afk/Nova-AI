@@ -42,6 +42,11 @@ class NovaUiTest {
  @Volatile private var favoritePut:String?=null
  @Volatile private var assistBodies=java.util.Collections.synchronizedList(mutableListOf<String>())
  @Volatile private var avatarBody:String?=null
+ private val memoryPath get() = "/v1/chats/$chat/memories"
+ @Volatile private var storyMemory: MemoryItem? = null
+ @Volatile private var memoryPatchKeys = emptySet<String>()
+ @Volatile private var failMemoryRead = false
+ @Volatile private var memoryCreates = 0
  private val artJpeg:String by lazy {
   val b=Bitmap.createBitmap(64,64,Bitmap.Config.ARGB_8888);b.eraseColor(android.graphics.Color.rgb(120,80,200))
   val out=java.io.ByteArrayOutputStream();b.compress(Bitmap.CompressFormat.JPEG,90,out)
@@ -67,6 +72,13 @@ class NovaUiTest {
     val sse="event: delta\ndata: {\"text\":\"Тестовый \"}\n\n"+"event: delta\ndata: {\"text\":\"ответ сервера\"}\n\n"+
      "event: done\ndata: {\"userMessage\":{\"id\":\"u\",\"role\":\"user\",\"content\":\"Привет\"},\"assistantMessage\":{\"id\":\"a\",\"role\":\"assistant\",\"content\":\"Тестовый ответ сервера\"},\"tokensCharged\":0}\n\n"
     return MockResponse().setHeader("Content-Type","text/event-stream").setBody(sse)
+   }
+   if (r.path == memoryPath && r.method == "GET" && failMemoryRead) {
+    return MockResponse().setResponseCode(503).setBody("""{"error":"UNAVAILABLE"}""")
+   }
+   if (r.path == "$memoryPath/m1" && r.method == "DELETE") {
+    storyMemory = null
+    return MockResponse().setResponseCode(204)
    }
    val json=when {
     r.path=="/v1/characters" && r.method=="POST" -> {studioDraft=r.body.readUtf8(); """{"character":{"id":"$character","name":"Аделина Мар","greeting":"Привет","category":"Романтика","tags":[],"mature":true}}"""}
@@ -115,7 +127,25 @@ class NovaUiTest {
     r.path=="/v1/chats/$chat/messages/u" && r.method=="PATCH" -> {val b=r.body.clone().readUtf8();userText=com.google.gson.JsonParser.parseString(b).asJsonObject.get("content").asString;"""{"updated":true}"""}
     r.path=="/v1/chats/$chat/messages" && regenerated -> """{"items":[{"id":"u","role":"user","content":"$userText","sequence":1},{"id":"a","role":"assistant","content":"Новая версия ответа","sequence":2,"alternatives":["Тестовый ответ сервера"]}]}"""
     r.path=="/v1/chats/$chat/messages" -> if(sent) """{"items":[{"id":"u","role":"user","content":"Привет","sequence":1},{"id":"a","role":"assistant","content":"Тестовый ответ сервера","sequence":2}]}""" else """{"items":[]}"""
-    r.path=="/v1/chats/$chat/memories" -> """{"items":[]}"""
+    r.path == memoryPath && r.method == "POST" -> {
+     memoryCreates++
+     val draft = com.google.gson.JsonParser.parseString(r.body.readUtf8()).asJsonObject
+     val created = MemoryItem("m2", draft.get("content").asString, "FACT", source = "user")
+     com.google.gson.Gson().toJson(mapOf("memory" to created))
+    }
+    r.path == "$memoryPath/m1" && r.method == "PATCH" -> {
+     val patch = com.google.gson.JsonParser.parseString(r.body.readUtf8()).asJsonObject
+     memoryPatchKeys = patch.keySet()
+     val current = requireNotNull(storyMemory)
+     storyMemory = current.copy(
+      content = patch.get("content")?.asString ?: current.content,
+      kind = patch.get("kind")?.asString ?: current.kind,
+      pinned = patch.get("pinned")?.asBoolean ?: current.pinned,
+      source = if (patch.has("content")) "user" else current.source
+     )
+     """{"updated":true}"""
+    }
+    r.path == memoryPath -> com.google.gson.Gson().toJson(MemoryPage(listOfNotNull(storyMemory)))
     productMode && r.path=="/v1/publications/fixture-publication/comments" && r.method=="POST" ->
      {replyBody=r.body.readUtf8(); "{}"}
     productMode && r.path=="/v1/publications/fixture-publication/comments" -> {
@@ -692,6 +722,53 @@ class NovaUiTest {
   screenshot("20-favorites")
  }
 
+ @Test fun chatMemoryWritesPreserveMetadataAndClearOnlyCompletedDrafts() {
+  storyMemory = MemoryItem("m1", "Автоматическая сводка", "SUMMARY", source = "auto")
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  waitFor("signed in") { !vm().loading && vm().accessToken != null }
+  compose.onNodeWithText("Чаты").performClick()
+  clickWhenEnabled("Аврора Вейл")
+  waitFor("summary loaded") { !vm().loading && vm().memories.singleOrNull()?.kind == "SUMMARY" }
+
+  compose.runOnIdle { vm().pinMemory(vm().memories.single()) }
+  waitFor("summary pinned") { !vm().loading && vm().memories.singleOrNull()?.pinned == true }
+  assertEquals(setOf("pinned"), memoryPatchKeys)
+  assertEquals(MemoryItem("m1", "Автоматическая сводка", "SUMMARY", true, "auto"), storyMemory)
+
+  compose.runOnIdle {
+   vm().editingMemoryId = "m1"
+   vm().memoryInput = "  Исправленная сводка  "
+   vm().saveMemory()
+  }
+  waitFor("edited summary loaded") { !vm().loading && vm().memories.singleOrNull()?.content == "Исправленная сводка" }
+  assertEquals(setOf("content"), memoryPatchKeys)
+  assertEquals(MemoryItem("m1", "Исправленная сводка", "SUMMARY", true, "user"), storyMemory)
+
+  compose.runOnIdle {
+   vm().editingMemoryId = "m1"
+   vm().memoryInput = "Несохранённое изменение"
+   vm().deleteMemory("m1")
+  }
+  waitFor("deleted memory removed") { !vm().loading && vm().memories.isEmpty() }
+  compose.runOnIdle {
+   assertNull(vm().editingMemoryId)
+   assertEquals("", vm().memoryInput)
+  }
+
+  failMemoryRead = true
+  compose.runOnIdle {
+   vm().memoryInput = "Новая запись"
+   vm().saveMemory()
+  }
+  waitFor("write succeeded before the list refresh failed") { !vm().loading && vm().error != null }
+  compose.runOnIdle {
+   assertEquals("", vm().memoryInput)
+   assertNull(vm().editingMemoryId)
+  }
+  assertEquals(1, memoryCreates)
+ }
  @Test fun registrationPreservesAdultConsentAndLoadingState(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")
   compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")

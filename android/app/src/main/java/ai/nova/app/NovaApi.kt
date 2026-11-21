@@ -141,6 +141,7 @@ data class RefreshBody(val refreshToken: String)
 data class MemoryItem(val id: String, val content: String, val kind: String, val pinned: Boolean = false, val source: String? = null)
 data class MemoryPage(val items: List<MemoryItem> = emptyList())
 data class MemoryBody(val content: String, val kind: String = "FACT", val pinned: Boolean = false)
+data class MemoryPatch(val content: String? = null, val pinned: Boolean? = null)
 data class BranchBody(val messageId: String, val title: String = "Новая ветка")
 data class ChatSettings(val persona: String, val scenario: String, val responseStyle: String, val tone: String)
 data class FavoriteEntry(val character: NovaCharacter)
@@ -190,7 +191,7 @@ interface NovaApi {
     @DELETE("v1/characters/{id}/scenarios/{scenarioId}") suspend fun deleteScenario(@Header("Authorization") bearer: String, @Path("id") id: String, @Path("scenarioId") scenarioId: String): retrofit2.Response<Unit>
     @GET("v1/chats/{id}/memories") suspend fun memories(@Header("Authorization") bearer: String, @Path("id") id: String): MemoryPage
     @POST("v1/chats/{id}/memories") suspend fun addMemory(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: MemoryBody)
-    @retrofit2.http.PATCH("v1/chats/{id}/memories/{memoryId}") suspend fun editMemory(@Header("Authorization") bearer: String, @Path("id") id: String, @Path("memoryId") memoryId: String, @Body body: MemoryBody)
+    @retrofit2.http.PATCH("v1/chats/{id}/memories/{memoryId}") suspend fun editMemory(@Header("Authorization") bearer: String, @Path("id") id: String, @Path("memoryId") memoryId: String, @Body body: MemoryPatch)
     @DELETE("v1/chats/{id}/memories/{memoryId}") suspend fun deleteMemory(@Header("Authorization") bearer: String, @Path("id") id: String, @Path("memoryId") memoryId: String)
     @POST("v1/chats/{id}/branch") suspend fun branch(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: BranchBody): NovaChatResponse
     @retrofit2.http.PATCH("v1/chats/{id}") suspend fun saveSettings(@Header("Authorization") bearer: String, @Path("id") id: String, @Body body: ChatSettings)
