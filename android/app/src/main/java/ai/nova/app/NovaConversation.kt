@@ -158,7 +158,7 @@ import androidx.compose.ui.text.style.TextOverflow
   }
  }
  if(call)VoiceCallDialog(model,voice){call=false}
- if(settings)AlertDialog(onDismissRequest={settings=false},title={Text("Твоя история")},text={Column(Modifier.verticalScroll(rememberScrollState())){
+ if(settings && !deleting)AlertDialog(onDismissRequest={settings=false},title={Text("Твоя история")},text={Column(Modifier.verticalScroll(rememberScrollState())){
   NovaEyebrow("РЕЖИМ ОБЩЕНИЯ")
   Text(if(model.premiumChatSelected) "Premium: более мощная модель, длинные ответы и увеличенный контекст. ${model.aiStatus?.premiumPriceTokens?:5} токенов только за успешный ответ. Баланс: ${model.aiStatus?.tokenBalance?:0} ◈." else "Обычный чат: без дневного лимита NOVA и без списания токенов. Возможны технические задержки провайдера.",style=MaterialTheme.typography.bodyMedium)
   VoiceSettings(voice,chat.characterId,model.chatMessages.lastOrNull{it.role!="user"}?.content?:"Привет! Так звучит мой голос.",hint=model.voiceHintOf(chat.characterId))
