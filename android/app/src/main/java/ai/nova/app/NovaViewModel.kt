@@ -7,10 +7,11 @@ import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import com.google.gson.Gson
 import okhttp3.OkHttpClient
+import java.io.IOException
 import java.util.concurrent.TimeUnit
-import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
@@ -28,6 +29,8 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     private val store = SessionStore(application)
     private val gson = Gson()
     private val refreshLock = Any()
+    private var sessionGeneration = 0
+    private var requestJob: Job? = null
     var adultConfirmed by mutableStateOf(false)
     var comments by mutableStateOf<List<SocialComment>>(emptyList())
     var commentInput by mutableStateOf("")
@@ -139,32 +142,55 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             "Сервер NOVA ещё не подключён. Нужен HTTPS-адрес сервиса."
         }
         val builder = Retrofit.Builder().baseUrl(url).addConverterFactory(GsonConverterFactory.create())
-        val refreshApi = builder.build().create(NovaApi::class.java)
-        val client = OkHttpClient.Builder().readTimeout(100, TimeUnit.SECONDS).callTimeout(110, TimeUnit.SECONDS)
-            .authenticator { _, response ->
-                if (response.priorResponse != null) null else synchronized(refreshLock) {
-                    val current = store.get("access")
-                    if (current != null && response.request.header("Authorization") != "Bearer " + current) {
-                        response.request.newBuilder().header("Authorization", "Bearer " + current).build()
-                    } else {
-                        val refresh = store.get("refresh")
-                        val next = refresh?.let { runCatching { refreshApi.refreshSync(RefreshBody(it)).execute().body() }.getOrNull() }
-                        if (next == null || store.get("refresh") != refresh) null else {
-                            store.put("access", next.accessToken)
-                            store.put("refresh", next.refreshToken)
-                            viewModelScope.launch {
-                                if (accessToken != null && store.get("access") == next.accessToken) {
-                                    accessToken = next.accessToken
-                                }
-                            }
-                            response.request.newBuilder().header("Authorization", "Bearer " + next.accessToken).build()
-                        }
-                    }
+        val generation = synchronized(store) { sessionGeneration }
+        val transport = OkHttpClient.Builder().readTimeout(100, TimeUnit.SECONDS)
+            .callTimeout(110, TimeUnit.SECONDS).build()
+        val refreshApi = builder.client(transport).build().create(NovaApi::class.java)
+        val client = transport.newBuilder().authenticator { _, response ->
+            val bearer = response.request.header("Authorization")
+            if (bearer == null || response.priorResponse != null) return@authenticator null
+            synchronized(refreshLock) {
+                val (current, refresh) = synchronized(store) {
+                    if (sessionGeneration != generation) return@authenticator null
+                    store.get("access") to store.get("refresh")
                 }
-            }.build()
+                if (current == null) return@authenticator null
+                if (bearer != "Bearer $current") {
+                    return@authenticator response.request.newBuilder().header("Authorization", "Bearer $current").build()
+                }
+                if (refresh == null) return@authenticator null
+
+                val result = refreshApi.refreshSync(RefreshBody(refresh)).execute()
+                if (result.code() in setOf(400, 401, 403)) {
+                    result.errorBody()?.close()
+                    return@authenticator null
+                }
+                val next = result.body()
+                if (!result.isSuccessful || next == null) {
+                    result.errorBody()?.close()
+                    throw SessionRefreshUnavailable()
+                }
+                synchronized(store) {
+                    if (sessionGeneration != generation) return@authenticator null
+                    store.put("access", next.accessToken)
+                    store.put("refresh", next.refreshToken)
+                }
+                viewModelScope.launch {
+                    if (accessToken != null && store.get("access") == next.accessToken) accessToken = next.accessToken
+                }
+                response.request.newBuilder().header("Authorization", "Bearer " + next.accessToken).build()
+            }
+        }.build()
         return builder.client(client).build().create(NovaApi::class.java)
     }
     private fun authorization(): String = "Bearer " + requireNotNull(store.get("access") ?: accessToken) { "Сначала войди в аккаунт" }
+
+    private class SessionRefreshUnavailable : IOException()
+
+    private fun endExpiredSession() {
+        clearAccount()
+        error = "Сессия закончилась. Войди заново."
+    }
 
     /** Text of the reply while it is being streamed; null when nothing is streaming. */
     var streamingText by mutableStateOf<String?>(null)
@@ -205,7 +231,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 result ?: throw StreamError(502, "STREAM_ENDED")
             }
-        } } finally { activeStreamBody = null }
+        } } finally { if (activeStreamBody === response) activeStreamBody = null }
     }
 
     private fun httpErrorText(code: Int, error: String? = null): String = when {
@@ -220,32 +246,40 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     private fun execute(block: suspend () -> Unit): Job? {
         if (loading) return null
         loading = true
-        return viewModelScope.launch {
-            loading = true
+        val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
             error = null
             notification = null
             try {
                 block()
             } catch (e: CancellationException) {
-                if (streamingText != null) notification = "Остановка запрошена. Черновик сохранён. Обнови историю: ответ мог завершиться до остановки."
+                if (requestJob == coroutineContext[Job] && streamingText != null) {
+                    notification = "Остановка запрошена. Черновик сохранён. Обнови историю: ответ мог завершиться до остановки."
+                }
                 throw e
             } catch (e: StreamError) {
-                error = httpErrorText(e.status, e.code)
-                if (e.status == 401) { accessToken = null; error = "Сессия закончилась. Войди заново." }
+                if (e.status == 401) endExpiredSession() else error = httpErrorText(e.status, e.code)
             } catch (e: HttpException) {
-                error = httpErrorText(e.code())
-                if (e.code() == 401) {
-                    accessToken = null
-                    error = "Сессия закончилась. Войди заново."
-                }
+                if (e.code() == 401) endExpiredSession() else error = httpErrorText(e.code())
+            } catch (_: SessionRefreshUnavailable) {
+                error = "Сервер временно не смог обновить сессию. Попробуй ещё раз."
+            } catch (_: IOException) {
+                error = "Нет связи с NOVA. Проверь интернет и попробуй снова."
             } catch (e: Exception) {
                 error = e.localizedMessage ?: "Не удалось выполнить запрос"
             } finally {
-                loading = false
-                pendingTabRefresh?.let { tab -> pendingTabRefresh = null; if (activeTab == tab) viewModelScope.launch { changeTab(tab) } }
-                streamingText = null
+                if (requestJob == coroutineContext[Job]) {
+                    requestJob = null
+                    loading = false
+                    streamingText = null
+                    val refreshTab = pendingTabRefresh
+                    pendingTabRefresh = null
+                    if (refreshTab != null && activeTab == refreshTab && accessToken != null) changeTab(refreshTab)
+                }
             }
         }
+        requestJob = job
+        job.start()
+        return job
     }
 
     // Field errors shown under the login form fields; cleared as soon as the person edits the field.
@@ -305,12 +339,16 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             } catch (e: java.io.IOException) {
                 throw IllegalStateException("Нет связи с сервером NOVA. Проверь интернет и попробуй снова — первый вход после перерыва может занять до минуты.")
             }
+            synchronized(store) {
+                sessionGeneration++
+                store.put("access", result.accessToken)
+                store.put("refresh", result.refreshToken)
+            }
             accessToken = result.accessToken
-            store.put("access", result.accessToken); store.put("refresh", result.refreshToken)
             store.put("server", serverUrl); store.put("email", email.trim())
             password = ""
             activeTab = NovaTab.HOME
-            catalog = api.catalog(authorization()).items
+            catalog = service().catalog(authorization()).items
             notification = if (createAccount) "Аккаунт создан. Добро пожаловать в NOVA AI!" else "Вход выполнен"
         }
     }
@@ -388,6 +426,9 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
                 loadedCatalogFilter = filter
             } catch (cancelled: CancellationException) {
                 throw cancelled
+            } catch (e: SessionRefreshUnavailable) {
+                catalogFailed = true
+                throw e
             } catch (e: HttpException) {
                 catalogFailed = true
                 if (e.code() == 401) throw e
@@ -630,6 +671,17 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 loadDiscoverPart { recentStories = api.chats(bearer, null).items }
+            } catch (e: HttpException) {
+                if (e.code() == 401) {
+                    cancelActiveRequest()
+                    endExpiredSession()
+                } else {
+                    discoverFailed = true
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                discoverFailed = true
             } finally {
                 discoverLoading = false
             }
@@ -641,6 +693,9 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             load()
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (e: HttpException) {
+            if (e.code() == 401) throw e
+            discoverFailed = true
         } catch (_: Exception) {
             discoverFailed = true
         }
@@ -688,11 +743,14 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         draftAge = v("age").toIntOrNull()?.takeIf { it >= 18 }; draftGender = v("gender").ifBlank { null }
         draftTraits = v("traits").split('\u0002').filter { it.isNotBlank() }
     }
-    fun clearDraft() {
+    private fun resetDraft() {
         draftName = ""; draftGreeting = ""; draftCategory = "fantasy"; draftBiography = ""; draftPersonality = ""; draftAppearance = ""
         draftInterests = ""; draftBackstory = ""; draftSpeechStyle = ""; draftScenario = ""; draftAvatar = ""; draftTags = ""
         draftLanguage = "ru"; draftMature = false; editingCharacterId = null; draftAge = null; draftGender = null; draftTraits = emptyList()
         fieldUndo = emptyMap(); cardUndo = null; cardSuggestion = null; fieldSuggestion = null
+    }
+    fun clearDraft() {
+        resetDraft()
         store.put("characterDraft", "")
     }
     /** Which required parts are still missing, in the order they appear in the editor. */
@@ -763,7 +821,12 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         assistBusy = target; error = null
         viewModelScope.launch {
             try { onResult(service().assist(authorization(), request)) }
-            catch (e: HttpException) { error = assistErrorText(e); if (e.code() == 401) accessToken = null }
+            catch (e: HttpException) {
+                if (e.code() == 401) {
+                    cancelActiveRequest()
+                    endExpiredSession()
+                } else error = assistErrorText(e)
+            }
             catch (e: java.io.IOException) { error = "Нет связи с сервером NOVA. Твой текст не изменён." }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { error = "AI временно недоступен. Твой текст не изменён." }
@@ -981,7 +1044,12 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     private fun clearAccount() {
-        store.clear()
+        resetDraft()
+        synchronized(store) {
+            sessionGeneration++
+            store.clear()
+        }
+        pendingTabRefresh = null
         discoverJob?.cancel()
         discoverJob = null
         seenRecommendations.clear()
@@ -992,6 +1060,17 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         authorPage = null
         likedPublications = emptySet()
         profileCharacter = null
+        lastCreated = null
+        characterMemories = emptyList()
+        characterMemoryInput = ""
+        memoryInput = ""
+        editingMemoryId = null
+        inChatResults = null
+        inChatQuery = ""
+        editingMessageId = null
+        editingMessageText = ""
+        chatGreeting = null
+        nextBefore = null
         dailyBonus = null
         referral = null
         productReturnTab = NovaTab.HOME
@@ -1030,8 +1109,17 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     fun logout() {
         val bearer = runCatching { authorization() }.getOrNull()
         val api = runCatching { service() }.getOrNull()
-        clearAccount(); loading = false
+        cancelActiveRequest()
+        clearAccount()
         if (bearer != null && api != null) viewModelScope.launch { runCatching { api.logout(bearer) } }
+    }
+    private fun cancelActiveRequest() {
+        val job = requestJob
+        requestJob = null
+        stopReply()
+        job?.cancel()
+        streamingText = null
+        loading = false
     }
     fun loadOlder() { val chat = activeChat ?: return; val before = nextBefore ?: return; execute {
         val page=service().chatMessages(authorization(),chat.id,before); chatMessages=page.items+chatMessages; nextBefore=page.nextBefore
@@ -1120,6 +1208,10 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             if (!showMature) hideMatureCollections()
         } catch (cancelled: CancellationException) {
             throw cancelled
+        } catch (e: SessionRefreshUnavailable) {
+            throw e
+        } catch (e: HttpException) {
+            if (e.code() == 401) throw e
         } catch (_: Exception) {
             // Keep the last confirmed preference if settings are temporarily unavailable.
         }

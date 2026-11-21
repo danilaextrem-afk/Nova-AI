@@ -289,6 +289,8 @@ private val EN: Map<String, String> = mapOf(
     "AI ответил неразборчиво. Попробуй ещё раз." to "AI's answer was garbled. Try again.", "Опиши идею хотя бы парой слов (до 500 символов)." to "Describe the idea in at least a couple of words (up to 500 characters).",
     "AI сейчас занят. Подожди минуту и попробуй снова." to "AI is busy. Wait a minute and try again.",
     "AI временно недоступен. Твой текст не изменён — попробуй чуть позже." to "AI is temporarily unavailable. Your text is unchanged — try a bit later.",
+    "Нет связи с NOVA. Проверь интернет и попробуй снова." to "Can't reach NOVA. Check your connection and try again.",
+    "Сервер временно не смог обновить сессию. Попробуй ещё раз." to "The server couldn't refresh your session. Try again.",
     "Нет связи с сервером NOVA. Твой текст не изменён." to "Can't reach the NOVA server. Your text is unchanged.",
     "AI временно недоступен. Твой текст не изменён." to "AI is temporarily unavailable. Your text is unchanged.", "Опиши идею хотя бы парой слов" to "Describe the idea in at least a couple of words",
     "Карточка заполнена. Выбери возраст и пол — AI их не выбирает за тебя." to "Card filled. Choose age and gender — AI doesn't choose them for you.",

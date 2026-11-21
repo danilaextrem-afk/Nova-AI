@@ -33,6 +33,12 @@ class NovaUiTest {
  @Volatile private var userText="Привет"
  @Volatile private var artBody:String?=null
  @Volatile private var authRequests=0
+ @Volatile private var requiredCatalogBearer: String? = null
+ @Volatile private var refreshStatus = 200
+ @Volatile private var refreshRequests = 0
+ @Volatile private var refreshBody: String? = null
+ @Volatile private var slowWalletStarted = false
+ @Volatile private var slowWallet = false
  @Volatile private var groupMode=false
  @Volatile private var discoverMode=false
  @Volatile private var favoritePut:String?=null
@@ -55,6 +61,23 @@ class NovaUiTest {
    if(r.path=="/v1/auth/register"){
     registration=r.body.readUtf8()
     return MockResponse().setHeader("Content-Type","application/json").setBody("""{"accessToken":"fixture-token","refreshToken":"fixture-refresh-token"}""").setBodyDelay(1,java.util.concurrent.TimeUnit.SECONDS)
+   }
+   if (r.path == "/v1/auth/refresh") {
+    refreshRequests++
+    refreshBody = authBody
+    val body = if (refreshStatus == 200) """{"accessToken":"renewed-token","refreshToken":"fixture-rotated-refresh-token"}"""
+     else """{"error":"REFRESH_FAILED"}"""
+    return MockResponse().setResponseCode(refreshStatus).setHeader("Content-Type", "application/json").setBody(body)
+   }
+   val requiredBearer = requiredCatalogBearer
+   if (r.requestUrl?.encodedPath == "/v1/characters/catalog" && requiredBearer != null &&
+    r.getHeader("Authorization") != requiredBearer) {
+    return MockResponse().setResponseCode(401).setHeader("Content-Type", "application/json").setBody("""{"error":"UNAUTHORIZED"}""")
+   }
+   if (r.path == "/v1/wallet" && slowWallet) {
+    slowWalletStarted = true
+    return MockResponse().setHeader("Content-Type", "application/json").setBody("""{"total":73,"purchased":0,"bonus":73,"adReward":0}""")
+     .setBodyDelay(2, java.util.concurrent.TimeUnit.SECONDS)
    }
    if(r.path=="/v1/chats/$chat/messages/stream"){
     streamIds.add(com.google.gson.JsonParser.parseString(r.body.readUtf8()).asJsonObject.get("requestId").asString)
@@ -219,6 +242,60 @@ class NovaUiTest {
   streamFailure=false;clickWhenEnabled("Отправить бесплатно")
   compose.waitUntil(20000){compose.onAllNodesWithText("Тестовый ответ сервера").fetchSemanticsNodes().isNotEmpty()}
   assertEquals(2,streamIds.size);assertEquals(streamIds[0],streamIds[1])
+ }
+ @Test fun catalogRecoversFromTemporaryRefreshFailureAndClearsRejectedSession() {
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  waitFor("login complete") { vm().accessToken == "fixture-token" && !vm().loading }
+
+  refreshStatus = 503
+  requiredCatalogBearer = "Bearer renewed-token"
+  compose.onNodeWithText("Каталог").performClick()
+  val temporaryError = "Сервер временно не смог обновить сессию. Попробуй ещё раз."
+  waitFor("temporary refresh error") { compose.onAllNodesWithText(temporaryError).fetchSemanticsNodes().isNotEmpty() }
+  assertEquals("fixture-token", SessionStore(compose.activity).get("access"))
+  assertEquals(1, refreshRequests)
+
+  refreshStatus = 200
+  clickWhenEnabled("Повторить")
+  waitFor("catalog recovered with rotated credentials") { vm().accessToken == "renewed-token" && !vm().loading }
+  compose.onNodeWithText("Начать AI-чат").assertExists()
+  assertEquals("fixture-rotated-refresh-token", SessionStore(compose.activity).get("refresh"))
+
+  refreshStatus = 401
+  requiredCatalogBearer = "Bearer revoked-token"
+  compose.onNodeWithText("Главная").performClick()
+  compose.onNodeWithText("Каталог").performClick()
+  val expiredError = "Сессия закончилась. Войди заново."
+  waitFor("expired session returns to sign-in") { compose.onAllNodesWithText(expiredError).fetchSemanticsNodes().isNotEmpty() }
+  assertTrue(refreshBody.orEmpty().contains("fixture-rotated-refresh-token"))
+  assertNull(SessionStore(compose.activity).get("access"))
+  assertNull(SessionStore(compose.activity).get("refresh"))
+  compose.onNodeWithText("Войти").assertExists()
+ }
+
+ @Test fun logoutCancelsInFlightWalletAndClearsUnsavedCharacter() {
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  waitFor("login complete") { vm().accessToken != null && !vm().loading }
+  slowWallet = true
+  compose.runOnIdle {
+   vm().draftName = "Личный черновик"
+   vm().persistDraft()
+   vm().changeTab(NovaTab.WALLET)
+  }
+  waitFor("wallet request sent") { slowWalletStarted }
+  compose.onNodeWithText("Профиль").performClick()
+  clickWhenEnabled("Выйти из аккаунта")
+  compose.onNodeWithText("Войти").assertExists()
+  compose.runOnIdle {
+   assertNull(vm().accessToken)
+   assertNull(vm().wallet)
+   assertEquals("", vm().draftName)
+   assertNull(SessionStore(compose.activity).get("characterDraft"))
+  }
  }
  @Test fun communityCommentClearlyShowsPendingModeration(){
   compose.onNodeWithText("Email").performTextInput("adult@example.test")
