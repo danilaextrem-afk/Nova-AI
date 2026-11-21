@@ -90,8 +90,11 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         private set
     var chatMessages by mutableStateOf<List<NovaChatMessage>>(emptyList())
         private set
-    var chatInput by mutableStateOf(store.get("draft") ?: "")
-    fun updateChatInput(value: String) { chatInput = value; store.put("draft", value) }
+    var chatInput by mutableStateOf(activeChat?.let { store.get("draft-${it.id}") ?: store.get("draft") }.orEmpty())
+    fun updateChatInput(value: String) {
+        chatInput = value
+        activeChat?.let { store.put("draft-${it.id}", value) }
+    }
     var premiumChatSelected by mutableStateOf(false)
     private var pendingChatFingerprint: String? = store.get("pendingFingerprint")
     private var pendingChatRequestId: String? = store.get("pendingId")
@@ -486,8 +489,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             val character=api.createCharacter(authorization(),hero.draft()).character
             store.put("portrait-${character.id}",hero.portraitUrl)
             val created=api.createChat(authorization(),NovaCreateChatBody(character.id))
-            activeChat=created.chat.copy(characterName=hero.name)
-            store.put("chat",gson.toJson(activeChat));chatMessages=emptyList();chatInput="";nextBefore=null;memories=emptyList();inChatResults=null;activeTab=NovaTab.CHATS
+            showChat(created.chat.copy(characterName = hero.name))
             chats=api.chats(authorization()).items;aiStatus=api.aiStatus(authorization())
         }
     }
@@ -495,13 +497,11 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         execute {
             val api = service()
             val created = api.createChat(authorization(), NovaCreateChatBody(character.id, groupIds.filter { it != character.id }.take(4), if (scenario == null) storyScenario else "", playerPersona, scenario?.id))
-            activeChat = created.chat.copy(characterAvatarUrl = created.chat.characterAvatarUrl ?: character.avatarUrl)
-            chatGreeting = created.greeting?.takeIf { it.isNotBlank() } ?: character.greeting
-            profileCharacter = null; characterMemories = emptyList(); memories = emptyList()
-            store.put("chat", gson.toJson(activeChat))
-            chatMessages = emptyList()
-            chatInput = ""
-            activeTab = NovaTab.CHATS
+            showChat(
+                created.chat.copy(characterAvatarUrl = created.chat.characterAvatarUrl ?: character.avatarUrl),
+                greeting = created.greeting?.takeIf { it.isNotBlank() } ?: character.greeting,
+            )
+            profileCharacter = null
             chats = api.chats(authorization()).items
             aiStatus = api.aiStatus(authorization())
         }
@@ -509,24 +509,60 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openChat(chat: NovaChat) {
         execute {
-            activeChat = chat
-            store.put("chat", gson.toJson(chat))
-            val page = service().chatMessages(authorization(), chat.id)
-            chatMessages = page.items; nextBefore = page.nextBefore
-            memories = service().memories(authorization(), chat.id).items
-            chatGreeting = null
-            characterMemories = runCatching { service().characterMemories(authorization(), chat.characterId).items }.getOrDefault(emptyList())
-            aiStatus = service().aiStatus(authorization())
-            playerPersona = chat.persona.orEmpty(); storyScenario = chat.scenario.orEmpty()
-            responseStyle = chat.responseStyle ?: "balanced"; storyTone = chat.tone ?: "friendly"
-            activeTab = NovaTab.CHATS
+            val api = service()
+            val page = api.chatMessages(authorization(), chat.id)
+            val chatMemories = api.memories(authorization(), chat.id).items
+            showChat(chat, page, chatMemories)
+            characterMemories = runCatching { api.characterMemories(authorization(), chat.characterId).items }.getOrDefault(emptyList())
+            aiStatus = api.aiStatus(authorization())
         }
     }
 
-    fun closeChat() {
+    private fun showChat(
+        chat: NovaChat,
+        page: NovaChatMessagesResponse = NovaChatMessagesResponse(),
+        chatMemories: List<MemoryItem> = emptyList(),
+        greeting: String? = null
+    ) {
+        resetChatDetails()
+        activeChat = chat
+        store.put("chat", gson.toJson(chat))
+        chatInput = store.get("draft-${chat.id}").orEmpty()
+        chatMessages = page.items
+        nextBefore = page.nextBefore
+        memories = chatMemories
+        chatGreeting = greeting
+        playerPersona = chat.persona.orEmpty()
+        storyScenario = chat.scenario.orEmpty()
+        responseStyle = chat.responseStyle ?: "balanced"
+        storyTone = chat.tone ?: "friendly"
+        activeTab = NovaTab.CHATS
+    }
+
+    private fun resetChatDetails() {
+        chatMessages = emptyList()
+        chatInput = ""
+        nextBefore = null
+        memories = emptyList()
+        memoryInput = ""
+        editingMemoryId = null
+        characterMemories = emptyList()
+        characterMemoryInput = ""
+        inChatQuery = ""
+        inChatResults = null
+        editingMessageId = null
+        editingMessageText = ""
+        chatGreeting = null
+    }
+
+    private fun forgetActiveChat() {
         activeChat = null
         store.put("chat", "null")
-        chatMessages = emptyList()
+        resetChatDetails()
+    }
+
+    fun closeChat() {
+        forgetActiveChat()
         refreshChats()
     }
 
@@ -547,7 +583,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             pendingChatFingerprint = fingerprint
             pendingChatRequestId = java.util.UUID.randomUUID().toString()
             store.put("pendingId", pendingChatRequestId!!); store.put("pendingFingerprint", fingerprint)
-            store.put("draft", text)
+            store.put("draft-${current.id}", text)
         }
         val requestId = checkNotNull(pendingChatRequestId)
         streamJob = execute {
@@ -586,8 +622,8 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
         execute {
             val api = service()
             api.deleteChat(authorization(), current.id)
-            activeChat = null
-            chatMessages = emptyList()
+            store.put("draft-${current.id}", "")
+            forgetActiveChat()
             chats = api.chats(authorization()).items
             notification = "Переписка удалена"
         }
@@ -1095,11 +1131,18 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             memories = api.memories(authorization(), chat.id).items
         }
     }
-    fun branch(message:NovaChatMessage) {val chat=activeChat?:return;execute {
-        val created=service().branch(authorization(),chat.id,BranchBody(message.id)).chat
-        activeChat=created;store.put("chat",gson.toJson(created));chatMessages=service().chatMessages(authorization(),created.id).items
-        memories=service().memories(authorization(),created.id).items;notification="Создана отдельная ветка истории"
-    } }
+
+    fun branch(message: NovaChatMessage) {
+        val chat = activeChat ?: return
+        execute {
+            val api = service()
+            val created = api.branch(authorization(), chat.id, BranchBody(message.id)).chat
+            val page = api.chatMessages(authorization(), created.id)
+            val chatMemories = api.memories(authorization(), created.id).items
+            showChat(created, page, chatMemories)
+            notification = "Создана отдельная ветка истории"
+        }
+    }
     // Group cast, lasting character memory and author scenarios.
     var chatGreeting by mutableStateOf<String?>(null)
     var characterMemories by mutableStateOf<List<CharacterMemoryItem>>(emptyList())
@@ -1261,6 +1304,11 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     // A restored session may start work immediately, so initialize state before loading it.
     init {
         restoreDraft()
+        // Upgrade older installs that stored a single draft beside the last active chat.
+        if (!store.get("draft").isNullOrEmpty()) {
+            activeChat?.let { store.put("draft-${it.id}", chatInput) }
+            store.put("draft", "")
+        }
         if (accessToken != null) {
             activeChat?.let { openChat(it) } ?: refreshCatalog()
         }
