@@ -1073,7 +1073,7 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
             draftAppearance = copy.appearance.orEmpty(); draftInterests = copy.interests.orEmpty()
             draftBackstory = copy.backstory.orEmpty(); draftSpeechStyle = copy.speechStyle.orEmpty()
             draftScenario = copy.scenario.orEmpty(); draftAvatar = copy.avatarUrl.orEmpty()
-            draftTags = copy.tags.joinToString(", "); draftLanguage = copy.language
+            draftTags = copy.tags.joinToString(", "); draftLanguage = copy.language.orEmpty().ifBlank { "ru" }
             draftAge = copy.age; draftGender = copy.gender; draftTraits = copy.traits.orEmpty()
             draftMature = true
             fieldUndo = emptyMap(); cardUndo = null
