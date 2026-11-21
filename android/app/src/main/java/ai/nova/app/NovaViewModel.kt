@@ -1054,17 +1054,47 @@ class NovaViewModel(application: Application) : AndroidViewModel(application) {
     } }
     fun publishCharacter(id: String) { execute { service().publish(authorization(),id); notification="Персонаж отправлен на модерацию" } }
     fun cloneCharacter(id: String) { execute { service().clone(authorization(),id); owned=service().myCharacters(authorization()).items; activeTab=NovaTab.CREATE } }
-    fun saveMemory() { val chat=activeChat?:return; execute {
-        val body=MemoryBody(memoryInput)
-        val editing=editingMemoryId
-        if(editing==null) service().addMemory(authorization(),chat.id,body) else service().editMemory(authorization(),chat.id,editing,body)
-        memories=service().memories(authorization(),chat.id).items; memoryInput=""; editingMemoryId=null
-    } }
-    fun pinMemory(memory:MemoryItem) { val chat=activeChat?:return; execute {
-        service().editMemory(authorization(),chat.id,memory.id,MemoryBody(memory.content,if(memory.kind=="SUMMARY") "FACT" else memory.kind,!memory.pinned))
-        memories=service().memories(authorization(),chat.id).items
-    } }
-    fun deleteMemory(id:String) {val chat=activeChat?:return; execute {service().deleteMemory(authorization(),chat.id,id);memories=service().memories(authorization(),chat.id).items} }
+    fun cancelMemoryEdit() {
+        editingMemoryId = null
+        memoryInput = ""
+    }
+
+    fun saveMemory() {
+        val chat = activeChat ?: return
+        val content = memoryInput.trim()
+        if (content.isEmpty() || content.length > 2000) return
+        val editing = editingMemoryId
+        execute {
+            val api = service()
+            if (editing == null) {
+                api.addMemory(authorization(), chat.id, MemoryBody(content))
+            } else {
+                api.editMemory(authorization(), chat.id, editing, MemoryPatch(content = content))
+            }
+            // The write already succeeded, even if the follow-up list request fails.
+            cancelMemoryEdit()
+            memories = api.memories(authorization(), chat.id).items
+        }
+    }
+
+    fun pinMemory(memory: MemoryItem) {
+        val chat = activeChat ?: return
+        execute {
+            val api = service()
+            api.editMemory(authorization(), chat.id, memory.id, MemoryPatch(pinned = !memory.pinned))
+            memories = api.memories(authorization(), chat.id).items
+        }
+    }
+
+    fun deleteMemory(id: String) {
+        val chat = activeChat ?: return
+        execute {
+            val api = service()
+            api.deleteMemory(authorization(), chat.id, id)
+            if (editingMemoryId == id) cancelMemoryEdit()
+            memories = api.memories(authorization(), chat.id).items
+        }
+    }
     fun branch(message:NovaChatMessage) {val chat=activeChat?:return;execute {
         val created=service().branch(authorization(),chat.id,BranchBody(message.id)).chat
         activeChat=created;store.put("chat",gson.toJson(created));chatMessages=service().chatMessages(authorization(),created.id).items

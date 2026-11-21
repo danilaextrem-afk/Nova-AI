@@ -99,12 +99,21 @@ import java.util.Locale
                 androidx.compose.material3.Text((if(memory.pinned) "📌 " else "")+memory.content)
                 Row(Modifier.horizontalScroll(rememberScrollState())) {
                     TextButton(onClick={model.pinMemory(memory)},enabled=!model.loading){Text(if(memory.pinned) "Открепить" else "Закрепить")}
-                    TextButton(onClick={model.editingMemoryId=memory.id;model.memoryInput=memory.content}){Text("Изменить")}
+                    TextButton(onClick={model.editingMemoryId=memory.id;model.memoryInput=memory.content},enabled=!model.loading){Text("Изменить")}
                     TextButton(onClick={model.deleteMemory(memory.id)},enabled=!model.loading){Text("Удалить")}
                 }
             }}
         }
-        OutlinedTextField(value=model.memoryInput,onValueChange={model.memoryInput=it},label={Text("Важный факт или событие")},modifier=Modifier.fillMaxWidth())
+        OutlinedTextField(
+            value = model.memoryInput,
+            onValueChange = { model.memoryInput = it.take(2000) },
+            enabled = !model.loading,
+            label = { Text("Важный факт или событие") },
+            modifier = Modifier.fillMaxWidth()
+        )
+        if (model.editingMemoryId != null) {
+            TextButton(onClick = model::cancelMemoryEdit, enabled = !model.loading) { Text("Отмена") }
+        }
         Button(onClick={model.saveMemory()},enabled=!model.loading&&model.memoryInput.isNotBlank()){Text(if(model.editingMemoryId==null)"Добавить воспоминание" else "Сохранить воспоминание")}
     }
 }
