@@ -131,7 +131,14 @@ class NovaUiTest {
    vm.serverUrl=baseUrl
   }
  }
- @After fun finish(){server.shutdown();SessionStore(compose.activity).clear();NovaLang.set(compose.activity,"ru");File(compose.activity.filesDir,"nova-art").deleteRecursively()}
+ @After fun finish() {
+  // Leave the editor before clearing preferences so its on-stop handler cannot save the previous test's draft.
+  compose.runOnIdle { vm().logout() }
+  server.shutdown()
+  SessionStore(compose.activity).clear()
+  NovaLang.set(compose.activity, "ru")
+  File(compose.activity.filesDir, "nova-art").deleteRecursively()
+ }
  private fun screenshot(name:String){
   val image=InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()
   val dir=File(compose.activity.getExternalFilesDir(null),"screenshots");dir.mkdirs()
