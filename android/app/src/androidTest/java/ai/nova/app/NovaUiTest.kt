@@ -36,6 +36,8 @@ class NovaUiTest {
  @Volatile private var groupMode=false
  @Volatile private var discoverMode=false
  @Volatile private var favoritePut:String?=null
+ @Volatile private var catalogFilterMode = false
+ @Volatile private var catalogParameters = emptyMap<String, String?>()
  @Volatile private var assistBodies=java.util.Collections.synchronizedList(mutableListOf<String>())
  @Volatile private var avatarBody:String?=null
  private val artJpeg:String by lazy {
@@ -71,6 +73,16 @@ class NovaUiTest {
     r.path=="/v1/me" -> """{"id":"me","email":"adult@example.test","profile":{"showMature":$showMature}}"""
     r.path=="/v1/me/content-settings" -> {val b=r.body.clone().readUtf8();showMature=b.contains("\"showMature\":true")&&b.contains("\"confirmAdult\":true");"""{"showMature":$showMature}"""}
     r.path?.startsWith("/v1/characters/catalog")==true && r.path!!.contains("section=mature") -> """{"items":[{"id":"00000000-0000-4000-8000-000000000199","name":"Северина Лис","greeting":"Добрый вечер.","category":"Романтика","tags":[],"mature":true}]}"""
+    catalogFilterMode && r.requestUrl?.encodedPath == "/v1/characters/catalog" -> {
+     val url = requireNotNull(r.requestUrl)
+     catalogParameters = url.queryParameterNames.associateWith(url::queryParameter)
+     if (catalogParameters["q"] == "Ночной город" && catalogParameters["category"] == "Романтика" &&
+      catalogParameters["tag"] == "город") {
+      """{"items":[{"id":"$nextCharacter","name":"Лея Винтер","greeting":"Добрый вечер","category":"Романтика","tags":["город"]}]}"""
+     } else {
+      """{"items":[{"id":"$character","name":"Аврора Вейл","greeting":"Привет","category":"Приключения","tags":[]}]}"""
+     }
+    }
     productMode && r.path?.startsWith("/v1/characters/catalog")==true && r.requestUrl?.queryParameter("cursor")==character ->
      """{"items":[{"id":"$nextCharacter","name":"Лея Винтер","greeting":"Привет","category":"Фэнтези","tags":[]}]}"""
     productMode && r.path?.startsWith("/v1/characters/catalog")==true ->
@@ -268,6 +280,37 @@ class NovaUiTest {
   assertEquals(rootComment,request.get("parentId").asString)
   compose.onNodeWithText("Хочу продолжение · На модерации").reveal().assertIsDisplayed()
   screenshot("36-product-reply")
+ }
+ @Test fun catalogSearchCombinesFiltersAndResetClearsThem() {
+  catalogFilterMode = true
+  compose.onNodeWithText("Email").performTextInput("adult@example.test")
+  compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
+  clickWhenEnabled("Войти")
+  waitFor("login complete") { vm().accessToken != null && !vm().loading }
+  compose.onNodeWithText("Каталог").performClick()
+  waitFor("initial catalog cards") { compose.onAllNodesWithText("Аврора Вейл").fetchSemanticsNodes().isNotEmpty() }
+
+  compose.onNodeWithText("Имя, характер или история").reveal().performTextInput("  Ночной город  ")
+  hideKeyboard()
+  clickWhenEnabled("Категория и тег")
+  compose.onNodeWithText("Категория").reveal().performTextInput("Романтика")
+  hideKeyboard()
+  compose.onNodeWithText("Тег").reveal().performTextInput("город")
+  hideKeyboard()
+  clickWhenEnabled("Найти персонажей")
+  waitFor("filtered result replaces initial catalog") {
+   !vm().loading && compose.onAllNodesWithText("Лея Винтер").fetchSemanticsNodes().isNotEmpty()
+  }
+  compose.onNodeWithText("Аврора Вейл").assertDoesNotExist()
+  assertEquals(mapOf("q" to "Ночной город", "category" to "Романтика", "tag" to "город",
+   "sort" to "recent", "section" to "general"), catalogParameters)
+
+  clickWhenEnabled("Сбросить фильтры")
+  waitFor("unfiltered cards restored") {
+   !vm().loading && compose.onAllNodesWithText("Аврора Вейл").fetchSemanticsNodes().isNotEmpty()
+  }
+  compose.onNodeWithText("Лея Винтер").assertDoesNotExist()
+  assertEquals(mapOf("sort" to "recent", "section" to "general"), catalogParameters)
  }
  @Test fun sessionStoreEncryptsAndReadsAcrossInstances(){
   val a=SessionStore(compose.activity);a.put("secret-test","never-plaintext-123")
