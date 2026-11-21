@@ -127,14 +127,18 @@ internal fun CharacterProfileSheet(model: NovaViewModel) {
                             TextButton(onClick = { ctx.startActivity(Intent.createChooser(Intent(Intent.ACTION_SEND).apply { type = "text/plain"
                                 putExtra(Intent.EXTRA_TEXT, c.name + " — NOVA AI\n" + model.shareLink(c.id)) }, c.name)) }) { Text("Поделиться ссылкой") } }
                         TextButton(onClick = { model.cloneCharacter(c.id) }, enabled = !model.loading) { Text("Создать свою версию") }
-                        // Existing public story remains general-audience. A separate private adult
-                        // draft is opt-in and must be saved in the creator with explicit age and gender.
-                        if (!c.mature && !mine) {
-                            TextButton(onClick = { model.cloneCharacterForMature(c.id) }, enabled = !model.loading) {
+                        TextButton(onClick = { model.openArt(listOfNotNull(c.name, c.appearance?.takeIf { it.isNotBlank() } ?: c.biography).joinToString(", ")) }) { Text("Нарисовать арт") }
+                    }
+                    if (!c.mature && !mine) {
+                        if (model.showMature) {
+                            OutlinedButton(onClick = { model.cloneCharacterForMature(c.id) },
+                                enabled = !model.loading, modifier = Modifier.fillMaxWidth()) {
                                 Text("Личная версия 18+")
                             }
+                        } else {
+                            Text("Личная версия 18+ доступна после включения раздела 18+ в настройках профиля.",
+                                style = MaterialTheme.typography.bodySmall, color = NovaDesign.Muted)
                         }
-                        TextButton(onClick = { model.openArt(listOfNotNull(c.name, c.appearance?.takeIf { it.isNotBlank() } ?: c.biography).joinToString(", ")) }) { Text("Нарисовать арт") }
                     }
                     publication?.let { pub ->
                         HorizontalDivider(color = NovaDesign.Border)

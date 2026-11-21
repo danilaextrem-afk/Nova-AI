@@ -594,6 +594,12 @@ class NovaUiTest {
   compose.onNodeWithText("Пароль (от 10 символов)").performTextInput("testing-password-123")
   clickWhenEnabled("Войти")
   waitFor("account tab"){compose.onAllNodesWithText("Профиль").fetchSemanticsNodes().isNotEmpty()}
+  compose.onNodeWithText("Каталог").performClick()
+  clickWhenEnabled("Полный профиль")
+  compose.onNodeWithText("Личная версия 18+").assertDoesNotExist()
+  compose.onNodeWithText("Личная версия 18+ доступна после включения раздела 18+ в настройках профиля.").assertExists()
+  assertFalse(adultCopyCreated)
+  clickWhenEnabled("Закрыть профиль")
   compose.onNodeWithText("Профиль").performClick()
   waitFor("adult setting"){compose.onAllNodesWithText("Раздел 18+ (Mature)").fetchSemanticsNodes().isNotEmpty()}
   compose.onNode(isToggleable() and isEnabled()).reveal().performClick()
@@ -606,10 +612,14 @@ class NovaUiTest {
    val vm=ViewModelProvider(compose.activity)[NovaViewModel::class.java]
    adultCopyCreated && vm.editingCharacterId==matureCopy && vm.draftMature
   }
-  val vm=ViewModelProvider(compose.activity)[NovaViewModel::class.java]
-  assertEquals("Аврора Вейл",vm.draftName)
-  assertTrue(vm.draftMature)
-  assertEquals("Adult source remains untouched; private copy must be explicitly saved",null,vm.draftAge)
+  compose.runOnIdle {
+   val vm=ViewModelProvider(compose.activity)[NovaViewModel::class.java]
+   assertEquals("Аврора Вейл",vm.draftName)
+   assertTrue(vm.draftMature)
+   assertNull("The private copy still requires an explicit age",vm.draftAge)
+   assertNull("The private copy still requires an explicit gender",vm.draftGender)
+   assertNull("The editor has not submitted the draft",studioDraft)
+  }
   screenshot("42-private-mature-clone")
  }
  @Test fun newPortraitsDecodeAndAdultsHaveUniqueProfiles(){
