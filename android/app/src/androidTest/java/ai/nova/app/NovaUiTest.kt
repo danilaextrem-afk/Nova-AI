@@ -654,7 +654,11 @@ class NovaUiTest {
   hideKeyboard()
   clickWhenEnabled("Ещё")
   clickWhenEnabled("Удалить чат")
-  compose.onNode(hasText("Удалить чат") and hasAnyAncestor(isDialog())).performClick()
+  waitFor("only the delete confirmation dialog is shown") {
+   compose.onAllNodesWithText("Удалить чат?").fetchSemanticsNodes().isNotEmpty() &&
+    compose.onAllNodesWithText("Твоя история").fetchSemanticsNodes().isEmpty()
+  }
+  clickWhenEnabled("Удалить чат")
   waitFor("deleted chat returns to the list") { secondChatDeleted && vm().activeChat == null && !vm().loading }
   assertEquals("null", SessionStore(compose.activity).get("chat"))
   assertTrue(SessionStore(compose.activity).get("draft-$secondChat").isNullOrEmpty())
